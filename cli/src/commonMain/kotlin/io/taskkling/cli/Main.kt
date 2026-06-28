@@ -1,18 +1,24 @@
 package io.taskkling.cli
 
-import io.taskkling.contract.ExportDto
+import io.taskkling.contract.TaskDto
 import io.taskkling.core.AddArgs
-import io.taskkling.core.ExitCode
+import io.taskkling.core.Status
+import io.taskkling.core.Task
 import io.taskkling.core.TkError
+import io.taskkling.core.ExitCode
 import io.taskkling.core.Taskkling
 import io.taskkling.core.Workspace
 import io.taskkling.core.addTask
-import io.taskkling.core.computeExport
+import io.taskkling.core.buildExport
+import io.taskkling.core.computeAll
 import io.taskkling.core.initWorkspace
+import io.taskkling.core.loadTasks
+import io.taskkling.core.toDto
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.Subcommand
 import kotlinx.cli.default
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlin.system.exitProcess
 
@@ -68,12 +74,11 @@ private class AddCmd : TkCommand("add", "Create a task; prints the new id") {
 
     override fun run() {
         val ws = Workspace.discover(root)
-        val deps = depends?.split(",").orEmpty()
         val id = ws.addTask(
             AddArgs(
                 title = title,
                 thread = thread,
-                depends = deps,
+                depends = depends?.split(",").orEmpty(),
                 due = due,
                 defer = defer,
                 priority = priority,
@@ -84,14 +89,115 @@ private class AddCmd : TkCommand("add", "Create a task; prints the new id") {
     }
 }
 
-/**
- * `export` (M0 stub). Real implementation — read `tasks/`, derive computed
- * attributes, stream JSON — lands next (PRD §7.2, §12).
- */
-private class ExportCmd : TkCommand("export", "Print the JSON export (M0 stub: empty export)") {
+/** `export [--include-body] [--archived]` — full JSON contract (PRD §12). */
+private class ExportCmd : TkCommand("export", "Print the full JSON export") {
+    val includeBody by option(ArgType.Boolean, "include-body", description = "Add a per-node body field").default(false)
+    val archived by option(ArgType.Boolean, "archived", description = "Include the archive subtree").default(false)
+
     override fun run() {
-        println(json.encodeToString(ExportDto.serializer(), computeExport()))
+        val ws = Workspace.discover(root)
+        val export = ws.buildExport(includeBody = includeBody, includeArchived = archived)
+        println(json.encodeToString(io.taskkling.contract.ExportDto.serializer(), export))
     }
+}
+
+/**
+ * `list [filters] [--id-only] [--json] [--archived]` — a filtered/sorted
+ * collection, `ls -la`-style (PRD §10.2/§10.3). Computed states fold in as
+ * filters (`--ready`/`--blocked`/`--waiting`); dependency queries via
+ * `--blocking`/`--blocked-by`.
+ */
+private class ListCmd : TkCommand("list", "List tasks (ls -la style); filters fold computed states") {
+    val archived by option(ArgType.Boolean, "archived", description = "Include the archive subtree").default(false)
+    val idOnly by option(ArgType.Boolean, "id-only", description = "Print only ids, one per line").default(false)
+    val asJson by option(ArgType.Boolean, "json", description = "Emit JSON array of nodes").default(false)
+    val status by option(ArgType.String, "status", "s", description = "Filter by stored status")
+    val thread by option(ArgType.String, "thread", "t", description = "Filter by thread")
+    val ready by option(ArgType.Boolean, "ready", description = "Only ready nodes").default(false)
+    val blocked by option(ArgType.Boolean, "blocked", description = "Only blocked nodes").default(false)
+    val waiting by option(ArgType.Boolean, "waiting", description = "Only waiting nodes").default(false)
+    val blocking by option(ArgType.String, "blocking", description = "Nodes that <id> depends on (upstream)")
+    val blockedBy by option(ArgType.String, "blocked-by", description = "Nodes that depend on <id> (downstream)")
+
+    override fun run() {
+        val ws = Workspace.discover(root)
+        val all = ws.loadTasks(includeArchived = archived)
+        val computed = computeAll(all)
+        val byId = all.associateBy { it.id }
+
+        val statusFilter = status?.let { Status.from(it) }
+
+        fun refTask(id: String): Task =
+            byId[id] ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
+
+        val blockingSet = blocking?.let { refTask(it).depends.toSet() }
+        val blockedBySet = blockedBy?.let { id -> refTask(id); all.filter { id in it.depends }.map { it.id }.toSet() }
+
+        val rows = all.filter { t ->
+            val c = computed.getValue(t.id)
+            (statusFilter == null || t.status == statusFilter) &&
+                (thread == null || t.thread == thread) &&
+                (!ready || c.ready) &&
+                (!blocked || c.blocked) &&
+                (!waiting || t.status == Status.WAITING) &&
+                (blockingSet == null || t.id in blockingSet) &&
+                (blockedBySet == null || t.id in blockedBySet)
+        }.sortedBy { it.created }
+
+        when {
+            idOnly -> rows.forEach { println(it.id) }
+            asJson -> {
+                val dtos = rows.map { it.toDto(computed.getValue(it.id), includeBody = false) }
+                println(json.encodeToString(ListSerializer(TaskDto.serializer()), dtos))
+            }
+            else -> {
+                val table = formatTable(rows)
+                if (table.isNotEmpty()) println(table)
+            }
+        }
+    }
+}
+
+/** Aligned, header-less `ls -la`-style table: id · title · thread · status · attributes. */
+private fun formatTable(rows: List<Task>): String {
+    if (rows.isEmpty()) return ""
+    data class Row(val id: String, val title: String, val thread: String, val status: String, val attrs: String)
+
+    val cells = rows.map { t ->
+        Row(
+            id = t.id,
+            title = if (t.title.length > 50) t.title.take(49) + "…" else t.title,
+            thread = t.thread ?: "-",
+            status = t.status.wire,
+            attrs = buildAttrs(t),
+        )
+    }
+    val idW = cells.maxOf { it.id.length }
+    val titleW = cells.maxOf { it.title.length }
+    val threadW = cells.maxOf { it.thread.length }
+    val statusW = cells.maxOf { it.status.length }
+
+    return cells.joinToString("\n") { r ->
+        buildString {
+            append(r.id.padEnd(idW)); append("  ")
+            append(r.title.padEnd(titleW)); append("  ")
+            append(r.thread.padEnd(threadW)); append("  ")
+            append(r.status.padEnd(statusW))
+            if (r.attrs.isNotEmpty()) {
+                append("  "); append(r.attrs)
+            }
+        }
+    }
+}
+
+/** Fold the non-empty relational/time fields into one column (PRD §10.2). */
+private fun buildAttrs(t: Task): String {
+    val parts = ArrayList<String>()
+    if (t.depends.isNotEmpty()) parts.add("depends:" + t.depends.joinToString(","))
+    if (t.due != null) parts.add("due:${t.due}")
+    if (t.defer != null) parts.add("defer:${t.defer}")
+    if (t.waitingOn != null) parts.add("waiting:${t.waitingOn}")
+    return parts.joinToString("  ")
 }
 
 /** Entry point for the native `taskkling` binary (PRD §6.2, §10). */
@@ -101,6 +207,6 @@ public fun main(args: Array<String>) {
         return
     }
     val parser = ArgParser("taskkling")
-    parser.subcommands(InitCmd(), AddCmd(), ExportCmd())
+    parser.subcommands(InitCmd(), AddCmd(), ListCmd(), ExportCmd())
     parser.parse(args)
 }
