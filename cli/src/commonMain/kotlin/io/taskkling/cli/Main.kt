@@ -2,6 +2,7 @@ package io.taskkling.cli
 
 import io.taskkling.contract.TaskDto
 import io.taskkling.core.AddArgs
+import io.taskkling.core.Computed
 import io.taskkling.core.Status
 import io.taskkling.core.Task
 import io.taskkling.core.TkError
@@ -13,11 +14,17 @@ import io.taskkling.core.buildExport
 import io.taskkling.core.computeAll
 import io.taskkling.core.initWorkspace
 import io.taskkling.core.loadTasks
+import io.taskkling.core.markDone
+import io.taskkling.core.markDropped
+import io.taskkling.core.rawFile
+import io.taskkling.core.reopenTask
 import io.taskkling.core.toDto
+import io.taskkling.core.waitTask
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.Subcommand
 import kotlinx.cli.default
+import kotlinx.cli.multiple
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlin.system.exitProcess
@@ -86,6 +93,84 @@ private class AddCmd : TkCommand("add", "Create a task; prints the new id") {
             ),
         )
         println(id)
+    }
+}
+
+/** `show <id>` — print the raw `.md` file verbatim (PRD §10.2). */
+private class ShowCmd : TkCommand("show", "Print the raw .md file verbatim") {
+    val id by argument(ArgType.String, description = "Task id")
+
+    override fun run() {
+        val ws = Workspace.discover(root)
+        val raw = ws.rawFile(id) ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
+        print(raw)
+    }
+}
+
+/** `get <id> [-f field…] [--json]` — parsed field values, stored + computed (PRD §10.2). */
+private class GetCmd : TkCommand("get", "Print a node's field values (stored + computed)") {
+    val id by argument(ArgType.String, description = "Task id")
+    val fields by option(ArgType.String, "field", "f", description = "Field to print (repeatable; default: all)").multiple()
+    val asJson by option(ArgType.Boolean, "json", description = "Emit the node as a JSON object").default(false)
+
+    override fun run() {
+        val ws = Workspace.discover(root)
+        val all = ws.loadTasks()
+        val computed = computeAll(all)
+        val task = all.firstOrNull { it.id == id } ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
+        val c = computed.getValue(id)
+
+        if (asJson) {
+            println(json.encodeToString(TaskDto.serializer(), task.toDto(c, includeBody = false)))
+            return
+        }
+        val map = fieldMap(task, c)
+        if (fields.isEmpty()) {
+            map.forEach { (k, v) -> println("$k: $v") }
+        } else {
+            fields.forEach { name ->
+                val v = map[name] ?: throw TkError(ExitCode.USAGE, "unknown field '$name'")
+                println(v)
+            }
+        }
+    }
+}
+
+/** `done <id>` — mark done, stamp closed (PRD §10.5). */
+private class DoneCmd : TkCommand("done", "Mark a task done (stamps closed)") {
+    val id by argument(ArgType.String, description = "Task id")
+    override fun run() {
+        Workspace.discover(root).markDone(id)
+        if (!quiet) println(id)
+    }
+}
+
+/** `drop <id>` — mark dropped, stamp closed (PRD §10.5). */
+private class DropCmd : TkCommand("drop", "Mark a task dropped (stamps closed)") {
+    val id by argument(ArgType.String, description = "Task id")
+    override fun run() {
+        Workspace.discover(root).markDropped(id)
+        if (!quiet) println(id)
+    }
+}
+
+/** `reopen <id>` — return to open, clear closed (PRD §10.5). */
+private class ReopenCmd : TkCommand("reopen", "Reopen a task (clears closed)") {
+    val id by argument(ArgType.String, description = "Task id")
+    override fun run() {
+        Workspace.discover(root).reopenTask(id)
+        if (!quiet) println(id)
+    }
+}
+
+/** `wait <id> [--until <dt>] [--on "<text>"]` — set waiting, fold defer (PRD §10.5). */
+private class WaitCmd : TkCommand("wait", "Set status=waiting; optionally defer (--until) and reason (--on)") {
+    val id by argument(ArgType.String, description = "Task id")
+    val until by option(ArgType.String, "until", description = "Defer until this datetime (suppresses readiness)")
+    val on by option(ArgType.String, "on", description = "waiting_on reason text")
+    override fun run() {
+        Workspace.discover(root).waitTask(id, until, on)
+        if (!quiet) println(id)
     }
 }
 
@@ -190,6 +275,31 @@ private fun formatTable(rows: List<Task>): String {
     }
 }
 
+/** Ordered stored + computed fields for `get` (PRD §8.1/§8.2). */
+private fun fieldMap(t: Task, c: Computed): LinkedHashMap<String, String> {
+    fun s(v: String?) = v ?: ""
+    return linkedMapOf(
+        "id" to t.id,
+        "title" to t.title,
+        "thread" to s(t.thread),
+        "status" to t.status.wire,
+        "waiting_on" to s(t.waitingOn),
+        "depends" to t.depends.joinToString(","),
+        "due" to s(t.due),
+        "defer" to s(t.defer),
+        "priority" to t.priority.wire,
+        "created" to t.created,
+        "closed" to s(t.closed),
+        "ready" to c.ready.toString(),
+        "blocked" to c.blocked.toString(),
+        "deferred" to c.deferred.toString(),
+        "overdue" to c.overdue.toString(),
+        "resurfaced" to c.resurfaced.toString(),
+        "blockers" to c.blockers.joinToString(","),
+        "dependents" to c.dependents.joinToString(","),
+    )
+}
+
 /** Fold the non-empty relational/time fields into one column (PRD §10.2). */
 private fun buildAttrs(t: Task): String {
     val parts = ArrayList<String>()
@@ -207,6 +317,10 @@ public fun main(args: Array<String>) {
         return
     }
     val parser = ArgParser("taskkling")
-    parser.subcommands(InitCmd(), AddCmd(), ListCmd(), ExportCmd())
+    parser.subcommands(
+        InitCmd(), AddCmd(), ListCmd(), ExportCmd(),
+        ShowCmd(), GetCmd(),
+        DoneCmd(), DropCmd(), ReopenCmd(), WaitCmd(),
+    )
     parser.parse(args)
 }

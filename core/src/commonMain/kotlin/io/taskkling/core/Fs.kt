@@ -69,5 +69,14 @@ public fun Workspace.writeFileAtomic(target: okio.Path, content: String) {
     target.parent?.let { fs.createDirectories(it) }
     val tmp = tmpDir / "${target.name}.${Clock.System.now().toEpochMilliseconds()}.tmp"
     fs.write(tmp) { writeUtf8(content) }
-    fs.atomicMove(tmp, target)
+    try {
+        fs.atomicMove(tmp, target)
+    } catch (_: IOException) {
+        // POSIX/JVM rename replaces atomically (fast path above). Windows
+        // rename() refuses an existing target, so replace explicitly. Safe
+        // under the global write lock; the proper atomic MoveFileEx shim
+        // (PRD §7.1) removes even this brief gap in M1 lock hardening.
+        fs.delete(target, mustExist = false)
+        fs.atomicMove(tmp, target)
+    }
 }
