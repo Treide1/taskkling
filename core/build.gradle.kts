@@ -14,6 +14,7 @@ kotlin {
         commonMain.dependencies {
             api(project(":contract"))
             implementation(libs.okio)
+            implementation(libs.kotlinx.datetime)
         }
     }
 }

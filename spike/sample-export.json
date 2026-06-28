@@ -1,0 +1,204 @@
+{
+  "generatedAt": "2026-06-28T10:00:00Z",
+  "counts": { "ready": 3, "blocked": 2, "waiting": 1, "done": 1 },
+  "tasks": [
+    {
+      "id": "t-a1z9",
+      "title": "Gewerbe anmelden",
+      "thread": "legal",
+      "status": "done",
+      "waitingOn": null,
+      "depends": [],
+      "due": null,
+      "defer": null,
+      "priority": "high",
+      "created": "2026-06-10T09:00:00Z",
+      "closed": "2026-06-12T14:30:00Z",
+      "computed": {
+        "ready": false,
+        "blocked": false,
+        "deferred": false,
+        "overdue": false,
+        "resurfaced": false,
+        "blockers": [],
+        "dependents": ["t-c3x7", "t-h8s2"]
+      }
+    },
+    {
+      "id": "t-c3x7",
+      "title": "Fragebogen zur steuerlichen Erfassung",
+      "thread": "legal",
+      "status": "open",
+      "waitingOn": null,
+      "depends": ["t-a1z9"],
+      "due": null,
+      "defer": null,
+      "priority": "high",
+      "created": "2026-06-12T15:00:00Z",
+      "closed": null,
+      "computed": {
+        "ready": true,
+        "blocked": false,
+        "deferred": false,
+        "overdue": false,
+        "resurfaced": false,
+        "blockers": [],
+        "dependents": ["t-e5v5"]
+      }
+    },
+    {
+      "id": "t-d4w6",
+      "title": "Betriebshaftpflicht abschliessen",
+      "thread": "legal",
+      "status": "waiting",
+      "waitingOn": "Angebot der Versicherung",
+      "depends": [],
+      "due": null,
+      "defer": null,
+      "priority": "normal",
+      "created": "2026-06-14T08:00:00Z",
+      "closed": null,
+      "computed": {
+        "ready": false,
+        "blocked": false,
+        "deferred": false,
+        "overdue": false,
+        "resurfaced": false,
+        "blockers": [],
+        "dependents": ["t-g7t3"]
+      }
+    },
+    {
+      "id": "t-e5v5",
+      "title": "Kleinunternehmer-Status (§19 UStG) bestätigen",
+      "thread": "legal",
+      "status": "open",
+      "waitingOn": null,
+      "depends": ["t-c3x7"],
+      "due": null,
+      "defer": null,
+      "priority": "high",
+      "created": "2026-06-14T09:00:00Z",
+      "closed": null,
+      "computed": {
+        "ready": false,
+        "blocked": true,
+        "deferred": false,
+        "overdue": false,
+        "resurfaced": false,
+        "blockers": ["t-c3x7"],
+        "dependents": ["t-g7t3"]
+      }
+    },
+    {
+      "id": "t-f6u4",
+      "title": "Flyer-Text finalisieren",
+      "thread": "marketing",
+      "status": "open",
+      "waitingOn": null,
+      "depends": [],
+      "due": null,
+      "defer": null,
+      "priority": "normal",
+      "created": "2026-06-15T11:00:00Z",
+      "closed": null,
+      "computed": {
+        "ready": true,
+        "blocked": false,
+        "deferred": false,
+        "overdue": false,
+        "resurfaced": false,
+        "blockers": [],
+        "dependents": ["t-g7t3"]
+      }
+    },
+    {
+      "id": "t-g7t3",
+      "title": "Flyer drucken & verteilen",
+      "thread": "marketing",
+      "status": "open",
+      "waitingOn": null,
+      "depends": ["t-e5v5", "t-f6u4", "t-d4w6"],
+      "due": null,
+      "defer": null,
+      "priority": "high",
+      "created": "2026-06-15T11:30:00Z",
+      "closed": null,
+      "computed": {
+        "ready": false,
+        "blocked": true,
+        "deferred": false,
+        "overdue": false,
+        "resurfaced": false,
+        "blockers": ["t-e5v5", "t-f6u4", "t-d4w6"],
+        "dependents": []
+      }
+    },
+    {
+      "id": "t-h8s2",
+      "title": "Geschäftskonto eröffnen",
+      "thread": "ops",
+      "status": "open",
+      "waitingOn": null,
+      "depends": ["t-a1z9"],
+      "due": null,
+      "defer": "2026-07-15T00:00:00Z",
+      "priority": "normal",
+      "created": "2026-06-16T10:00:00Z",
+      "closed": null,
+      "computed": {
+        "ready": false,
+        "blocked": false,
+        "deferred": true,
+        "overdue": false,
+        "resurfaced": false,
+        "blockers": [],
+        "dependents": []
+      }
+    },
+    {
+      "id": "t-i9r1",
+      "title": "Visitenkarten bestellen",
+      "thread": "marketing",
+      "status": "open",
+      "waitingOn": null,
+      "depends": [],
+      "due": "2026-06-25T00:00:00Z",
+      "defer": null,
+      "priority": "low",
+      "created": "2026-06-13T07:00:00Z",
+      "closed": null,
+      "computed": {
+        "ready": true,
+        "blocked": false,
+        "deferred": false,
+        "overdue": true,
+        "resurfaced": false,
+        "blockers": [],
+        "dependents": []
+      }
+    },
+    {
+      "id": "t-j0q0",
+      "title": "Eigene Domain registrieren",
+      "thread": "marketing",
+      "status": "dropped",
+      "waitingOn": null,
+      "depends": [],
+      "due": null,
+      "defer": null,
+      "priority": "low",
+      "created": "2026-06-11T12:00:00Z",
+      "closed": "2026-06-18T16:00:00Z",
+      "computed": {
+        "ready": false,
+        "blocked": false,
+        "deferred": false,
+        "overdue": false,
+        "resurfaced": false,
+        "blockers": [],
+        "dependents": []
+      }
+    }
+  ]
+}

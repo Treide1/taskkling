@@ -5,11 +5,13 @@ kotlin = "2.1.0"
 compose = "1.7.3"
 kotlinxSerialization = "1.7.3"
 kotlinxCli = "0.3.6"
+kotlinxDatetime = "0.6.1"
 okio = "3.9.1"
 
 [libraries]
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-cli = { module = "org.jetbrains.kotlinx:kotlinx-cli", version.ref = "kotlinxCli" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinxDatetime" }
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 
 [plugins]

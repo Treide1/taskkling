@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>taskkling — graph spike</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c232d;
+    --line: #2a3340;
+    --txt: #d6dee8;
+    --muted: #8b97a7;
+    --faint: #5a6675;
+    --accent: #4da3ff;
+    /* state colors */
+    --ready: #3fb950;
+    --blocked: #f85149;
+    --waiting: #d29922;
+    --deferred: #58a6ff;
+    --done: #6e7681;
+    --dropped: #484f58;
+    --overdue: #ff7b72;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--txt);
+    font: 13px/1.5 ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  header h1 {
+    font-size: 14px;
+    margin: 0;
+    letter-spacing: .5px;
+  }
+  header h1 .v { color: var(--faint); font-weight: 400; }
+  .gen { color: var(--muted); font-size: 11px; }
+  .counts { display: flex; gap: 10px; margin-left: auto; }
+  .count {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 9px; border-radius: 12px;
+    background: var(--panel-2); border: 1px solid var(--line);
+  }
+  .count .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .count b { font-weight: 700; }
+  .count .lbl { color: var(--muted); }
+
+  main { flex: 1 1 auto; display: flex; min-height: 0; }
+
+  #stage {
+    flex: 1 1 auto;
+    overflow: auto;
+    position: relative;
+    background:
+      radial-gradient(circle at 1px 1px, #1a212b 1px, transparent 0) 0 0 / 26px 26px;
+  }
+  #graph { position: relative; }
+  #edges { position: absolute; inset: 0; pointer-events: none; }
+  #edges path { fill: none; stroke: var(--line); stroke-width: 1.6; transition: stroke .15s, opacity .15s; }
+  #edges path.hl { stroke: var(--accent); stroke-width: 2.4; }
+
+  .node {
+    position: absolute;
+    width: 210px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left-width: 4px;
+    border-radius: 7px;
+    padding: 8px 10px;
+    cursor: pointer;
+    transition: transform .1s, box-shadow .15s, opacity .15s;
+    user-select: none;
+  }
+  .node:hover { box-shadow: 0 4px 18px rgba(0,0,0,.5); transform: translateY(-1px); }
+  .node.sel { box-shadow: 0 0 0 2px var(--accent), 0 6px 22px rgba(0,0,0,.55); }
+  .node.dim { opacity: .28; }
+
+  .node .id { color: var(--faint); font-size: 11px; }
+  .node .title { font-size: 12.5px; margin: 2px 0 6px; color: var(--txt); }
+  .node.s-done .title, .node.s-dropped .title { color: var(--muted); }
+  .node.s-dropped .title { text-decoration: line-through; }
+  .node .meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+  .tag {
+    font-size: 10px; padding: 1px 7px; border-radius: 10px;
+    border: 1px solid var(--line); color: var(--muted); background: var(--panel-2);
+    white-space: nowrap;
+  }
+  .tag.thread::before { content: "#"; opacity: .6; }
+  .tag.state { color: #0e1116; font-weight: 700; border: none; }
+  .tag.dep::before { content: "⛓ "; }
+  .tag.due { color: var(--overdue); border-color: #5a2a28; }
+  .tag.defer { color: var(--deferred); border-color: #284263; }
+  .tag.wait { color: var(--waiting); border-color: #5a4a1a; }
+  .tag.prio-high { color: var(--blocked); border-color: #5a2a28; }
+  .tag.prio-low { color: var(--faint); }
+
+  /* state accents on left border + state pill bg */
+  .s-ready    { border-left-color: var(--ready); }
+  .s-blocked  { border-left-color: var(--blocked); }
+  .s-waiting  { border-left-color: var(--waiting); }
+  .s-deferred { border-left-color: var(--deferred); }
+  .s-done     { border-left-color: var(--done); }
+  .s-dropped  { border-left-color: var(--dropped); }
+  .s-open     { border-left-color: var(--faint); }
+
+  .pill-ready    { background: var(--ready); }
+  .pill-blocked  { background: var(--blocked); }
+  .pill-waiting  { background: var(--waiting); }
+  .pill-deferred { background: var(--deferred); }
+  .pill-done     { background: var(--done); }
+  .pill-dropped  { background: var(--dropped); color: #c9d1d9 !important; }
+  .pill-open     { background: var(--faint); }
+
+  /* details panel */
+  #panel {
+    flex: 0 0 320px;
+    border-left: 1px solid var(--line);
+    background: var(--panel);
+    padding: 16px;
+    overflow: auto;
+  }
+  #panel.empty { color: var(--muted); display: flex; align-items: center; justify-content: center; text-align: center; }
+  #panel h2 { font-size: 14px; margin: 0 0 2px; }
+  #panel .pid { color: var(--faint); font-size: 11px; margin-bottom: 14px; }
+  .field { margin-bottom: 9px; }
+  .field .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  .field .val { color: var(--txt); word-break: break-word; }
+  .field .val.none { color: var(--faint); }
+  .flags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .flag { font-size: 10px; padding: 1px 7px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+  .flag.on { color: #0e1116; font-weight: 700; border: none; }
+  .reflist a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .reflist a:hover { text-decoration: underline; }
+
+  /* legend */
+  .legend { display: flex; gap: 12px; padding: 8px 16px; border-top: 1px solid var(--line); background: var(--panel); flex: 0 0 auto; flex-wrap: wrap; }
+  .legend .item { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+  .legend .sw { width: 12px; height: 12px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>taskkling <span class="v">· graph spike</span></h1>
+  <span class="gen" id="gen"></span>
+  <div class="counts" id="counts"></div>
+</header>
+
+<main>
+  <div id="stage">
+    <div id="graph">
+      <svg id="edges"><defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--line)"/>
+        </marker>
+        <marker id="arrow-hl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+        </marker>
+      </defs></svg>
+    </div>
+  </div>
+  <aside id="panel" class="empty">Select a node to inspect.<br>Edges point from a blocker → the task it blocks.</aside>
+</main>
+
+<div class="legend" id="legend"></div>
+
+<script>
+/* ---------------------------------------------------------------------------
+ * Spike data — identical to spike/sample-export.json and to the shape emitted
+ * by `taskkling export` (contract: io.taskkling.contract.ExportDto).
+ * To drive this from live CLI output later, serve over http and replace the
+ * literal below with:
+ *     const DATA = await fetch('export.json').then(r => r.json());
+ * Nothing else in this file needs to change.
+ * ------------------------------------------------------------------------- */
+const DATA = {
+  "generatedAt": "2026-06-28T10:00:00Z",
+  "counts": { "ready": 3, "blocked": 2, "waiting": 1, "done": 1 },
+  "tasks": [
+    { "id": "t-a1z9", "title": "Gewerbe anmelden", "thread": "legal", "status": "done", "waitingOn": null, "depends": [], "due": null, "defer": null, "priority": "high", "created": "2026-06-10T09:00:00Z", "closed": "2026-06-12T14:30:00Z", "computed": { "ready": false, "blocked": false, "deferred": false, "overdue": false, "resurfaced": false, "blockers": [], "dependents": ["t-c3x7", "t-h8s2"] } },
+    { "id": "t-c3x7", "title": "Fragebogen zur steuerlichen Erfassung", "thread": "legal", "status": "open", "waitingOn": null, "depends": ["t-a1z9"], "due": null, "defer": null, "priority": "high", "created": "2026-06-12T15:00:00Z", "closed": null, "computed": { "ready": true, "blocked": false, "deferred": false, "overdue": false, "resurfaced": false, "blockers": [], "dependents": ["t-e5v5"] } },
+    { "id": "t-d4w6", "title": "Betriebshaftpflicht abschliessen", "thread": "legal", "status": "waiting", "waitingOn": "Angebot der Versicherung", "depends": [], "due": null, "defer": null, "priority": "normal", "created": "2026-06-14T08:00:00Z", "closed": null, "computed": { "ready": false, "blocked": false, "deferred": false, "overdue": false, "resurfaced": false, "blockers": [], "dependents": ["t-g7t3"] } },
+    { "id": "t-e5v5", "title": "Kleinunternehmer-Status (§19 UStG) bestätigen", "thread": "legal", "status": "open", "waitingOn": null, "depends": ["t-c3x7"], "due": null, "defer": null, "priority": "high", "created": "2026-06-14T09:00:00Z", "closed": null, "computed": { "ready": false, "blocked": true, "deferred": false, "overdue": false, "resurfaced": false, "blockers": ["t-c3x7"], "dependents": ["t-g7t3"] } },
+    { "id": "t-f6u4", "title": "Flyer-Text finalisieren", "thread": "marketing", "status": "open", "waitingOn": null, "depends": [], "due": null, "defer": null, "priority": "normal", "created": "2026-06-15T11:00:00Z", "closed": null, "computed": { "ready": true, "blocked": false, "deferred": false, "overdue": false, "resurfaced": false, "blockers": [], "dependents": ["t-g7t3"] } },
+    { "id": "t-g7t3", "title": "Flyer drucken & verteilen", "thread": "marketing", "status": "open", "waitingOn": null, "depends": ["t-e5v5", "t-f6u4", "t-d4w6"], "due": null, "defer": null, "priority": "high", "created": "2026-06-15T11:30:00Z", "closed": null, "computed": { "ready": false, "blocked": true, "deferred": false, "overdue": false, "resurfaced": false, "blockers": ["t-e5v5", "t-f6u4", "t-d4w6"], "dependents": [] } },
+    { "id": "t-h8s2", "title": "Geschäftskonto eröffnen", "thread": "ops", "status": "open", "waitingOn": null, "depends": ["t-a1z9"], "due": null, "defer": "2026-07-15T00:00:00Z", "priority": "normal", "created": "2026-06-16T10:00:00Z", "closed": null, "computed": { "ready": false, "blocked": false, "deferred": true, "overdue": false, "resurfaced": false, "blockers": [], "dependents": [] } },
+    { "id": "t-i9r1", "title": "Visitenkarten bestellen", "thread": "marketing", "status": "open", "waitingOn": null, "depends": [], "due": "2026-06-25T00:00:00Z", "defer": null, "priority": "low", "created": "2026-06-13T07:00:00Z", "closed": null, "computed": { "ready": true, "blocked": false, "deferred": false, "overdue": true, "resurfaced": false, "blockers": [], "dependents": [] } },
+    { "id": "t-j0q0", "title": "Eigene Domain registrieren", "thread": "marketing", "status": "dropped", "waitingOn": null, "depends": [], "due": null, "defer": null, "priority": "low", "created": "2026-06-11T12:00:00Z", "closed": "2026-06-18T16:00:00Z", "computed": { "ready": false, "blocked": false, "deferred": false, "overdue": false, "resurfaced": false, "blockers": [], "dependents": [] } }
+  ]
+};
+
+// ---- layout constants ----
+const CARD_W = 210, CARD_H = 96, COL_GAP = 110, ROW_GAP = 24, PAD = 28;
+
+const tasks = DATA.tasks;
+const byId = new Map(tasks.map(t => [t.id, t]));
+
+// Primary state for coloring (mirrors the precedence the CLI would use).
+function stateOf(t) {
+  if (t.status === "done") return "done";
+  if (t.status === "dropped") return "dropped";
+  if (t.status === "waiting") return "waiting";
+  if (t.computed.blocked) return "blocked";
+  if (t.computed.deferred) return "deferred";
+  if (t.computed.ready) return "ready";
+  return "open";
+}
+
+// Longest-path layering over `depends` (upstream → downstream).
+const layerOf = (() => {
+  const memo = new Map();
+  function L(id) {
+    if (memo.has(id)) return memo.get(id);
+    memo.set(id, 0); // cycle guard
+    const t = byId.get(id);
+    let m = 0;
+    for (const d of (t?.depends || [])) if (byId.has(d)) m = Math.max(m, L(d) + 1);
+    memo.set(id, m);
+    return m;
+  }
+  for (const t of tasks) L(t.id);
+  return memo;
+})();
+
+// Group by layer, keep input order within a layer.
+const cols = [];
+for (const t of tasks) {
+  const l = layerOf.get(t.id);
+  (cols[l] ||= []).push(t);
+}
+
+// Assign positions.
+const pos = new Map();
+let maxRows = 0;
+cols.forEach((col, l) => {
+  maxRows = Math.max(maxRows, col.length);
+  col.forEach((t, r) => {
+    pos.set(t.id, {
+      x: PAD + l * (CARD_W + COL_GAP),
+      y: PAD + r * (CARD_H + ROW_GAP),
+    });
+  });
+});
+
+const W = PAD * 2 + cols.length * CARD_W + (cols.length - 1) * COL_GAP;
+const H = PAD * 2 + maxRows * CARD_H + (maxRows - 1) * ROW_GAP;
+
+const graph = document.getElementById("graph");
+const svg = document.getElementById("edges");
+graph.style.width = W + "px";
+graph.style.height = H + "px";
+svg.setAttribute("width", W);
+svg.setAttribute("height", H);
+svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+
+// ---- edges (blocker -> dependent) ----
+const edges = []; // {from, to, el}
+for (const t of tasks) {
+  for (const dep of t.depends) {
+    if (!byId.has(dep)) continue;
+    const a = pos.get(dep), b = pos.get(t.id);
+    const x1 = a.x + CARD_W, y1 = a.y + CARD_H / 2;
+    const x2 = b.x,          y2 = b.y + CARD_H / 2;
+    const dx = Math.max(40, (x2 - x1) * 0.5);
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`);
+    path.setAttribute("marker-end", "url(#arrow)");
+    svg.appendChild(path);
+    edges.push({ from: dep, to: t.id, el: path });
+  }
+}
+
+// ---- nodes ----
+const nodeEls = new Map();
+function tag(cls, text) { return `<span class="tag ${cls}">${text}</span>`; }
+
+for (const t of tasks) {
+  const p = pos.get(t.id);
+  const st = stateOf(t);
+  const el = document.createElement("div");
+  el.className = `node s-${st}`;
+  el.style.left = p.x + "px";
+  el.style.top = p.y + "px";
+  el.style.minHeight = CARD_H + "px";
+
+  const meta = [];
+  meta.push(tag(`state pill-${st}`, st));
+  if (t.thread) meta.push(tag("thread", t.thread));
+  if (t.priority === "high") meta.push(tag("prio-high", "!high"));
+  if (t.priority === "low") meta.push(tag("prio-low", "low"));
+  if (t.depends.length) meta.push(tag("dep", t.depends.length));
+  if (t.computed.overdue && t.due) meta.push(tag("due", "overdue " + fmtDate(t.due)));
+  else if (t.due) meta.push(tag("due", "due " + fmtDate(t.due)));
+  if (t.defer) meta.push(tag("defer", "⏳ " + fmtDate(t.defer)));
+  if (t.waitingOn) meta.push(tag("wait", "⌛ " + t.waitingOn));
+
+  el.innerHTML =
+    `<div class="id">${t.id}</div>` +
+    `<div class="title">${esc(t.title)}</div>` +
+    `<div class="meta">${meta.join("")}</div>`;
+
+  el.addEventListener("click", (e) => { e.stopPropagation(); select(t.id); });
+  graph.appendChild(el);
+  nodeEls.set(t.id, el);
+}
+
+// ---- selection / highlight ----
+let selected = null;
+function select(id) {
+  selected = id;
+  const neighbors = new Set([id]);
+  for (const e of edges) {
+    if (e.from === id) neighbors.add(e.to);
+    if (e.to === id) neighbors.add(e.from);
+  }
+  nodeEls.forEach((el, nid) => {
+    el.classList.toggle("sel", nid === id);
+    el.classList.toggle("dim", !neighbors.has(nid));
+  });
+  for (const e of edges) {
+    const on = e.from === id || e.to === id;
+    e.el.classList.toggle("hl", on);
+    e.el.setAttribute("marker-end", on ? "url(#arrow-hl)" : "url(#arrow)");
+    e.el.style.opacity = (selected && !on) ? .2 : 1;
+  }
+  renderPanel(byId.get(id));
+}
+function clearSelection() {
+  selected = null;
+  nodeEls.forEach(el => el.classList.remove("sel", "dim"));
+  for (const e of edges) { e.el.classList.remove("hl"); e.el.setAttribute("marker-end", "url(#arrow)"); e.el.style.opacity = 1; }
+  const panel = document.getElementById("panel");
+  panel.className = "empty";
+  panel.innerHTML = "Select a node to inspect.<br>Edges point from a blocker → the task it blocks.";
+}
+document.getElementById("stage").addEventListener("click", clearSelection);
+
+// ---- details panel ----
+function renderPanel(t) {
+  const panel = document.getElementById("panel");
+  panel.className = "";
+  const c = t.computed;
+  const flags = ["ready", "blocked", "deferred", "overdue", "resurfaced"]
+    .map(f => `<span class="flag ${c[f] ? "on pill-" + (f === "ready" ? "ready" : f === "blocked" ? "blocked" : f === "deferred" ? "deferred" : "waiting") : ""}">${f}</span>`)
+    .join("");
+  panel.innerHTML =
+    `<h2>${esc(t.title)}</h2>` +
+    `<div class="pid">${t.id}</div>` +
+    field("status", t.status) +
+    field("thread", t.thread) +
+    field("priority", t.priority) +
+    field("waiting on", t.waitingOn) +
+    field("due", t.due && fmtDateTime(t.due)) +
+    field("defer", t.defer && fmtDateTime(t.defer)) +
+    field("created", fmtDateTime(t.created)) +
+    field("closed", t.closed && fmtDateTime(t.closed)) +
+    `<div class="field"><div class="k">computed</div><div class="flags">${flags}</div></div>` +
+    refField("blocks on (depends)", t.depends) +
+    refField("blockers (unmet)", c.blockers) +
+    refField("dependents", c.dependents);
+  panel.querySelectorAll("a[data-id]").forEach(a =>
+    a.addEventListener("click", (e) => { e.stopPropagation(); select(a.dataset.id); }));
+}
+function field(k, v) {
+  const none = v === null || v === undefined || v === "";
+  return `<div class="field"><div class="k">${k}</div><div class="val${none ? " none" : ""}">${none ? "—" : esc(String(v))}</div></div>`;
+}
+function refField(k, ids) {
+  const body = (ids && ids.length)
+    ? `<div class="val reflist">${ids.map(id => `<a data-id="${id}">${id}</a>`).join(", ")}</div>`
+    : `<div class="val none">—</div>`;
+  return `<div class="field"><div class="k">${k}</div>${body}</div>`;
+}
+
+// ---- header: counts + generatedAt ----
+document.getElementById("gen").textContent = "generated " + fmtDateTime(DATA.generatedAt);
+const countDefs = [["ready", "ready"], ["blocked", "blocked"], ["waiting", "waiting"], ["done", "done"]];
+document.getElementById("counts").innerHTML = countDefs.map(([k, lbl]) =>
+  `<div class="count"><span class="dot pill-${k}"></span><b>${DATA.counts[k] ?? 0}</b> <span class="lbl">${lbl}</span></div>`
+).join("");
+
+// ---- legend ----
+const legendDefs = [
+  ["ready", "ready"], ["blocked", "blocked"], ["waiting", "waiting"],
+  ["deferred", "deferred"], ["done", "done"], ["dropped", "dropped"], ["open", "open"],
+];
+document.getElementById("legend").innerHTML = legendDefs.map(([k, lbl]) =>
+  `<span class="item"><span class="sw pill-${k}"></span>${lbl}</span>`
+).join("") + `<span class="item" style="margin-left:auto">→ blocker points to blocked task</span>`;
+
+// ---- helpers ----
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function fmtDate(iso) { return iso.slice(0, 10); }
+function fmtDateTime(iso) { return iso.replace("T", " ").replace(/:\d\dZ$/, "").replace("Z", "") + " UTC"; }
+</script>
+</body>
+</html>
