@@ -12,6 +12,9 @@ dependencies {
     // CLI client; it cannot parse or write task files.
     implementation(project(":contract"))
     implementation(compose.desktop.currentOs)
+    // The DTOs in :contract carry generated serializers; the UI needs the JSON
+    // runtime to decode `taskkling export` output (PRD §6.3, §12).
+    implementation(libs.kotlinx.serialization.json)
 }
 
 compose.desktop {
