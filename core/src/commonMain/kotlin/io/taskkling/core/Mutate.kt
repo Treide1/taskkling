@@ -130,3 +130,66 @@ public fun Workspace.linkDepends(id: String, dep: String, exportAfter: Boolean =
 /** `unlink <id> --depends <dep>` — remove a dependency edge (PRD §10.6). */
 public fun Workspace.unlinkDepends(id: String, dep: String, exportAfter: Boolean = false): MutationResult =
     updateTask(id, exportAfter) { t -> t.copy(depends = t.depends.filter { it != dep }) }
+
+/**
+ * Inputs for `set` (PRD §10.4). Each non-null field is applied; an empty string
+ * unsets the (optional) field, equivalent to naming it in [clear]. Status and
+ * `depends` are intentionally absent — they are owned by the lifecycle and
+ * link/unlink verbs, not `set`.
+ */
+public data class SetArgs(
+    val title: String? = null,
+    val thread: String? = null,
+    val due: String? = null,
+    val defer: String? = null,
+    val priority: String? = null,
+    val clear: List<String> = emptyList(),
+)
+
+/**
+ * `set <id> [--<field> …] [--clear <field>…]` — atomic multi-field metadata edit
+ * (PRD §10.4). Runs the validated write path: `due`/`defer` are normalized,
+ * `priority` is enum-checked, and a `title` change re-slugs the filename. `title`
+ * cannot be cleared; clearing `priority` resets it to `normal`.
+ */
+public fun Workspace.setFields(id: String, args: SetArgs, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { t ->
+        var x = t
+        args.title?.let { v ->
+            if (v.isBlank()) throw TkError(ExitCode.USAGE, "title cannot be cleared")
+            x = x.copy(title = v.trim())
+        }
+        args.thread?.let { v -> x = x.copy(thread = v.trim().ifEmpty { null }) }
+        args.due?.let { v -> x = x.copy(due = v.trim().ifEmpty { null }?.let { normalizeDateTime(it) }) }
+        args.defer?.let { v -> x = x.copy(defer = v.trim().ifEmpty { null }?.let { normalizeDateTime(it) }) }
+        args.priority?.let { v -> x = x.copy(priority = if (v.isBlank()) Priority.NORMAL else Priority.from(v)) }
+        for (f in args.clear) {
+            x = when (f) {
+                "thread" -> x.copy(thread = null)
+                "due" -> x.copy(due = null)
+                "defer" -> x.copy(defer = null)
+                "priority" -> x.copy(priority = Priority.NORMAL)
+                "title" -> throw TkError(ExitCode.USAGE, "title cannot be cleared")
+                else -> throw TkError(ExitCode.USAGE, "cannot clear '$f' (clearable: thread, due, defer, priority)")
+            }
+        }
+        x
+    }
+
+/** `write <id> "<text>"` — replace the body in full (PRD §10.6). */
+public fun Workspace.writeBody(id: String, text: String, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { it.copy(body = text.trim()) }
+
+/**
+ * `append <id> "<text>"` — append to the body (PRD §10.6), joined to existing
+ * content by a single newline; an empty body just takes the text.
+ */
+public fun Workspace.appendBody(id: String, text: String, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { t ->
+        val add = text.trim()
+        t.copy(body = if (t.body.isBlank()) add else t.body.trimEnd() + "\n" + add)
+    }
+
+/** `read <id>` — the node's body only, frontmatter stripped (PRD §10.2). */
+public fun Workspace.readBody(id: String): String =
+    loadTask(id)?.body ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
