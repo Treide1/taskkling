@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalCli::class, ExperimentalForeignApi::class)
+
 package io.taskkling.cli
 
 import io.taskkling.contract.ExportDto
@@ -30,6 +32,10 @@ import kotlinx.cli.Subcommand
 import kotlinx.cli.default
 import kotlinx.cli.multiple
 import kotlinx.cli.required
+import kotlinx.cli.ExperimentalCli
+import kotlinx.cinterop.ExperimentalForeignApi
+import platform.posix.fputs
+import platform.posix.stderr
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlin.system.exitProcess
@@ -38,6 +44,11 @@ private val json = Json {
     prettyPrint = true
     encodeDefaults = true
     explicitNulls = true
+}
+
+/** Write a line to stderr (diagnostics) so stdout stays clean for scriptable output. */
+private fun eprintln(message: String) {
+    fputs(message + "\n", stderr)
 }
 
 /**
@@ -52,10 +63,10 @@ private abstract class TkCommand(name: String, description: String) : Subcommand
         try {
             run()
         } catch (e: TkError) {
-            println("taskkling: ${e.message}")
+            eprintln("taskkling: ${e.message}")
             exitProcess(e.exit.code)
         } catch (e: Exception) {
-            println("taskkling: unexpected error: ${e.message}")
+            eprintln("taskkling: unexpected error: ${e.message}")
             exitProcess(1)
         }
     }
