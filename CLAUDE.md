@@ -12,7 +12,7 @@ git-ignored, so after a fresh clone run `taskkling init` once (idempotent — it
 existing `tasks/`).
 
 ### Read the current task structure from the CLI — don't guess from docs
-Use the **built binary directly** (a `tk` shell alias is session-local; don't rely on it). On the
+Use the **built binary directly** — the binary name is `taskkling`, the only name (no short alias). On the
 Windows dev host the debug binary is:
 
 ```

@@ -323,8 +323,8 @@ not filename, so titles/slugs can change freely.
 
 ## 10. CLI surface
 
-Canonical command: `taskkling` (users may alias to e.g. `tk`/`tkl`). The CLI is the single read
-and write interface.
+Canonical command: `taskkling` — the only binary name; no short alias ships (`tk`/`tkl` were
+considered and rejected). The CLI is the single read and write interface.
 
 ### 10.1 Conventions
 - **Output**: human-readable by default; `--json` for machine output where applicable. `export`
