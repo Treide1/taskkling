@@ -9,8 +9,10 @@ import java.io.File
  * client and never touches task files, so finding the one binary is its only
  * environment concern. Resolution order, first hit wins:
  *   1. the `TASKKLING_BINARY` environment variable (explicit override),
- *   2. `binary_path` in the workspace's `.taskkling/config.toml` (PRD §14),
- *   3. an entry named `taskkling`/`taskkling.exe` on `PATH`.
+ *   2. an up-tree `.taskkling/bin/taskkling[.exe]` (a per-project self-install
+ *      via `init --local-bin`; walked up from the start dir like the config step),
+ *   3. `binary_path` in the workspace's `.taskkling/config.toml` (PRD §14),
+ *   4. an entry named `taskkling`/`taskkling.exe` on `PATH`.
  */
 public object CliDiscovery {
     private val exeNames = listOf("taskkling", "taskkling.exe")
@@ -19,8 +21,22 @@ public object CliDiscovery {
         System.getenv("TASKKLING_BINARY")?.takeIf { it.isNotBlank() }?.let { p ->
             if (File(p).canExecute()) return p
         }
+        localBinFromTree(startDir)?.let { return it }
         binaryPathFromConfig(startDir)?.let { return it }
         return onPath()
+    }
+
+    /** Walk up from [startDir] for a self-installed `.taskkling/bin/taskkling[.exe]`. */
+    private fun localBinFromTree(startDir: File): String? {
+        var dir: File? = startDir.absoluteFile
+        while (dir != null) {
+            for (name in exeNames) {
+                val f = File(dir, ".taskkling/bin/$name")
+                if (f.isFile && f.canExecute()) return f.absolutePath
+            }
+            dir = dir.parentFile
+        }
+        return null
     }
 
     /** Walk up from [startDir] for `.taskkling/config.toml` and read its `binary_path`. */

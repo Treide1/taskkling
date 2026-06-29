@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.konan.target.HostManager
+
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
 }
@@ -25,5 +27,19 @@ kotlin {
             implementation(libs.kotlinx.cli)
             implementation(libs.kotlinx.serialization.json)
         }
+    }
+}
+
+// Dev dogfooding: build the host debug binary and drop it into the repo's own
+// .taskkling/bin/ so the tracked ./taskkling[.cmd] wrappers run the fresh build.
+// Windows host only (the one that must work); the same is achievable elsewhere
+// via the built `init --local-bin`.
+if (HostManager.hostIsMingw) {
+    tasks.register<Copy>("installLocalBinDev") {
+        group = "taskkling"
+        description = "Build the debug mingwX64 binary and install it into <repo>/.taskkling/bin for dogfooding."
+        dependsOn("linkDebugExecutableMingwX64")
+        from(layout.buildDirectory.file("bin/mingwX64/debugExecutable/taskkling.exe"))
+        into(rootProject.layout.projectDirectory.dir(".taskkling/bin"))
     }
 }

@@ -20,6 +20,7 @@ import io.taskkling.core.cleanup
 import io.taskkling.core.computeAll
 import io.taskkling.core.deleteTask
 import io.taskkling.core.initWorkspace
+import io.taskkling.core.installLocalBin
 import io.taskkling.core.linkDepends
 import io.taskkling.core.loadTasks
 import io.taskkling.core.markDone
@@ -153,13 +154,22 @@ private abstract class MutationCommand(name: String, description: String) : TkCo
     }
 }
 
-/** `init` — scaffold a workspace in the cwd (PRD §10.7). */
+/** `init [--local-bin]` — scaffold a workspace in the cwd (PRD §10.7); optionally self-install the binary. */
 private class InitCmd : TkCommand("init", "Scaffold a taskkling workspace (.taskkling/ + tasks/)") {
+    val localBin by option(
+        ArgType.Boolean, "local-bin",
+        description = "Also install the running binary into <root>/.taskkling/bin and drop ./taskkling wrappers",
+    ).default(false)
+
     override fun run() {
         val result = initWorkspace(root)
         if (!quiet) {
             val verb = if (result.alreadyExisted) "already initialized" else "initialized taskkling workspace"
             println("$verb: ${result.root}")
+        }
+        if (localBin) {
+            val installed = installLocalBin(result.root)
+            if (!quiet) println("installed local binary: ${installed.binary} (taskkling ${installed.version})")
         }
     }
 }
