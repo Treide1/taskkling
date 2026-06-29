@@ -39,6 +39,8 @@ jobs:
             target: LinuxX64
           - os: macos-latest
             target: MacosArm64
+          - os: macos-latest
+            target: MacosX64
           - os: windows-latest
             target: MingwX64
     runs-on: ${{ matrix.os }}

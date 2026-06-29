@@ -10,5 +10,8 @@ plugins {
 
 allprojects {
     group = "io.taskkling"
-    version = "0.0.1-SNAPSHOT"
+    // Single source of the version: the `version` property in gradle.properties.
+    // Applied to every subproject so :core (generated BUILD_VERSION) and :ui
+    // (Compose installer packageVersion) both derive from one declared value.
+    version = providers.gradleProperty("version").get()
 }

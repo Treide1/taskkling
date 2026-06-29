@@ -1,0 +1,9 @@
+# Line-ending policy. POSIX shell scripts and the `./taskkling` launcher MUST stay
+# LF on every platform: a CRLF byte in a `#!/bin/sh` shebang breaks the interpreter,
+# and `curl | sh` runs install.sh under /bin/sh regardless of the checkout's autocrlf.
+*.sh        text eol=lf
+/taskkling  text eol=lf
+
+# Windows-only scripts keep CRLF.
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
