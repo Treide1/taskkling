@@ -1,5 +1,6 @@
 package io.taskkling.core
 
+import io.taskkling.contract.ExportDto
 import okio.FileSystem
 import okio.Path
 
@@ -25,13 +26,25 @@ public fun Workspace.loadTask(id: String): Task? {
 }
 
 /**
+ * Result of a mutation: the affected [task], plus the full post-mutation
+ * [export] when `--export-on-success` was requested (computed under the lock for
+ * a TOCTOU-free read-after-write, PRD §7.3); otherwise null.
+ */
+public data class MutationResult(val task: Task, val export: ExportDto?)
+
+/**
  * The generic write path for editing one existing node (PRD §7.1): under the
  * global lock, read the file **fresh**, apply [transform], validate, and write
  * via temp→rename. Carrying the whole task from the fresh read (not a stale
  * blob) means concurrent edits to different fields both survive. Renames the
- * file when the slug changes (e.g. a later title edit).
+ * file when the slug changes (e.g. a later title edit). With [exportAfter], the
+ * full export is computed before the lock releases.
  */
-public fun Workspace.updateTask(id: String, transform: (Task) -> Task): Task = withLock {
+public fun Workspace.updateTask(
+    id: String,
+    exportAfter: Boolean = false,
+    transform: (Task) -> Task,
+): MutationResult = withLock {
     val fs = FileSystem.SYSTEM
     val path = findActiveFile(id) ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
     val current = parseTask(path.name, fs.read(path) { readUtf8() })
@@ -40,7 +53,7 @@ public fun Workspace.updateTask(id: String, transform: (Task) -> Task): Task = w
     val newPath = tasksDir / updated.fileName()
     writeFileAtomic(newPath, updated.toMarkdown())
     if (newPath != path) fs.delete(path, mustExist = false)
-    updated
+    MutationResult(updated, if (exportAfter) buildExport(includeBody = false, includeArchived = false) else null)
 }
 
 /**
@@ -86,26 +99,34 @@ private fun Workspace.detectCycle(updated: Task) {
 }
 
 /** `done` — status=done, stamp `closed`, clear `waiting_on` (PRD §10.5). */
-public fun Workspace.markDone(id: String): Task =
-    updateTask(id) { it.copy(status = Status.DONE, closed = nowUtc(), waitingOn = null) }
+public fun Workspace.markDone(id: String, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { it.copy(status = Status.DONE, closed = nowUtc(), waitingOn = null) }
 
 /** `drop` — status=dropped, stamp `closed`, clear `waiting_on` (PRD §10.5). */
-public fun Workspace.markDropped(id: String): Task =
-    updateTask(id) { it.copy(status = Status.DROPPED, closed = nowUtc(), waitingOn = null) }
+public fun Workspace.markDropped(id: String, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { it.copy(status = Status.DROPPED, closed = nowUtc(), waitingOn = null) }
 
 /** `reopen` — back to open, clear `closed` and `waiting_on` (PRD §10.5). */
-public fun Workspace.reopenTask(id: String): Task =
-    updateTask(id) { it.copy(status = Status.OPEN, closed = null, waitingOn = null) }
+public fun Workspace.reopenTask(id: String, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { it.copy(status = Status.OPEN, closed = null, waitingOn = null) }
 
 /**
  * `wait` — status=waiting; optionally set `defer` (`--until`) and/or `waiting_on`
  * (`--on`), each preserved when its flag is omitted (PRD §10.5).
  */
-public fun Workspace.waitTask(id: String, until: String?, on: String?): Task =
-    updateTask(id) { t ->
+public fun Workspace.waitTask(id: String, until: String?, on: String?, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { t ->
         t.copy(
             status = Status.WAITING,
             defer = until?.let { normalizeDateTime(it) } ?: t.defer,
             waitingOn = on ?: t.waitingOn,
         )
     }
+
+/** `link <id> --depends <dep>` — add a dependency edge; cycle-checked (PRD §10.6). */
+public fun Workspace.linkDepends(id: String, dep: String, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { it.copy(depends = (it.depends + dep).distinct()) }
+
+/** `unlink <id> --depends <dep>` — remove a dependency edge (PRD §10.6). */
+public fun Workspace.unlinkDepends(id: String, dep: String, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { t -> t.copy(depends = t.depends.filter { it != dep }) }

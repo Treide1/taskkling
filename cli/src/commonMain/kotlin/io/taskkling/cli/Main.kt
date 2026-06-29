@@ -1,8 +1,10 @@
 package io.taskkling.cli
 
+import io.taskkling.contract.ExportDto
 import io.taskkling.contract.TaskDto
 import io.taskkling.core.AddArgs
 import io.taskkling.core.Computed
+import io.taskkling.core.MutationResult
 import io.taskkling.core.Status
 import io.taskkling.core.Task
 import io.taskkling.core.TkError
@@ -13,18 +15,21 @@ import io.taskkling.core.addTask
 import io.taskkling.core.buildExport
 import io.taskkling.core.computeAll
 import io.taskkling.core.initWorkspace
+import io.taskkling.core.linkDepends
 import io.taskkling.core.loadTasks
 import io.taskkling.core.markDone
 import io.taskkling.core.markDropped
 import io.taskkling.core.rawFile
 import io.taskkling.core.reopenTask
 import io.taskkling.core.toDto
+import io.taskkling.core.unlinkDepends
 import io.taskkling.core.waitTask
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.Subcommand
 import kotlinx.cli.default
 import kotlinx.cli.multiple
+import kotlinx.cli.required
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlin.system.exitProcess
@@ -58,6 +63,25 @@ private abstract class TkCommand(name: String, description: String) : Subcommand
     abstract fun run()
 }
 
+/**
+ * Base for mutating verbs: adds `--export-on-success` (PRD §7.3) and the shared
+ * output rule — emit the full export when requested, else the terse affected id.
+ */
+private abstract class MutationCommand(name: String, description: String) : TkCommand(name, description) {
+    val exportOnSuccess by option(
+        ArgType.Boolean, "export-on-success",
+        description = "Emit the full post-mutation export instead of the id",
+    ).default(false)
+
+    fun emit(result: MutationResult) {
+        val export = result.export
+        when {
+            export != null -> println(json.encodeToString(ExportDto.serializer(), export))
+            !quiet -> println(result.task.id)
+        }
+    }
+}
+
 /** `init` — scaffold a workspace in the cwd (PRD §10.7). */
 private class InitCmd : TkCommand("init", "Scaffold a taskkling workspace (.taskkling/ + tasks/)") {
     override fun run() {
@@ -70,7 +94,7 @@ private class InitCmd : TkCommand("init", "Scaffold a taskkling workspace (.task
 }
 
 /** `add "<title>" [flags]` — create a node, print its id (PRD §10.4). */
-private class AddCmd : TkCommand("add", "Create a task; prints the new id") {
+private class AddCmd : MutationCommand("add", "Create a task; prints the new id") {
     val title by argument(ArgType.String, description = "Task title")
     val thread by option(ArgType.String, "thread", "t", description = "Grouping label")
     val depends by option(ArgType.String, "depends", "d", description = "Comma-separated dependency ids")
@@ -81,18 +105,20 @@ private class AddCmd : TkCommand("add", "Create a task; prints the new id") {
 
     override fun run() {
         val ws = Workspace.discover(root)
-        val id = ws.addTask(
-            AddArgs(
-                title = title,
-                thread = thread,
-                depends = depends?.split(",").orEmpty(),
-                due = due,
-                defer = defer,
-                priority = priority,
-                body = body,
+        emit(
+            ws.addTask(
+                AddArgs(
+                    title = title,
+                    thread = thread,
+                    depends = depends?.split(",").orEmpty(),
+                    due = due,
+                    defer = defer,
+                    priority = priority,
+                    body = body,
+                ),
+                exportAfter = exportOnSuccess,
             ),
         )
-        println(id)
     }
 }
 
@@ -137,41 +163,43 @@ private class GetCmd : TkCommand("get", "Print a node's field values (stored + c
 }
 
 /** `done <id>` — mark done, stamp closed (PRD §10.5). */
-private class DoneCmd : TkCommand("done", "Mark a task done (stamps closed)") {
+private class DoneCmd : MutationCommand("done", "Mark a task done (stamps closed)") {
     val id by argument(ArgType.String, description = "Task id")
-    override fun run() {
-        Workspace.discover(root).markDone(id)
-        if (!quiet) println(id)
-    }
+    override fun run() = emit(Workspace.discover(root).markDone(id, exportOnSuccess))
 }
 
 /** `drop <id>` — mark dropped, stamp closed (PRD §10.5). */
-private class DropCmd : TkCommand("drop", "Mark a task dropped (stamps closed)") {
+private class DropCmd : MutationCommand("drop", "Mark a task dropped (stamps closed)") {
     val id by argument(ArgType.String, description = "Task id")
-    override fun run() {
-        Workspace.discover(root).markDropped(id)
-        if (!quiet) println(id)
-    }
+    override fun run() = emit(Workspace.discover(root).markDropped(id, exportOnSuccess))
 }
 
 /** `reopen <id>` — return to open, clear closed (PRD §10.5). */
-private class ReopenCmd : TkCommand("reopen", "Reopen a task (clears closed)") {
+private class ReopenCmd : MutationCommand("reopen", "Reopen a task (clears closed)") {
     val id by argument(ArgType.String, description = "Task id")
-    override fun run() {
-        Workspace.discover(root).reopenTask(id)
-        if (!quiet) println(id)
-    }
+    override fun run() = emit(Workspace.discover(root).reopenTask(id, exportOnSuccess))
 }
 
 /** `wait <id> [--until <dt>] [--on "<text>"]` — set waiting, fold defer (PRD §10.5). */
-private class WaitCmd : TkCommand("wait", "Set status=waiting; optionally defer (--until) and reason (--on)") {
+private class WaitCmd : MutationCommand("wait", "Set status=waiting; optionally defer (--until) and reason (--on)") {
     val id by argument(ArgType.String, description = "Task id")
     val until by option(ArgType.String, "until", description = "Defer until this datetime (suppresses readiness)")
     val on by option(ArgType.String, "on", description = "waiting_on reason text")
-    override fun run() {
-        Workspace.discover(root).waitTask(id, until, on)
-        if (!quiet) println(id)
-    }
+    override fun run() = emit(Workspace.discover(root).waitTask(id, until, on, exportOnSuccess))
+}
+
+/** `link <id> --depends <dep>` — add a dependency edge; cycle-checked (PRD §10.6). */
+private class LinkCmd : MutationCommand("link", "Add a dependency edge (<id> depends on <dep>)") {
+    val id by argument(ArgType.String, description = "Task id")
+    val depends by option(ArgType.String, "depends", "d", description = "Dependency id to add").required()
+    override fun run() = emit(Workspace.discover(root).linkDepends(id, depends, exportOnSuccess))
+}
+
+/** `unlink <id> --depends <dep>` — remove a dependency edge (PRD §10.6). */
+private class UnlinkCmd : MutationCommand("unlink", "Remove a dependency edge (<id> depends on <dep>)") {
+    val id by argument(ArgType.String, description = "Task id")
+    val depends by option(ArgType.String, "depends", "d", description = "Dependency id to remove").required()
+    override fun run() = emit(Workspace.discover(root).unlinkDepends(id, depends, exportOnSuccess))
 }
 
 /** `export [--include-body] [--archived]` — full JSON contract (PRD §12). */
@@ -321,6 +349,7 @@ public fun main(args: Array<String>) {
         InitCmd(), AddCmd(), ListCmd(), ExportCmd(),
         ShowCmd(), GetCmd(),
         DoneCmd(), DropCmd(), ReopenCmd(), WaitCmd(),
+        LinkCmd(), UnlinkCmd(),
     )
     parser.parse(args)
 }

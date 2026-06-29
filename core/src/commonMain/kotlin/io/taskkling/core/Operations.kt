@@ -51,12 +51,13 @@ public data class AddArgs(
 )
 
 /**
- * Create a node and return its id (PRD §10.4). Runs under the write lock: title,
- * priority, datetimes and `depends` (dangling check vs. the active set) are
- * validated, a collision-free id is minted, and the file is written via the
- * temp→rename path. A brand-new node has no dependents, so no cycle is possible.
+ * Create a node (PRD §10.4). Runs under the write lock: title, priority,
+ * datetimes and `depends` (dangling check vs. the active set) are validated, a
+ * collision-free id is minted, and the file is written via the temp→rename path.
+ * A brand-new node has no dependents, so no cycle is possible. With [exportAfter]
+ * the full export is computed before the lock releases (PRD §7.3).
  */
-public fun Workspace.addTask(args: AddArgs): String = withLock {
+public fun Workspace.addTask(args: AddArgs, exportAfter: Boolean = false): MutationResult = withLock {
     val title = args.title.trim()
     if (title.isEmpty()) throw TkError(ExitCode.VALIDATION, "title must not be empty")
 
@@ -85,7 +86,7 @@ public fun Workspace.addTask(args: AddArgs): String = withLock {
         body = args.body?.trim().orEmpty(),
     )
     writeFileAtomic(tasksDir / task.fileName(), task.toMarkdown())
-    id
+    MutationResult(task, if (exportAfter) buildExport(includeBody = false, includeArchived = false) else null)
 }
 
 /** Mint `id_prefix` + 4 random `[a-z0-9]`, retrying on collision (PRD §8.1). */
