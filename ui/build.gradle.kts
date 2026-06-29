@@ -12,6 +12,9 @@ dependencies {
     // CLI client; it cannot parse or write task files.
     implementation(project(":contract"))
     implementation(compose.desktop.currentOs)
+    // The DTOs in :contract carry generated serializers; the UI needs the JSON
+    // runtime to decode `taskkling export` output (PRD §6.3, §12).
+    implementation(libs.kotlinx.serialization.json)
 }
 
 compose.desktop {
@@ -20,7 +23,10 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "taskkling"
-            packageVersion = "1.0.0"
+            // One flat installer version across MSI/DEB/DMG, matching the tool's own
+            // version (:core Taskkling.VERSION). Compose ≥1.11 lifted the macOS
+            // 0.x-major restriction, so no per-OS override is needed.
+            packageVersion = "0.1.0"
         }
     }
 }

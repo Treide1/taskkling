@@ -178,16 +178,16 @@
 
 <div class="legend" id="legend"></div>
 
-<script>
+<script type="module">
 /* ---------------------------------------------------------------------------
- * Spike data — identical to spike/sample-export.json and to the shape emitted
- * by `taskkling export` (contract: io.taskkling.contract.ExportDto).
- * To drive this from live CLI output later, serve over http and replace the
- * literal below with:
- *     const DATA = await fetch('export.json').then(r => r.json());
- * Nothing else in this file needs to change.
+ * Live export wiring: fetch `export.json` (produce it with
+ * `taskkling export > spike/export.json`, then serve this dir over http), and
+ * fall back to the embedded sample so the page still renders when opened
+ * straight off disk (file://) with no server. The sample is identical to
+ * spike/sample-export.json and to the shape `taskkling export` emits
+ * (contract: io.taskkling.contract.ExportDto).
  * ------------------------------------------------------------------------- */
-const DATA = {
+const FALLBACK = {
   "generatedAt": "2026-06-28T10:00:00Z",
   "counts": { "ready": 3, "blocked": 2, "waiting": 1, "done": 1 },
   "tasks": [
@@ -202,6 +202,13 @@ const DATA = {
     { "id": "t-j0q0", "title": "Eigene Domain registrieren", "thread": "marketing", "status": "dropped", "waitingOn": null, "depends": [], "due": null, "defer": null, "priority": "low", "created": "2026-06-11T12:00:00Z", "closed": "2026-06-18T16:00:00Z", "computed": { "ready": false, "blocked": false, "deferred": false, "overdue": false, "resurfaced": false, "blockers": [], "dependents": [] } }
   ]
 };
+
+// Prefer live `export.json`; keep the embedded sample for offline/file:// use.
+let DATA = FALLBACK;
+try {
+  const res = await fetch('export.json', { cache: 'no-store' });
+  if (res.ok) DATA = await res.json();
+} catch (_) { /* no server or no export.json — render the embedded sample */ }
 
 // ---- layout constants ----
 const CARD_W = 210, CARD_H = 96, COL_GAP = 110, ROW_GAP = 24, PAD = 28;

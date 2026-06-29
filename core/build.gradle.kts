@@ -25,5 +25,14 @@ kotlin {
             implementation(libs.okio)
             implementation(libs.kotlinx.datetime)
         }
+
+        // Pure, target-agnostic unit tests (frontmatter, compute, slug, datetime,
+        // id) run on every target; CI invokes the JVM variant (:core:jvmTest).
+        // Workspace/golden tests use a JVM temp dir, so they live in jvmTest and
+        // inherit the same kotlin-test runner.
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.serialization.json) // golden tests encode the export DTO
+        }
     }
 }

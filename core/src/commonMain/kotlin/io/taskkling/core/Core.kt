@@ -8,5 +8,5 @@ package io.taskkling.core
  */
 public object Taskkling {
     /** Tool version. Bumped as milestones land. */
-    public const val VERSION: String = "0.0.1-SNAPSHOT"
+    public const val VERSION: String = "0.1.0"
 }

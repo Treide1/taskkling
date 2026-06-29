@@ -14,18 +14,26 @@ import io.taskkling.core.ExitCode
 import io.taskkling.core.Taskkling
 import io.taskkling.core.Workspace
 import io.taskkling.core.addTask
+import io.taskkling.core.appendBody
 import io.taskkling.core.buildExport
+import io.taskkling.core.cleanup
 import io.taskkling.core.computeAll
+import io.taskkling.core.deleteTask
 import io.taskkling.core.initWorkspace
 import io.taskkling.core.linkDepends
 import io.taskkling.core.loadTasks
 import io.taskkling.core.markDone
 import io.taskkling.core.markDropped
 import io.taskkling.core.rawFile
+import io.taskkling.core.readBody
 import io.taskkling.core.reopenTask
+import io.taskkling.core.restoreTask
+import io.taskkling.core.setFields
+import io.taskkling.core.SetArgs
 import io.taskkling.core.toDto
 import io.taskkling.core.unlinkDepends
 import io.taskkling.core.waitTask
+import io.taskkling.core.writeBody
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.Subcommand
@@ -51,13 +59,65 @@ private fun eprintln(message: String) {
     fputs(message + "\n", stderr)
 }
 
+/** Read all of stdin to end-of-input, for body text supplied as `-` (agent ergonomics). */
+private fun readStdin(): String = buildString {
+    while (true) {
+        val line = readlnOrNull() ?: break
+        append(line).append('\n')
+    }
+}.trimEnd('\n')
+
+/** Resolve body text: a literal `-` means "read the body from stdin". */
+private fun bodyArg(text: String): String = if (text == "-") readStdin() else text
+
+/**
+ * Global flags parsed from the **leading** position (before the subcommand),
+ * git-style: `taskkling --root <path> --quiet <verb> …` (PRD §10.1). They are
+ * also accepted *after* the verb (per-subcommand options below), so both forms
+ * work; the explicit per-verb value wins when given in both places.
+ */
+private object GlobalFlags {
+    var root: String? = null
+    var quiet: Boolean = false
+    var noColor: Boolean = false
+}
+
+/**
+ * Consume recognised global flags that appear *before* the subcommand name and
+ * fold them into [GlobalFlags], returning the remaining argv (subcommand + its
+ * args) for kotlinx-cli. Only the leading run is scanned, so a literal `--root`
+ * later in the line (e.g. body text) is never mistaken for a flag.
+ */
+private fun extractLeadingGlobals(args: Array<String>): Array<String> {
+    val rest = ArrayList<String>()
+    var i = 0
+    var sawVerb = false
+    while (i < args.size) {
+        val a = args[i]
+        if (sawVerb) { rest.add(a); i++; continue }
+        when {
+            a == "--root" -> { GlobalFlags.root = args.getOrNull(i + 1); i += 2 }
+            a.startsWith("--root=") -> { GlobalFlags.root = a.substringAfter('='); i++ }
+            a == "--quiet" || a == "-q" -> { GlobalFlags.quiet = true; i++ }
+            a == "--no-color" -> { GlobalFlags.noColor = true; i++ }
+            a.startsWith("-") -> { rest.add(a); i++ } // unknown leading flag: let the parser report it
+            else -> { sawVerb = true; rest.add(a); i++ } // the subcommand token
+        }
+    }
+    return rest.toTypedArray()
+}
+
 /**
  * Base for every verb: carries the global flags (PRD §10.1) and renders a thrown
  * [TkError] to the matching exit code. Anything unexpected becomes exit `1`.
  */
 private abstract class TkCommand(name: String, description: String) : Subcommand(name, description) {
-    val root by option(ArgType.String, "root", description = "Workspace root (override discovery)")
-    val quiet by option(ArgType.Boolean, "quiet", "q", description = "Suppress non-essential output").default(false)
+    private val localRoot by option(ArgType.String, "root", description = "Workspace root (override discovery)")
+    private val localQuiet by option(ArgType.Boolean, "quiet", "q", description = "Suppress non-essential output").default(false)
+
+    /** Resolve a global flag from the per-verb position first, then the leading position. */
+    val root: String? get() = localRoot ?: GlobalFlags.root
+    val quiet: Boolean get() = localQuiet || GlobalFlags.quiet
 
     final override fun execute() {
         try {
@@ -213,12 +273,100 @@ private class UnlinkCmd : MutationCommand("unlink", "Remove a dependency edge (<
     override fun run() = emit(Workspace.discover(root).unlinkDepends(id, depends, exportOnSuccess))
 }
 
-/** `export [--include-body] [--archived]` — full JSON contract (PRD §12). */
+/** `set <id> [--<field> …] [--clear <field>…]` — atomic multi-field edit (PRD §10.4). */
+private class SetCmd : MutationCommand("set", "Edit metadata fields (title/thread/due/defer/priority)") {
+    val id by argument(ArgType.String, description = "Task id")
+    val title by option(ArgType.String, "title", description = "Set title")
+    val thread by option(ArgType.String, "thread", "t", description = "Set thread (empty clears)")
+    val due by option(ArgType.String, "due", description = "Set due datetime (empty clears)")
+    val defer by option(ArgType.String, "defer", description = "Set defer datetime (empty clears)")
+    val priority by option(ArgType.String, "priority", "p", description = "Set priority low|normal|high")
+    val clear by option(ArgType.String, "clear", description = "Field to unset (repeatable)").multiple()
+
+    override fun run() {
+        if (title == null && thread == null && due == null && defer == null && priority == null && clear.isEmpty()) {
+            throw TkError(ExitCode.USAGE, "set needs at least one field to change")
+        }
+        val ws = Workspace.discover(root)
+        emit(ws.setFields(id, SetArgs(title, thread, due, defer, priority, clear), exportOnSuccess))
+    }
+}
+
+/** `write <id> "<text>"` — replace the body (PRD §10.6); `-` reads stdin. */
+private class WriteCmd : MutationCommand("write", "Replace a task's body (use - to read stdin)") {
+    val id by argument(ArgType.String, description = "Task id")
+    val text by argument(ArgType.String, description = "Body text, or - for stdin")
+    override fun run() = emit(Workspace.discover(root).writeBody(id, bodyArg(text), exportOnSuccess))
+}
+
+/** `append <id> "<text>"` — append to the body (PRD §10.6); `-` reads stdin. */
+private class AppendCmd : MutationCommand("append", "Append to a task's body (use - to read stdin)") {
+    val id by argument(ArgType.String, description = "Task id")
+    val text by argument(ArgType.String, description = "Body text, or - for stdin")
+    override fun run() = emit(Workspace.discover(root).appendBody(id, bodyArg(text), exportOnSuccess))
+}
+
+/** `read <id>` — print the node's body only (PRD §10.2). */
+private class ReadCmd : TkCommand("read", "Print a task's body (frontmatter stripped)") {
+    val id by argument(ArgType.String, description = "Task id")
+    override fun run() = println(Workspace.discover(root).readBody(id))
+}
+
+/** `delete <id>` — move to trash, prune dependents; validation-free (PRD §9.5, §10.5). */
+private class DeleteCmd : MutationCommand("delete", "Move a task to trash and prune it from dependents") {
+    val id by argument(ArgType.String, description = "Task id")
+    override fun run() = emit(Workspace.discover(root).deleteTask(id, exportOnSuccess))
+}
+
+/** `restore <id>` — bring a node back from trash/archive; report non-rewired edges (PRD §9.5). */
+private class RestoreCmd : MutationCommand("restore", "Restore a task from trash/archive to the active set") {
+    val id by argument(ArgType.String, description = "Task id")
+    override fun run() {
+        val result = Workspace.discover(root).restoreTask(id, exportOnSuccess)
+        if (result.droppedEdges.isNotEmpty() && !quiet) {
+            eprintln("taskkling: dropped ${result.droppedEdges.size} dangling dependency edge(s): ${result.droppedEdges.joinToString(",")}")
+        }
+        val export = result.export
+        when {
+            export != null -> println(json.encodeToString(ExportDto.serializer(), export))
+            !quiet -> println(result.task.id)
+        }
+    }
+}
+
+/** `cleanup [--delete-before <dt>] [--include-archive]` — sweep closed → archive; purge trash (PRD §10.7). */
+private class CleanupCmd : MutationCommand("cleanup", "Sweep closed nodes to archive; optionally purge old trash") {
+    val deleteBefore by option(ArgType.String, "delete-before", description = "Purge trash entries closed before this datetime")
+    val includeArchive by option(ArgType.Boolean, "include-archive", description = "Also purge archive entries with --delete-before").default(false)
+
+    override fun run() {
+        val result = Workspace.discover(root).cleanup(deleteBefore, includeArchive, exportOnSuccess)
+        val export = result.export
+        when {
+            export != null -> println(json.encodeToString(ExportDto.serializer(), export))
+            !quiet -> println("archived ${result.archived}, purged ${result.purged}")
+        }
+    }
+}
+
+/** `doctor [--fix]` — integrity + logical-resolution scan (PRD §7.5; stub, post-v0.1 §19). */
+private class DoctorCmd : TkCommand("doctor", "Integrity + logical-resolution scan (stub)") {
+    @Suppress("unused")
+    val fix by option(ArgType.Boolean, "fix", description = "Apply deterministic fixes (stub)").default(false)
+    override fun run() = eprintln("taskkling: doctor is a post-v0.1 stub (PRD §19) — not yet implemented")
+}
+
+/** `export [--include-body] [--archived] [--ics]` — full JSON contract (PRD §12). */
 private class ExportCmd : TkCommand("export", "Print the full JSON export") {
     val includeBody by option(ArgType.Boolean, "include-body", description = "Add a per-node body field").default(false)
     val archived by option(ArgType.Boolean, "archived", description = "Include the archive subtree").default(false)
+    val ics by option(ArgType.Boolean, "ics", description = "Emit an iCalendar feed from due dates (stub)").default(false)
 
     override fun run() {
+        if (ics) {
+            eprintln("taskkling: export --ics is a post-v0.1 stub (PRD §19) — not yet implemented")
+            return
+        }
         val ws = Workspace.discover(root)
         val export = ws.buildExport(includeBody = includeBody, includeArchived = archived)
         println(json.encodeToString(io.taskkling.contract.ExportDto.serializer(), export))
@@ -355,12 +503,17 @@ public fun main(args: Array<String>) {
         println("taskkling ${Taskkling.VERSION}")
         return
     }
+    // Fold leading global flags (--root/--quiet/--no-color) into GlobalFlags so
+    // they work git-style before the verb; per-verb forms still work after it.
+    val rest = extractLeadingGlobals(args)
     val parser = ArgParser("taskkling")
     parser.subcommands(
         InitCmd(), AddCmd(), ListCmd(), ExportCmd(),
-        ShowCmd(), GetCmd(),
+        ShowCmd(), GetCmd(), ReadCmd(),
         DoneCmd(), DropCmd(), ReopenCmd(), WaitCmd(),
         LinkCmd(), UnlinkCmd(),
+        SetCmd(), WriteCmd(), AppendCmd(),
+        DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(),
     )
-    parser.parse(args)
+    parser.parse(rest)
 }

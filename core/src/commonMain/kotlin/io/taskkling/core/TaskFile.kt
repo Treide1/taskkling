@@ -7,6 +7,10 @@ package io.taskkling.core
  */
 public fun Task.fileName(): String = "$id--${slugify(title)}.md"
 
+/** The single inverse of [fileName]: the id embedded in a `<id>--<slug>.md` name. */
+public fun idOfFileName(fileName: String): String =
+    fileName.removeSuffix(".md").substringBefore("--")
+
 /**
  * Render a task to its on-disk markdown form: YAML frontmatter then body
  * (PRD §8.3). Optional fields are omitted when unset; `waiting_on` is emitted
