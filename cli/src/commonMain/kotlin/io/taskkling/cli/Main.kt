@@ -71,12 +71,53 @@ private fun readStdin(): String = buildString {
 private fun bodyArg(text: String): String = if (text == "-") readStdin() else text
 
 /**
+ * Global flags parsed from the **leading** position (before the subcommand),
+ * git-style: `taskkling --root <path> --quiet <verb> …` (PRD §10.1). They are
+ * also accepted *after* the verb (per-subcommand options below), so both forms
+ * work; the explicit per-verb value wins when given in both places.
+ */
+private object GlobalFlags {
+    var root: String? = null
+    var quiet: Boolean = false
+    var noColor: Boolean = false
+}
+
+/**
+ * Consume recognised global flags that appear *before* the subcommand name and
+ * fold them into [GlobalFlags], returning the remaining argv (subcommand + its
+ * args) for kotlinx-cli. Only the leading run is scanned, so a literal `--root`
+ * later in the line (e.g. body text) is never mistaken for a flag.
+ */
+private fun extractLeadingGlobals(args: Array<String>): Array<String> {
+    val rest = ArrayList<String>()
+    var i = 0
+    var sawVerb = false
+    while (i < args.size) {
+        val a = args[i]
+        if (sawVerb) { rest.add(a); i++; continue }
+        when {
+            a == "--root" -> { GlobalFlags.root = args.getOrNull(i + 1); i += 2 }
+            a.startsWith("--root=") -> { GlobalFlags.root = a.substringAfter('='); i++ }
+            a == "--quiet" || a == "-q" -> { GlobalFlags.quiet = true; i++ }
+            a == "--no-color" -> { GlobalFlags.noColor = true; i++ }
+            a.startsWith("-") -> { rest.add(a); i++ } // unknown leading flag: let the parser report it
+            else -> { sawVerb = true; rest.add(a); i++ } // the subcommand token
+        }
+    }
+    return rest.toTypedArray()
+}
+
+/**
  * Base for every verb: carries the global flags (PRD §10.1) and renders a thrown
  * [TkError] to the matching exit code. Anything unexpected becomes exit `1`.
  */
 private abstract class TkCommand(name: String, description: String) : Subcommand(name, description) {
-    val root by option(ArgType.String, "root", description = "Workspace root (override discovery)")
-    val quiet by option(ArgType.Boolean, "quiet", "q", description = "Suppress non-essential output").default(false)
+    private val localRoot by option(ArgType.String, "root", description = "Workspace root (override discovery)")
+    private val localQuiet by option(ArgType.Boolean, "quiet", "q", description = "Suppress non-essential output").default(false)
+
+    /** Resolve a global flag from the per-verb position first, then the leading position. */
+    val root: String? get() = localRoot ?: GlobalFlags.root
+    val quiet: Boolean get() = localQuiet || GlobalFlags.quiet
 
     final override fun execute() {
         try {
@@ -462,6 +503,9 @@ public fun main(args: Array<String>) {
         println("taskkling ${Taskkling.VERSION}")
         return
     }
+    // Fold leading global flags (--root/--quiet/--no-color) into GlobalFlags so
+    // they work git-style before the verb; per-verb forms still work after it.
+    val rest = extractLeadingGlobals(args)
     val parser = ArgParser("taskkling")
     parser.subcommands(
         InitCmd(), AddCmd(), ListCmd(), ExportCmd(),
@@ -471,5 +515,5 @@ public fun main(args: Array<String>) {
         SetCmd(), WriteCmd(), AppendCmd(),
         DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(),
     )
-    parser.parse(args)
+    parser.parse(rest)
 }
