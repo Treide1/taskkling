@@ -31,7 +31,7 @@ taskkling.exe get <id>        # all fields of one node;  show <id> prints the ra
 
 **Structure:** tasks are grouped by `thread` (`m1`, `polish`, `m2`, `m3`, `m4`); milestones are
 **gate tasks** that `depends` on their constituent tasks (no `type`/phase field by design); the
-root gate is `taskkling v1.0`. Readiness is computed, never stored: a task is `ready` when it's
+root gate is `taskkling v0.1`. Readiness is computed, never stored: a task is `ready` when it's
 `open`, all `depends` are `done`, and it isn't deferred.
 
 ### Keep the graph current as you work
@@ -52,7 +52,10 @@ on every push — the Windows dev host can't cross-compile linux/macOS, so **CI 
 cross-platform verifier**.
 
 ## Status
-M0 + M1 complete and CI-green on all targets (init/add/list/export; show/get; done/drop/reopen/
-wait; link/unlink; write-path validation; `--export-on-success`; OS advisory lock). **M2 is next**
-(`set`, body I/O, `delete`→trash + prune, `restore`, `cleanup`) — already captured in the `m2`
-thread. Check `list --ready` for the live picture rather than trusting this paragraph.
+**M0–M4 complete; v0.1 (gate `t-qc79`) closed — the whole backlog is `done`.** The full CLI
+surface ships (reads; lifecycle; `link/unlink`; `set`; body `write/append/read`; `delete`→trash +
+cascade-prune; `restore`; `cleanup`; `doctor`/`export --ics` stubs; leading global `--root/--quiet`),
+plus the Compose Desktop UI (DAG render + detail panel + CLI-subprocess mutations), `:core` unit/
+golden/concurrency tests, README, and the tag-triggered release workflow (no tag cut yet). Version is
+`0.1.0`. Post-v0.1 work lives in PRD §19 (doctor fix catalogue, `export --ics` internals, datetime
+granularity, …). Always check `list --ready` for the live picture rather than trusting this paragraph.

@@ -23,7 +23,12 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "taskkling"
-            packageVersion = "1.0.0"
+            // Tool version is 0.1.0 (see :core Taskkling.VERSION) — and the MSI/DEB
+            // installers carry it verbatim. macOS is the lone exception: jpackage
+            // forbids a 0.x major in a bundle version, so the .dmg is bumped to the
+            // nearest legal value. Packaging metadata, not the tool's own version.
+            packageVersion = "0.1.0"
+            macOS { packageVersion = "1.0.0" }
         }
     }
 }

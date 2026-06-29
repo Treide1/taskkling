@@ -1,6 +1,6 @@
 # taskkling — Product Requirements Document
 
-> Status: **v1 design, approved for build.** This PRD is the founding artifact of a standalone,
+> Status: **v0.1 design, approved for build.** This PRD is the founding artifact of a standalone,
 > reusable tool. It is deliberately **agnostic to any other layer or tool** — no knowledge base,
 > calendar, agent runtime, or host project is assumed or named. Where examples are needed, they
 > are generic.
@@ -60,7 +60,7 @@ backbone **dumb** — plain files + a tiny binary — and invests only where the
 - **Agent-ergonomic**: terse, scriptable, JSON-capable, dependency-aware interop.
 - A **light** desktop UI that visualises the graph and mutates only via the CLI.
 
-### Non-goals (v1)
+### Non-goals (v0.1)
 - **No coupling to any external system** — knowledge bases, calendars, agent frameworks, chat
   tools, issue trackers. Integrations are downstream glue, out of scope here.
 - **No multi-user collaboration / real-time sync** — git is the only sync; solo/low-contention

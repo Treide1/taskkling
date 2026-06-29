@@ -45,7 +45,7 @@ class ValidateTest {
         val b = ws.addReturningId(AddArgs(title = "b", depends = listOf(a)))
         ws.deleteTask(a) // must not throw despite b depending on a
         assertTrue(ws.loadTask(b)!!.depends.isEmpty(), "dependent edge should be pruned")
-        assertNotNull(findInTrash(ws, a), "deleted node should land in trash")
+        assertNotNull(ws.fileFor(ws.trashDir, a), "deleted node should land in trash")
     }
 
     @Test
@@ -70,9 +70,4 @@ class ValidateTest {
         assertEquals(listOf(a), result.droppedEdges, "edge to a (now absent) should be dropped + reported")
         assertTrue(ws.loadTask(b)!!.depends.isEmpty())
     }
-
-    private fun findInTrash(ws: Workspace, id: String) =
-        okio.FileSystem.SYSTEM.list(ws.trashDir).firstOrNull {
-            it.name.removeSuffix(".md").substringBefore("--") == id
-        }
 }

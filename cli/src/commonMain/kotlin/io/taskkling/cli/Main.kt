@@ -349,11 +349,11 @@ private class CleanupCmd : MutationCommand("cleanup", "Sweep closed nodes to arc
     }
 }
 
-/** `doctor [--fix]` — integrity + logical-resolution scan (PRD §7.5; stub, post-v1 §19). */
+/** `doctor [--fix]` — integrity + logical-resolution scan (PRD §7.5; stub, post-v0.1 §19). */
 private class DoctorCmd : TkCommand("doctor", "Integrity + logical-resolution scan (stub)") {
     @Suppress("unused")
     val fix by option(ArgType.Boolean, "fix", description = "Apply deterministic fixes (stub)").default(false)
-    override fun run() = eprintln("taskkling: doctor is a post-v1 stub (PRD §19) — not yet implemented")
+    override fun run() = eprintln("taskkling: doctor is a post-v0.1 stub (PRD §19) — not yet implemented")
 }
 
 /** `export [--include-body] [--archived] [--ics]` — full JSON contract (PRD §12). */
@@ -364,7 +364,7 @@ private class ExportCmd : TkCommand("export", "Print the full JSON export") {
 
     override fun run() {
         if (ics) {
-            eprintln("taskkling: export --ics is a post-v1 stub (PRD §19) — not yet implemented")
+            eprintln("taskkling: export --ics is a post-v0.1 stub (PRD §19) — not yet implemented")
             return
         }
         val ws = Workspace.discover(root)

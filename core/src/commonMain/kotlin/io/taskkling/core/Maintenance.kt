@@ -2,16 +2,6 @@ package io.taskkling.core
 
 import io.taskkling.contract.ExportDto
 import okio.FileSystem
-import okio.Path
-
-/** Path of node [id] in [dir] (`<id>--*.md`), or null if absent. */
-private fun findInDir(dir: Path, id: String): Path? {
-    val fs = FileSystem.SYSTEM
-    if (!fs.exists(dir)) return null
-    return fs.list(dir).firstOrNull {
-        it.name.endsWith(".md") && it.name.removeSuffix(".md").substringBefore("--") == id
-    }
-}
 
 /**
  * `delete <id>` (PRD §9.5, §10.5) — move the node to `trash/`, stamp `closed`,
@@ -65,7 +55,7 @@ public data class RestoreResult(
 public fun Workspace.restoreTask(id: String, exportAfter: Boolean = false): RestoreResult = withLock {
     val fs = FileSystem.SYSTEM
     if (findActiveFile(id) != null) throw TkError(ExitCode.USAGE, "'$id' is already active")
-    val src = findInDir(trashDir, id) ?: findInDir(archiveDir, id)
+    val src = fileFor(trashDir, id) ?: fileFor(archiveDir, id)
         ?: throw TkError(ExitCode.USAGE, "no trashed or archived node '$id'")
 
     val task = parseTask(src.name, fs.read(src) { readUtf8() })

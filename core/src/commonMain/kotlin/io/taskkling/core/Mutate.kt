@@ -5,13 +5,7 @@ import okio.FileSystem
 import okio.Path
 
 /** Path of the active node [id] (`tasks/<id>--*.md`), or null if absent. */
-public fun Workspace.findActiveFile(id: String): Path? {
-    val fs = FileSystem.SYSTEM
-    if (!fs.exists(tasksDir)) return null
-    return fs.list(tasksDir).firstOrNull {
-        it.name.endsWith(".md") && it.name.removeSuffix(".md").substringBefore("--") == id
-    }
-}
+public fun Workspace.findActiveFile(id: String): Path? = fileFor(tasksDir, id)
 
 /** Raw `.md` content of the active node [id], verbatim (for `show`); null if absent. */
 public fun Workspace.rawFile(id: String): String? {

@@ -1,6 +1,6 @@
 name: Release
 
-# Wire-only automation (PRD §15): pushing a version tag (e.g. `v1.0.0`) builds the
+# Wire-only automation (PRD §15): pushing a version tag (e.g. `v0.1.0`) builds the
 # per-platform Kotlin/Native release binaries and attaches them to the matching
 # GitHub Release. No tag is cut by this repo's automation — a human tags when ready.
 on:

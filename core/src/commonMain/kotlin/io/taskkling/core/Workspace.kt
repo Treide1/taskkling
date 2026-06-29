@@ -72,8 +72,15 @@ public class Workspace(
         if (!fs.exists(dir)) return emptySet()
         return fs.list(dir)
             .filter { it.name.endsWith(".md") }
-            .map { it.name.removeSuffix(".md").substringBefore("--") }
+            .map { idOfFileName(it.name) }
             .toSet()
+    }
+
+    /** The `.md` file for node [id] in [dir] (`<id>--*.md`), or null if absent. */
+    public fun fileFor(dir: Path, id: String): Path? {
+        val fs = FileSystem.SYSTEM
+        if (!fs.exists(dir)) return null
+        return fs.list(dir).firstOrNull { it.name.endsWith(".md") && idOfFileName(it.name) == id }
     }
 
     /** Ids of the active set (top-level `tasks/`), the only valid `depends` targets. */
