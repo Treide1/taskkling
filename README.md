@@ -26,12 +26,74 @@ it is not deferred.
 
 ## Install
 
-Download the binary for your platform from [GitHub Releases](../../releases) and drop it
-on your `PATH` (install = one file; vendorable per-repo). Then, in any repo:
+> These install scripts are available from the **v0.2.0 release onward**. The release
+> pipeline is wired; the release itself is cut by a human when the milestone is complete.
+
+**macOS / Linux**
 
 ```sh
-taskkling init          # scaffold .taskkling/ + tasks/ (idempotent)
+curl -fsSL https://github.com/Treide1/taskkling/releases/latest/download/install.sh | sh
 ```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://github.com/Treide1/taskkling/releases/latest/download/install.ps1 | iex
+```
+
+Both scripts fetch the `taskkling` binary for your platform and put it on `PATH`:
+`~/.local/bin` on Unix, `%LOCALAPPDATA%\Programs\taskkling` on Windows. Restart your
+shell (or open a new terminal) so the new location is picked up.
+
+### Manual install
+
+Download the binary for your platform from the [Releases page](../../releases) and place
+it somewhere on your `PATH`. Verify it against the accompanying `SHA256SUMS` file:
+
+```sh
+# Unix
+sha256sum -c SHA256SUMS
+
+# macOS (shasum ships by default)
+shasum -a 256 -c SHA256SUMS
+```
+
+**macOS quarantine caveat:** a binary downloaded via a browser carries the quarantine
+attribute and will be blocked by Gatekeeper on first run. Clear it with:
+
+```sh
+xattr -dr com.apple.quarantine ./taskkling
+```
+
+This is not needed when using the `curl | sh` path above — `curl` does not set the
+quarantine attribute.
+
+### First run
+
+In any repo, scaffold the taskkling workspace:
+
+```sh
+taskkling init          # creates .taskkling/ + tasks/, idempotent
+```
+
+## Invocation
+
+There are three ways to drive `taskkling` after install:
+
+**1. Global PATH (recommended for personal machines)**
+Run `taskkling …` from anywhere inside a project tree. The CLI walks up the directory
+tree until it finds a `.taskkling/` directory, so you don't need to be at the root.
+
+**2. Per-project wrapper scripts**
+A tracked `./taskkling` (Unix) and `./taskkling.cmd` (Windows) at the repo root exec
+the project-pinned binary in `.taskkling/bin`. Contributors can run `./taskkling …`
+without a global install — useful in team repos where you can't assume everyone has
+`taskkling` on their `PATH`.
+
+**3. `taskkling init --local-bin`**
+Scaffolds the workspace AND copies the running binary into `.taskkling/bin`, then drops
+the wrapper scripts (`./taskkling` + `./taskkling.cmd`) in the repo root. Run this once
+after a fresh install to set up the per-project wrapper in one step.
 
 ## Usage
 
@@ -55,7 +117,7 @@ always JSON); any mutation accepts `--export-on-success` for a transactional rea
 Global flags: `--root <path>`, `--quiet`, `--no-color`. Exit codes: `0` ok · `2` usage ·
 `3` validation · `4` lock timeout. Full command surface in [PRD.md §10](PRD.md).
 
-## Build from source
+## Development
 
 `java`/`gradle` are not assumed on `PATH`. Set `JAVA_HOME` to a **JDK 21 (Temurin)** first:
 
@@ -72,7 +134,7 @@ export JAVA_HOME=/path/to/temurin-21          # Windows: setx / $env:JAVA_HOME
 The debug CLI lands at `cli/build/bin/<target>/debugExecutable/taskkling[.exe]`
 (`<target>` = `mingwX64` on Windows, `linuxX64` / `macosArm64` elsewhere).
 
-## Modules
+### Modules
 
 | Module | Targets | Responsibility |
 |---|---|---|
@@ -84,12 +146,13 @@ The debug CLI lands at `cli/build/bin/<target>/debugExecutable/taskkling[.exe]`
 The UI links **only `:contract`** (the DTOs), never `:core` — so it is *physically
 incapable* of writing task files, structurally guaranteeing the single-write-path design.
 
-## This repo dogfoods itself
+### This repo dogfoods itself
 
-taskkling's own development backlog is tracked **in taskkling**, in a workspace inside this
-repo (`tasks/*.md` is committed; `.taskkling/` is git-ignored — run `taskkling init` once
-after a fresh clone). CI (`.github/workflows/ci.yml`) builds the JVM target plus a native
-matrix (linux/macOS/Windows) on every push to `main` and on every PR.
+taskkling's own development backlog is tracked **in taskkling**. A fresh clone does
+**not** include `tasks/` or `CLAUDE.md` — both are git-ignored, local-only dev state.
+After cloning, run `taskkling init`; the dogfooded dev backlog lives under
+`.taskkling/tasks` (also git-ignored). CI (`.github/workflows/ci.yml`) builds JVM plus
+a native matrix (linux/macOS/Windows) on every push and PR.
 
 ## License
 
