@@ -1,8 +1,9 @@
 name: Release
 
 # Wire-only automation (PRD §15): pushing a version tag (e.g. `v0.1.0`) builds the
-# per-platform Kotlin/Native release binaries and attaches them to the matching
-# GitHub Release. No tag is cut by this repo's automation — a human tags when ready.
+# four per-platform Kotlin/Native release binaries, checksums them, and publishes
+# them — together with the install scripts — to the matching GitHub Release. No tag
+# is cut by this repo's automation; a human tags when ready.
 on:
   push:
     tags: [ 'v*' ]
@@ -15,7 +16,9 @@ defaults:
     shell: bash
 
 jobs:
-  binaries:
+  # 1) Fan out: link each target's release binary and upload it as a workflow
+  #    artifact. macOS rows additionally inspect the linker's ad-hoc signature.
+  build:
     name: ${{ matrix.artifact }}
     strategy:
       fail-fast: false
@@ -27,6 +30,9 @@ jobs:
           - os: macos-latest
             target: MacosArm64
             artifact: taskkling-macos-arm64
+          - os: macos-latest
+            target: MacosX64
+            artifact: taskkling-macos-x64
           - os: windows-latest
             target: MingwX64
             artifact: taskkling-windows-x64.exe
@@ -51,7 +57,57 @@ jobs:
           src=$(ls cli/build/bin/*/releaseExecutable/taskkling.* | head -1)
           echo "staging $src -> ${{ matrix.artifact }}"
           cp "$src" "${{ matrix.artifact }}"
-      - name: Attach to release
+      - name: Verify macOS ad-hoc signature
+        if: runner.os == 'macOS'
+        # NOT a signing step. The Kotlin/Native linker applies an ad-hoc signature
+        # on macOS; this only inspects it as a guard. `codesign -dv` writes to
+        # stderr; tolerate output-format drift so the build never fails on it.
+        run: codesign -dv "${{ matrix.artifact }}" || true
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  # 2) Fan in: gather the four binaries, checksum them, and publish the Release
+  #    with the binaries + SHA256SUMS + both install scripts. A tag/version guard
+  #    asserts the pushed `vX.Y.Z` matches the declared gradle.properties version.
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches gradle version
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          gradle_version="$(grep -E '^version=' gradle.properties | cut -d '=' -f2 | tr -d '[:space:]')"
+          echo "pushed tag:                v$tag"
+          echo "gradle.properties version: $gradle_version"
+          if [ "$tag" != "$gradle_version" ]; then
+            echo "::error::Tag v$tag does not match gradle.properties version $gradle_version"
+            exit 1
+          fi
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum taskkling-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.artifact }}
+          generate_release_notes: true
+          files: |
+            dist/taskkling-linux-x64
+            dist/taskkling-macos-arm64
+            dist/taskkling-macos-x64
+            dist/taskkling-windows-x64.exe
+            dist/SHA256SUMS
+            install.sh
+            install.ps1

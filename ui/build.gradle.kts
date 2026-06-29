@@ -23,10 +23,11 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "taskkling"
-            // One flat installer version across MSI/DEB/DMG, matching the tool's own
-            // version (:core Taskkling.VERSION). Compose ≥1.11 lifted the macOS
-            // 0.x-major restriction, so no per-OS override is needed.
-            packageVersion = "0.1.0"
+            // One flat installer version across MSI/DEB/DMG, derived from the single
+            // source (`version` in gradle.properties → project.version) so it always
+            // matches the tool's own version (:core Taskkling.VERSION). Compose ≥1.11
+            // lifted the macOS 0.x-major restriction, so no per-OS override is needed.
+            packageVersion = project.version.toString()
         }
     }
 }
