@@ -1,0 +1,57 @@
+name: Release
+
+# Wire-only automation (PRD §15): pushing a version tag (e.g. `v1.0.0`) builds the
+# per-platform Kotlin/Native release binaries and attaches them to the matching
+# GitHub Release. No tag is cut by this repo's automation — a human tags when ready.
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  binaries:
+    name: ${{ matrix.artifact }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: LinuxX64
+            artifact: taskkling-linux-x64
+          - os: macos-latest
+            target: MacosArm64
+            artifact: taskkling-macos-arm64
+          - os: windows-latest
+            target: MingwX64
+            artifact: taskkling-windows-x64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Cache Kotlin/Native
+        uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+      - run: chmod +x ./gradlew
+      - name: Link release ${{ matrix.target }}
+        run: ./gradlew :cli:linkReleaseExecutable${{ matrix.target }} --no-daemon --stacktrace
+      - name: Stage artifact
+        run: |
+          src=$(ls cli/build/bin/*/releaseExecutable/taskkling.* | head -1)
+          echo "staging $src -> ${{ matrix.artifact }}"
+          cp "$src" "${{ matrix.artifact }}"
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
