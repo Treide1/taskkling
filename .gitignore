@@ -26,3 +26,6 @@ Thumbs.db
 # Logs / misc
 *.log
 *.hprof
+
+# We use taskkling to develop taskkling - yeah !
+.taskkling/
