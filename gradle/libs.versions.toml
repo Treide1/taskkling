@@ -1,9 +1,11 @@
 [versions]
 # Toolchain — pinned, known-compatible stable set (verified together):
-#   Kotlin 2.1.0  ⇄  Compose Multiplatform 1.7.3  ⇄  kotlinx-serialization 1.7.3
-kotlin = "2.1.0"
-compose = "1.7.3"
-kotlinxSerialization = "1.7.3"
+#   Kotlin 2.3.21  ⇄  Compose Multiplatform 1.11.1  ⇄  kotlinx-serialization 1.11.0
+# Compose ≥1.11 lifted the macOS 0.x-major package-version restriction, so the
+# installer version is a flat 0.1.0 on every platform (see ui/build.gradle.kts).
+kotlin = "2.3.21"
+compose = "1.11.1"
+kotlinxSerialization = "1.11.0"
 kotlinxCli = "0.3.6"
 kotlinxDatetime = "0.6.1"
 okio = "3.9.1"

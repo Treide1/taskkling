@@ -25,7 +25,7 @@ import platform.windows.UnlockFileEx
 internal actual fun <T> withSystemFileLock(lockPath: String, timeoutSeconds: Int, block: () -> T): T {
     val handle = CreateFileW(
         lockPath,
-        (GENERIC_READ.toUInt() or GENERIC_WRITE.toUInt()),
+        (GENERIC_READ or GENERIC_WRITE.toUInt()),
         (FILE_SHARE_READ.toUInt() or FILE_SHARE_WRITE.toUInt()),
         null,
         OPEN_ALWAYS.toUInt(),
