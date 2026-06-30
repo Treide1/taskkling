@@ -203,42 +203,47 @@ private class AddCmd : MutationCommand("add", "Create a task; prints the new id"
     }
 }
 
-/** `show <id>` — print the raw `.md` file verbatim (PRD §10.2). */
-private class ShowCmd : TkCommand("show", "Print the raw .md file verbatim") {
+/**
+ * `get <id> [--body|--info|-f field…] [--json]` — read a node. The common case,
+ * bare `get <id>`, prints the raw `.md` **verbatim** (frontmatter + body) so an
+ * agent picking up a task sees the whole brief in one cheap read (this subsumes the
+ * former `show`). Narrowings: `--body`/`-b` the body alone; `--info`/`-i` the parsed
+ * fields — stored **and** computed, the value-add over the raw frontmatter; `-f`
+ * plucks named field values. `--json` emits the structured node (body unless `--info`).
+ */
+private class GetCmd : TkCommand("get", "Print a node verbatim (.md); --body / --info / -f narrow it") {
     val id by argument(ArgType.String, description = "Task id")
-
-    override fun run() {
-        val ws = Workspace.discover(root)
-        val raw = ws.rawFile(id) ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
-        print(raw)
-    }
-}
-
-/** `get <id> [-f field…] [--json]` — parsed field values, stored + computed (PRD §10.2). */
-private class GetCmd : TkCommand("get", "Print a node's field values (stored + computed)") {
-    val id by argument(ArgType.String, description = "Task id")
-    val fields by option(ArgType.String, "field", "f", description = "Field to print (repeatable; default: all)").multiple()
+    val body by option(ArgType.Boolean, "body", "b", description = "Print the body only (frontmatter stripped)").default(false)
+    val info by option(ArgType.Boolean, "info", "i", description = "Print parsed fields only (stored + computed)").default(false)
+    val fields by option(ArgType.String, "field", "f", description = "Field to print (repeatable)").multiple()
     val asJson by option(ArgType.Boolean, "json", description = "Emit the node as a JSON object").default(false)
 
     override fun run() {
         val ws = Workspace.discover(root)
-        val all = ws.loadTasks()
-        val computed = computeAll(all)
-        val task = all.firstOrNull { it.id == id } ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
-        val c = computed.getValue(id)
-
-        if (asJson) {
-            println(json.encodeToString(TaskDto.serializer(), task.toDto(c, includeBody = false)))
+        // The parsed-field projections (--json / --info / -f) need the computed graph.
+        if (asJson || info || fields.isNotEmpty()) {
+            val all = ws.loadTasks()
+            val computed = computeAll(all)
+            val task = all.firstOrNull { it.id == id } ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
+            val c = computed.getValue(id)
+            when {
+                asJson -> println(json.encodeToString(TaskDto.serializer(), task.toDto(c, includeBody = !info)))
+                fields.isNotEmpty() -> {
+                    val map = fieldMap(task, c)
+                    fields.forEach { name ->
+                        println(map[name] ?: throw TkError(ExitCode.USAGE, "unknown field '$name'"))
+                    }
+                }
+                else -> fieldMap(task, c).forEach { (k, v) -> println("$k: $v") }
+            }
             return
         }
-        val map = fieldMap(task, c)
-        if (fields.isEmpty()) {
-            map.forEach { (k, v) -> println("$k: $v") }
+        // Body-only, else the common case: the raw .md verbatim.
+        if (body) {
+            println(ws.readBody(id))
         } else {
-            fields.forEach { name ->
-                val v = map[name] ?: throw TkError(ExitCode.USAGE, "unknown field '$name'")
-                println(v)
-            }
+            val raw = ws.rawFile(id) ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
+            print(raw)
         }
     }
 }
@@ -314,12 +319,6 @@ private class AppendCmd : MutationCommand("append", "Append to a task's body (us
     val id by argument(ArgType.String, description = "Task id")
     val text by argument(ArgType.String, description = "Body text, or - for stdin")
     override fun run() = emit(Workspace.discover(root).appendBody(id, bodyArg(text), exportOnSuccess))
-}
-
-/** `read <id>` — print the node's body only (PRD §10.2). */
-private class ReadCmd : TkCommand("read", "Print a task's body (frontmatter stripped)") {
-    val id by argument(ArgType.String, description = "Task id")
-    override fun run() = println(Workspace.discover(root).readBody(id))
 }
 
 /** `delete <id>` — move to trash, prune dependents; validation-free (PRD §9.5, §10.5). */
@@ -519,7 +518,7 @@ public fun main(args: Array<String>) {
     val parser = ArgParser("taskkling")
     parser.subcommands(
         InitCmd(), AddCmd(), ListCmd(), ExportCmd(),
-        ShowCmd(), GetCmd(), ReadCmd(),
+        GetCmd(),
         DoneCmd(), DropCmd(), ReopenCmd(), WaitCmd(),
         LinkCmd(), UnlinkCmd(),
         SetCmd(), WriteCmd(), AppendCmd(),

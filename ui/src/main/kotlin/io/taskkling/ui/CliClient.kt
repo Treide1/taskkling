@@ -98,8 +98,8 @@ public class CliClient(
         return json.decodeFromString(ExportDto.serializer(), run(full).stdout)
     }
 
-    /** `taskkling read <id>` → the node's body text. */
-    public fun body(id: String): String = run(listOf("read", id)).stdout.trimEnd('\n')
+    /** `taskkling get <id> --body` → the node's body text. */
+    public fun body(id: String): String = run(listOf("get", id, "--body")).stdout.trimEnd('\n')
 
     private data class Output(val stdout: String, val stderr: String)
 

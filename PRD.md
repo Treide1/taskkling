@@ -91,7 +91,7 @@ backbone **dumb** — plain files + a tiny binary — and invests only where the
 
 ## 5. Users & core use cases
 
-- **Solo operator (human)** browses and triages at the terminal (`list`, `show`) and via the
+- **Solo operator (human)** browses and triages at the terminal (`list`, `get`) and via the
   desktop UI; hand-edits when convenient.
 - **Agent** creates/decomposes/links tasks, queries the **ready set** and dependency
   relationships (`list --ready`, `list --blocked-by <id> --id-only`), records progress, all
@@ -136,7 +136,7 @@ replace) live in a small `expect/actual` shim.
 A **light** Compose Desktop app (JVM — the supported Compose desktop target; *not* native-desktop
 Compose). It is a **pure CLI client (Option A)**:
 
-- **Reads**: invokes `taskkling export` (and `show`/`read` for a node's body on demand), renders
+- **Reads**: invokes `taskkling export` (and `get --body` for a node's body on demand), renders
   the DAG and detail panels from the returned JSON.
 - **Writes**: every mutation is a `taskkling <verb> … --export-on-success` subprocess call; the
   UI refreshes from the returned full export. It does not diff server-side or hold a parallel
@@ -150,7 +150,7 @@ is the first visible milestone, built while only the CLI exists.
 
 ```
             ┌────────────── reads ──────────────┐
-agent ──┐   │  taskkling export / list / show   │   ┌── UI (Compose Desktop)
+agent ──┐   │  taskkling export / list / get    │   ┌── UI (Compose Desktop)
         ├──►│  ───────────────────────────────► │◄──┤   reads export JSON
 human ──┘   │  taskkling <mutation verb>        │   └── writes via CLI subprocess
             └──────────── one write path ───────┘
@@ -340,9 +340,7 @@ considered and rejected). The CLI is the single read and write interface.
 |---|---|
 | `export [--include-body] [--archived]` | Full JSON: all active nodes (stored + computed). `--include-body` adds a per-node `body` field (markdown sans frontmatter, JSON-escaped). `--archived` includes the archive subtree. |
 | `list [filters] [sorts] [--id-only] [--json] [--archived]` | A filtered/sorted **collection**, `ls -la`-style (no body). `--json` → array of per-node objects (= `export.tasks[]` subset). |
-| `show <id>` | The raw `.md` file (frontmatter + body) printed **verbatim** to stdout. No rendering, no `--json`. |
-| `get <id> [--<field>…] [--json]` | Parsed **field values** — stored **and** computed (read-only ones can't be `set`). Symmetric with `set`. |
-| `read <id>` | The **body** only (frontmatter stripped). Symmetric with `write`/`append`. |
+| `get <id> [--body] [--info] [--<field>…] [--json]` | Read a node — the single read verb. Bare → the raw `.md` (frontmatter + body) printed **verbatim** (the common case; the full brief in one read). `--body`/`-b` → the body only (the `write`/`append`-symmetric read); `--info`/`-i` → parsed **field values**, stored **and** computed (read-only ones can't be `set`); `--<field>…` plucks named fields; `--json` → the structured node (body unless `--info`). Symmetric with `set`. |
 
 **`list` filters**: `--ready` · `--blocked` · `--overdue` · `--status <s>` · `--thread <t>` ·
 `--due-before <dt>` · `--blocking <id>` · `--blocked-by <id>`.
@@ -379,7 +377,7 @@ so an agent can preview impact with the very function delete will run:
 |---|---|
 | `add "<title>" [--thread t] [--depends a,b] [--due dt] [--defer dt] [--priority p] [--body txt]` | Create a node; print the new id (cycle/dangling-checked). |
 | `set <id> [--<field> <value>…] [--clear <field>…]` | Atomic multi-field metadata edit (`--due/--defer/--priority/--thread/--title`, extensible). `--clear` (or `--<field> ""`) unsets a field. |
-| `get <id> [--<field>…]` | (read; §10.2) symmetric counterpart. |
+| `get <id> [--info] [--<field>…]` | (read; §10.2) symmetric counterpart (`--info`/`-f` for parsed fields). |
 
 ### 10.5 Lifecycle
 
@@ -398,7 +396,7 @@ so an agent can preview impact with the very function delete will run:
 | `link <id> --depends <id>` / `unlink <id> --depends <id>` | Add/remove a dependency edge (cycle-checked on add). |
 | `write <id> "<text>"` | Replace the body in full. |
 | `append <id> "<text>"` | Append to the body. |
-| `read <id>` | (read; §10.2) the body. |
+| `get <id> --body` | (read; §10.2) the body — symmetric counterpart. |
 
 ### 10.7 Maintenance
 
@@ -456,7 +454,7 @@ drift.
 
 - **Light Compose Desktop (JVM)** app; pure CLI client (§6.3). Reads `export`; renders the DAG as
   a node-link graph with computed state (ready/blocked/deferred/overdue/resurfaced) shown
-  visually; a detail panel lazy-loads a node's body via `show`/`read`.
+  visually; a detail panel lazy-loads a node's body via `get --body`.
 - **All mutations** go through `taskkling <verb> … --export-on-success`; the UI refreshes from the
   returned export and may diff old-vs-new **client-side** for incremental updates.
 - **Read-only `index.html` spike** first (render an `export` dump; no callbacks) as the early

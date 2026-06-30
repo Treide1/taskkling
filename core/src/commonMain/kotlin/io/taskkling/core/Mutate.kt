@@ -184,6 +184,6 @@ public fun Workspace.appendBody(id: String, text: String, exportAfter: Boolean =
         t.copy(body = if (t.body.isBlank()) add else t.body.trimEnd() + "\n" + add)
     }
 
-/** `read <id>` — the node's body only, frontmatter stripped (PRD §10.2). */
+/** `get <id> --body` — the node's body only, frontmatter stripped (PRD §10.2). */
 public fun Workspace.readBody(id: String): String =
     loadTask(id)?.body ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
