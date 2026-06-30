@@ -65,15 +65,39 @@ try {
     & $dest --version
 
     # Add the install dir to the USER PATH if it is not already present.
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if ($null -eq $userPath) { $userPath = '' }
-    $entries = $userPath.Split(';') | Where-Object { $_ -ne '' }
-    if ($entries -notcontains $installDir) {
-        $trimmed = $userPath.TrimEnd(';')
-        $newPath = if ($trimmed -eq '') { $installDir } else { "$trimmed;$installDir" }
-        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
-        Write-Host ''
-        Write-Host "Added $installDir to your user PATH. Restart your shell for it to take effect."
+    #
+    # Edit the registry directly instead of [Environment]::*EnvironmentVariable:
+    # that API reads the *expanded* PATH and always writes REG_SZ, which downgrades
+    # REG_EXPAND_SZ -> REG_SZ and freezes every %VAR% entry (e.g.
+    # %USERPROFILE%\AppData\Local\Microsoft\WindowsApps) into a literal path. Read
+    # raw (DoNotExpandEnvironmentNames) and write back as ExpandString. Same approach
+    # as the bun and cargo-dist installers.
+    $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    try {
+        $rawPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $entries = @($rawPath.Split(';') | Where-Object { $_ -ne '' })
+        if ($entries -notcontains $installDir) {
+            $newPath = (@($entries) + $installDir) -join ';'
+            # Keep PATH expandable when it carries %VAR% refs; else preserve the
+            # existing kind; else default to ExpandString for a fresh value.
+            $kind = if ($newPath.Contains('%')) {
+                [Microsoft.Win32.RegistryValueKind]::ExpandString
+            } elseif ($null -ne $envKey.GetValue('Path')) {
+                $envKey.GetValueKind('Path')
+            } else {
+                [Microsoft.Win32.RegistryValueKind]::ExpandString
+            }
+            $envKey.SetValue('Path', $newPath, $kind)
+            Write-Host ''
+            Write-Host "Added $installDir to your user PATH. Restart your shell for it to take effect."
+
+            # Nudge running processes so new shells see it without a reboot:
+            # round-tripping a dummy USER var fires WM_SETTINGCHANGE with no P/Invoke.
+            [Environment]::SetEnvironmentVariable('TASKKLING_PATH_SYNC', '1', 'User')
+            [Environment]::SetEnvironmentVariable('TASKKLING_PATH_SYNC', [NullString]::Value, 'User')
+        }
+    } finally {
+        $envKey.Dispose()
     }
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

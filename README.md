@@ -58,6 +58,15 @@ sha256sum -c SHA256SUMS
 shasum -a 256 -c SHA256SUMS
 ```
 
+On **Windows (PowerShell)**, compare the binary's hash against its `SHA256SUMS` line
+(`-eq` is case-insensitive, so the upper-case `Get-FileHash` digest still matches):
+
+```powershell
+$want = (((Get-Content SHA256SUMS | Select-String 'taskkling-windows-x64.exe') -split '\s+')[0])
+$got  = (Get-FileHash -Algorithm SHA256 .\taskkling-windows-x64.exe).Hash
+if ($got -eq $want) { 'OK' } else { 'MISMATCH' }
+```
+
 **macOS quarantine caveat:** a binary downloaded via a browser carries the quarantine
 attribute and will be blocked by Gatekeeper on first run. Clear it with:
 
