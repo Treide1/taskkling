@@ -114,9 +114,23 @@ info "Installed taskkling to ${dest}"
 case ":${PATH}:" in
   *":${INSTALL_DIR}:"*) ;;
   *)
+    # Tailor the suggestion to the user's shell. ~/.profile is read only by bash/sh
+    # login shells; zsh (the macOS default) ignores it and fish needs different
+    # syntax -- so a hardcoded ~/.profile hint silently does nothing on a stock Mac.
+    # Pick the file/command from $SHELL.
     info ""
     info "Note: ${INSTALL_DIR} is not on your PATH. Add it, e.g.:"
-    info "  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.profile"
-    info "then restart your shell (or run that export now for the current session)."
+    case "$(basename "${SHELL:-}")" in
+      zsh)
+        info "  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.zshrc"
+        ;;
+      fish)
+        info "  fish_add_path \"${INSTALL_DIR}\""
+        ;;
+      *)
+        info "  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.profile"
+        ;;
+    esac
+    info "then restart your shell (or apply it to the current session)."
     ;;
 esac
