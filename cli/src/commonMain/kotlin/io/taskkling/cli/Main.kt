@@ -22,6 +22,7 @@ import io.taskkling.core.deleteTask
 import io.taskkling.core.initWorkspace
 import io.taskkling.core.installLocalBin
 import io.taskkling.core.installNewExecutable
+import io.taskkling.core.installOtherExecutable
 import io.taskkling.core.currentReleaseAssetName
 import io.taskkling.core.findSha256
 import io.taskkling.core.GITHUB_API_LATEST_RELEASE
@@ -30,6 +31,7 @@ import io.taskkling.core.httpGetBytesBlocking
 import io.taskkling.core.httpGetTextBlocking
 import io.taskkling.core.InstallTier
 import io.taskkling.core.isNewerVersion
+import io.taskkling.core.isStdoutInteractive
 import io.taskkling.core.isUpdateCheckCacheFresh
 import io.taskkling.core.linkDepends
 import io.taskkling.core.loadTasks
@@ -37,6 +39,7 @@ import io.taskkling.core.loadUpdateCheckCache
 import io.taskkling.core.loadUserConfig
 import io.taskkling.core.markDone
 import io.taskkling.core.markDropped
+import io.taskkling.core.materializeUserConfig
 import io.taskkling.core.normalizeVersionTag
 import io.taskkling.core.parseLatestTagName
 import io.taskkling.core.rawFile
@@ -427,47 +430,87 @@ private fun resolveLatestVersionCached(currentVersion: String): String? {
 }
 
 /**
- * `--version`'s opt-in notifier surface (ADR-005): only fires when
- * `update_check` is enabled somewhere in scope — a workspace's
+ * `--version`'s passive notifier surface (ADR-005, default reversed by
+ * ADR-006): fires only when `update_check` is enabled in scope — a workspace's
  * `.taskkling/config.toml` overrides the user-level one
- * ([resolveUpdateCheckEnabled]). With the flag off (the default) this makes
- * NO network call at all, keeping `--version` local/offline/fast for scripts
- * and CI that scrape it. Best-effort end to end: any failure (workspace
- * discovery, config parse, network, cache IO) is swallowed so a broken check
- * can never break `--version` itself.
+ * ([resolveUpdateCheckEnabled]) — AND stdout is an interactive terminal.
+ * The check now defaults ON (ADR-006), so the TTY gate is what keeps `--version`
+ * local/offline/fast for the scripts and CI that scrape it: a non-interactive
+ * stdout returns BEFORE any network or cache IO, so no call is made and no cache
+ * is written. Best-effort end to end: any failure (workspace discovery, config
+ * parse, TTY probe, network, cache IO) is swallowed so a broken check can never
+ * break `--version` itself.
  */
 private fun printVersionNotifierIfEnabled(currentVersion: String) {
     try {
         val workspaceConfig = try { Workspace.discover(null).config } catch (_: TkError) { null }
         val userConfig = loadUserConfig()
         if (!resolveUpdateCheckEnabled(userConfig, workspaceConfig)) return
+        // ADR-006's TTY gate: with the check on by default, only an interactive
+        // `--version` may touch the network. Decide this BEFORE any IO so CI /
+        // pipes / `| grep` / docker-build stay truly offline (no call, no cache write).
+        if (!isStdoutInteractive()) return
         val latest = resolveLatestVersionCached(currentVersion)
         val line = updateNotifierLine(true, currentVersion, latest) ?: return
         println("taskkling: $line")
     } catch (_: Exception) {
-        // best-effort, silent-fail (ADR-002/005) — never break `--version`.
+        // best-effort, silent-fail (ADR-002/005/006) — never break `--version`.
     }
 }
 
 /**
- * `update [--check] [--version vX.Y.Z]` — self-replace the running binary
- * with the latest (or a pinned) GitHub release, resolve + SHA-256-verify
- * ported from `install.sh`/`install.ps1` (ADR-002). `--check` only reports
- * whether a newer release exists; it never installs, and it always runs
- * (no config gate — it's unambiguously user-initiated).
+ * `update [--global|--local] [--check] [--version vX.Y.Z]` — self-replace the
+ * running binary (or, with a tier flag, another tier's copy) with the latest
+ * (or a pinned) GitHub release, resolve + SHA-256-verify ported from
+ * `install.sh`/`install.ps1` (ADR-002). `--global`/`--local` mirror
+ * `uninstall`'s tier targeting (ADR-007), update-only: they never install into
+ * a tier that has none. `--check` only reports whether a newer release exists;
+ * it never installs, always runs (no config gate — it's unambiguously
+ * user-initiated), and is tier-agnostic (rejects `--global`/`--local`).
  */
-private class UpdateCmd : TkCommand("update", "Self-update the running binary; --check only reports newer-available") {
+private class UpdateCmd : TkCommand("update", "Self-update the running binary; --global/--local target a tier; --check only reports") {
     val check by option(ArgType.Boolean, "check", description = "Report whether a newer release is available; does not install").default(false)
+    val global by option(ArgType.Boolean, "global", description = "Update the global-tier binary explicitly (update-only)").default(false)
+    val local by option(ArgType.Boolean, "local", description = "Update the per-project local-bin binary explicitly (update-only)").default(false)
     val versionOverride by option(
         ArgType.String, "version",
         description = "Update to a specific release tag (e.g. v0.3.0), skipping the latest-version lookup",
     )
 
+    /**
+     * Resolve the binary `update` will replace (ADR-007). Default (no flag) is
+     * the running binary. `--global`/`--local` pick a tier explicitly and are
+     * UPDATE-ONLY: a targeted tier with no install is an error, never a silent
+     * new install (that's install.sh / `init --local-bin`'s job).
+     */
+    private fun resolveTarget(running: Path): Path {
+        val fs = FileSystem.SYSTEM
+        val basename = running.name
+        return when {
+            global -> {
+                val path = globalInstallDirPath() / basename
+                if (!fs.exists(path)) throw TkError(ExitCode.VALIDATION, "no global install found; install it with the install script")
+                path
+            }
+            local -> {
+                val ws = Workspace.discover(root) // explicit --local must resolve a real workspace
+                val path = ws.metaDir / "bin" / basename
+                if (!fs.exists(path)) throw TkError(ExitCode.VALIDATION, "no local-bin install here; run 'taskkling init --local-bin' first")
+                path
+            }
+            else -> running
+        }
+    }
+
     override fun run() {
+        if (global && local) throw TkError(ExitCode.USAGE, "--global and --local are mutually exclusive")
+
         val current = Taskkling.VERSION
         val userAgent = "taskkling/$current"
 
         if (check) {
+            // --check reports latest-vs-running and touches no binary, so a tier flag is meaningless here (ADR-007).
+            if (global || local) throw TkError(ExitCode.USAGE, "--check reports on the running binary and cannot be combined with --global/--local")
             val latest = fetchLatestTag(userAgent)
             if (latest != null) {
                 // Opportunistic cache warm (ADR-005): `update --check` always performs a
@@ -513,11 +556,22 @@ private class UpdateCmd : TkCommand("update", "Self-update the running binary; -
         }
         if (!quiet) println("Checksum OK ($actualHash)")
 
-        val exePath = runningExecutablePath()
-        installNewExecutable(exePath, assetBytes)
-        restampLocalBinVersionIfPresent(exePath, targetVersion)
+        // Self vs other, forced by the OS (ADR-007): replacing the running image needs the
+        // Windows-safe self-replace dance ([installNewExecutable]); a different, unlocked
+        // tier's copy is a plain overwrite ([installOtherExecutable]).
+        val running = runningExecutablePath()
+        val target = resolveTarget(running)
+        val fs = FileSystem.SYSTEM
+        fun canon(p: Path): Path = try { fs.canonicalize(p) } catch (_: Exception) { p }
+        val isSelf = canon(target) == canon(running)
 
-        if (!quiet) println("$current -> $targetVersion")
+        if (isSelf) installNewExecutable(target, assetBytes) else installOtherExecutable(target, assetBytes)
+        restampLocalBinVersionIfPresent(target, targetVersion)
+
+        if (!quiet) {
+            if (isSelf) println("$current -> $targetVersion")
+            else println("updated $target to $targetVersion")
+        }
     }
 }
 
@@ -641,6 +695,49 @@ private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary
             if (pathChanged) println("taskkling: removed '$pathEntryDir' from your user PATH")
             if (purged) println("taskkling: purged workspace at ${workspace.metaDir}")
         }
+    }
+}
+
+/**
+ * `config init` — materialize the user-level `config.toml` write-if-absent and
+ * print its path (ADR-006). Its purpose is discoverability: with the
+ * `update_check` notifier on by default, this file surfaces the OFF switch (and
+ * the config's location) right after install. Re-running never clobbers a user
+ * who edited it. Both installers exec this so the file exists from the first run.
+ *
+ * `config` is a verb GROUP: kotlinx-cli runs a parent subcommand's `execute()`
+ * *after* the selected child's (see ArgParser.parse), so the child flips
+ * [ConfigCmd.handledBySubcommand] and the parent stays silent; a bare `config`
+ * with no subcommand reports the usage error itself.
+ */
+private class ConfigCmd : Subcommand("config", "Manage user-level configuration (config init)") {
+    var handledBySubcommand: Boolean = false
+
+    init {
+        // Stop at the first verb and hand the rest down, so `config init` dispatches to the
+        // nested `init` rather than colliding with the top-level `init` (kotlinx-cli's
+        // non-strict mode keeps scanning and would overwrite the selected subcommand).
+        strictSubcommandOptionsOrder = true
+        subcommands(ConfigInitCmd(this))
+    }
+
+    override fun execute() {
+        if (handledBySubcommand) return
+        eprintln("taskkling: 'config' needs a subcommand (try: taskkling config init)")
+        exitProcess(ExitCode.USAGE.code)
+    }
+}
+
+/** `config init` — write the user-level config.toml if absent; always prints its absolute path. */
+private class ConfigInitCmd(private val parent: ConfigCmd) :
+    TkCommand("init", "Create the user-level config.toml (write-if-absent); prints its path") {
+    override fun run() {
+        parent.handledBySubcommand = true
+        val result = materializeUserConfig()
+        if (!quiet) {
+            eprintln("taskkling: user config ${if (result.created) "created" else "already present"}")
+        }
+        println(result.path) // essential output (the path) → stdout, greppable
     }
 }
 
@@ -805,15 +902,21 @@ public fun main(args: Array<String>) {
     }
     if (args.size == 1 && (args[0] == "--version" || args[0] == "-v")) {
         println("taskkling ${Taskkling.VERSION}")
-        // Opt-in notifier only (ADR-005): with `update_check` off (the default) this
-        // makes no network call at all — `--version` stays local/offline/fast.
+        // Passive notifier (ADR-005/006): on by default, but TTY-gated inside —
+        // a non-interactive `--version` (CI / pipes / scripts) makes no network
+        // call at all, so it stays local/offline/fast.
         printVersionNotifierIfEnabled(Taskkling.VERSION)
         return
     }
     // Fold leading global flags (--root/--quiet/--no-color) into GlobalFlags so
     // they work git-style before the verb; per-verb forms still work after it.
     val rest = extractLeadingGlobals(args)
-    val parser = ArgParser("taskkling")
+    // strictSubcommandOptionsOrder: stop at the first verb and pass the remainder to it,
+    // rather than scanning every token for a subcommand name. Required for the nested
+    // `config init` (its `init` would otherwise collide with the top-level `init`), and it
+    // also fixes a latent misparse where an argument value equal to a verb name (e.g.
+    // `add list`) was consumed as a subcommand. Leading globals are already extracted above.
+    val parser = ArgParser("taskkling", strictSubcommandOptionsOrder = true)
     parser.subcommands(
         InitCmd(), AddCmd(), ListCmd(), ExportCmd(),
         GetCmd(),
@@ -821,6 +924,7 @@ public fun main(args: Array<String>) {
         LinkCmd(), UnlinkCmd(),
         SetCmd(), WriteCmd(), AppendCmd(),
         DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(), UpdateCmd(), UninstallCmd(),
+        ConfigCmd(),
     )
     parser.parse(rest)
 }

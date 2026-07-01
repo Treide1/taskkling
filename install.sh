@@ -110,6 +110,11 @@ info ""
 info "Installed taskkling to ${dest}"
 "$dest" --version 2>/dev/null || true
 
+# Materialize the user-level config.toml (ADR-006) so the on-by-default
+# update_check notifier's OFF switch is discoverable right after install.
+# Best-effort: a config-write hiccup must never fail the install.
+"$dest" config init >/dev/null 2>&1 || true
+
 # --- PATH hint -----------------------------------------------------------------
 case ":${PATH}:" in
   *":${INSTALL_DIR}:"*) ;;

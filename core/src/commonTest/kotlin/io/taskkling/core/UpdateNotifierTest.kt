@@ -19,9 +19,16 @@ class UpdateNotifierTest {
     // --- resolveUpdateCheckEnabled: precedence -------------------------------------------------------------------
 
     @Test
-    fun defaultsToFalseWhenNeitherConfigSetsIt() {
-        assertFalse(resolveUpdateCheckEnabled(userConfig = null, workspaceConfig = null))
-        assertFalse(resolveUpdateCheckEnabled(userConfig = Config.DEFAULT, workspaceConfig = Config.DEFAULT))
+    fun defaultsToTrueWhenNeitherConfigSetsIt() {
+        // ADR-006 reversed the default: on unless a config turns it off (opt-OUT).
+        assertTrue(resolveUpdateCheckEnabled(userConfig = null, workspaceConfig = null))
+        assertTrue(resolveUpdateCheckEnabled(userConfig = Config.DEFAULT, workspaceConfig = Config.DEFAULT))
+    }
+
+    @Test
+    fun userConfigCanOptOutOutsideAnyWorkspace() {
+        // The one way to silence the on-by-default check with no workspace in scope.
+        assertFalse(resolveUpdateCheckEnabled(userConfig = Config(updateCheck = false), workspaceConfig = null))
     }
 
     @Test

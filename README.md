@@ -151,10 +151,16 @@ Re-running the install script (`curl … | sh` / `irm … | iex`) is always a va
 alternative upgrade — both installers overwrite in place after the same checksum
 check.
 
-### Opt-in "newer version available" check
+### "Newer version available" check
 
-By default nothing phones home and `taskkling --version` is fully offline. To
-get a passive heads-up, set `update_check = true` in a `config.toml`:
+taskkling gives you a passive heads-up when a newer release is out. On
+`taskkling --version` this check is **on by default**, but only in an
+**interactive terminal** — pipes, scripts, CI, and any `--json`/machine-readable
+output stay fully offline (no network call, no cache write). The explicit
+`taskkling update --check` always runs, terminal or not. It only notifies; it
+never installs.
+
+To turn the passive check **off**, set `update_check = false` in a `config.toml`:
 
 - **User-level** config (honoured by the global binary anywhere):
   - Linux — `~/.config/taskkling/config.toml` (or `$XDG_CONFIG_HOME/taskkling/`)
@@ -162,10 +168,15 @@ get a passive heads-up, set `update_check = true` in a `config.toml`:
   - Windows — `%LOCALAPPDATA%\taskkling\config.toml`
 - A workspace's `.taskkling/config.toml` overrides the user-level value.
 
-When enabled, the check runs at most once every ~24 h, fails silently, and the
-`vX.Y.Z available` line appears on **only two** surfaces: `taskkling --version`
-and the explicit `taskkling update --check`. It never appears in `list`, `get`,
-`export`, or any `--json` output, and it only notifies — it never installs.
+Both installers run `taskkling config init` for you, which writes that
+user-level file (write-if-absent, never clobbering your edits) pre-populated
+with the `update_check` toggle and prints its path — run it yourself anytime to
+create or locate the file.
+
+When it runs, the check hits GitHub Releases at most once every ~24 h, fails
+silently, and the `vX.Y.Z available` line appears on **only two** surfaces:
+`taskkling --version` (interactive only) and the explicit `taskkling update
+--check`. It never appears in `list`, `get`, `export`, or any `--json` output.
 
 ## Uninstalling
 
