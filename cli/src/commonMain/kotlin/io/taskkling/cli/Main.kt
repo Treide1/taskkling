@@ -21,16 +21,30 @@ import io.taskkling.core.computeAll
 import io.taskkling.core.deleteTask
 import io.taskkling.core.initWorkspace
 import io.taskkling.core.installLocalBin
+import io.taskkling.core.installNewExecutable
+import io.taskkling.core.currentReleaseAssetName
+import io.taskkling.core.findSha256
+import io.taskkling.core.GITHUB_API_LATEST_RELEASE
+import io.taskkling.core.httpGetBytesBlocking
+import io.taskkling.core.httpGetTextBlocking
+import io.taskkling.core.isNewerVersion
 import io.taskkling.core.linkDepends
 import io.taskkling.core.loadTasks
 import io.taskkling.core.markDone
 import io.taskkling.core.markDropped
+import io.taskkling.core.normalizeVersionTag
+import io.taskkling.core.parseLatestTagName
 import io.taskkling.core.rawFile
 import io.taskkling.core.readBody
+import io.taskkling.core.releaseDownloadBaseUrl
 import io.taskkling.core.reopenTask
+import io.taskkling.core.restampLocalBinVersionIfPresent
 import io.taskkling.core.restoreTask
+import io.taskkling.core.runningExecutablePath
 import io.taskkling.core.setFields
 import io.taskkling.core.SetArgs
+import io.taskkling.core.Sha256
+import io.taskkling.core.sweepStaleOldExecutableForRunningBinary
 import io.taskkling.core.toDto
 import io.taskkling.core.unlinkDepends
 import io.taskkling.core.waitTask
@@ -365,6 +379,83 @@ private class DoctorCmd : TkCommand("doctor", "Integrity + logical-resolution sc
     override fun run() = eprintln("taskkling: doctor is a post-v0.1 stub (PRD §19) — not yet implemented")
 }
 
+/**
+ * Best-effort GitHub `tag_name` lookup (ADR-002): a User-Agent is required
+ * (GitHub 403s without one) and any failure — network, non-2xx, bad JSON —
+ * silently yields null rather than throwing, so callers decide how loud to be.
+ */
+private fun fetchLatestTag(userAgent: String): String? =
+    try {
+        val (status, body) = httpGetTextBlocking(GITHUB_API_LATEST_RELEASE, userAgent)
+        if (status in 200..299) parseLatestTagName(body) else null
+    } catch (_: Exception) {
+        null
+    }
+
+/**
+ * `update [--check] [--version vX.Y.Z]` — self-replace the running binary
+ * with the latest (or a pinned) GitHub release, resolve + SHA-256-verify
+ * ported from `install.sh`/`install.ps1` (ADR-002). `--check` only reports
+ * whether a newer release exists; it never installs, and it always runs
+ * (no config gate — it's unambiguously user-initiated).
+ */
+private class UpdateCmd : TkCommand("update", "Self-update the running binary; --check only reports newer-available") {
+    val check by option(ArgType.Boolean, "check", description = "Report whether a newer release is available; does not install").default(false)
+    val versionOverride by option(
+        ArgType.String, "version",
+        description = "Update to a specific release tag (e.g. v0.3.0), skipping the latest-version lookup",
+    )
+
+    override fun run() {
+        val current = Taskkling.VERSION
+        val userAgent = "taskkling/$current"
+
+        if (check) {
+            val latest = fetchLatestTag(userAgent)
+            when {
+                latest == null -> eprintln("taskkling: could not check for updates (network error or rate-limited)")
+                isNewerVersion(current, latest) ->
+                    println("taskkling: update available: $current -> ${latest.removePrefix("v")} (run 'taskkling update')")
+                else -> println("taskkling: up to date ($current)")
+            }
+            return
+        }
+
+        val targetTag = versionOverride
+            ?: fetchLatestTag(userAgent)
+            ?: throw TkError(
+                ExitCode.VALIDATION,
+                "could not resolve the latest release (network error or rate-limited) — pass --version vX.Y.Z to update without it",
+            )
+        val targetVersion = normalizeVersionTag(targetTag).removePrefix("v")
+
+        val assetName = currentReleaseAssetName()
+        val base = releaseDownloadBaseUrl(targetTag)
+        val assetUrl = "$base/$assetName"
+        val sumsUrl = "$base/SHA256SUMS"
+
+        if (!quiet) println("Downloading $assetName ($targetVersion) ...")
+        val (assetStatus, assetBytes) = httpGetBytesBlocking(assetUrl, userAgent)
+        if (assetStatus !in 200..299) throw TkError(ExitCode.VALIDATION, "download failed: HTTP $assetStatus for $assetUrl")
+        val (sumsStatus, sumsText) = httpGetTextBlocking(sumsUrl, userAgent)
+        if (sumsStatus !in 200..299) throw TkError(ExitCode.VALIDATION, "download failed: HTTP $sumsStatus for $sumsUrl")
+
+        val expected = findSha256(sumsText, assetName)
+            ?: throw TkError(ExitCode.VALIDATION, "no checksum entry for $assetName in SHA256SUMS")
+        val actualHash = Sha256.hashHex(assetBytes)
+        if (!expected.equals(actualHash, ignoreCase = true)) {
+            throw TkError(ExitCode.VALIDATION, "checksum mismatch for $assetName (expected $expected, got $actualHash) — aborting")
+        }
+        if (!quiet) println("Checksum OK ($actualHash)")
+
+        val exePath = runningExecutablePath()
+        installNewExecutable(exePath, assetBytes)
+        restampLocalBinVersionIfPresent(exePath, targetVersion)
+
+        if (!quiet) println("$current -> $targetVersion")
+    }
+}
+
 /** `export [--include-body] [--archived] [--ics]` — full JSON contract (PRD §12). */
 private class ExportCmd : TkCommand("export", "Print the full JSON export") {
     val includeBody by option(ArgType.Boolean, "include-body", description = "Add a per-node body field").default(false)
@@ -508,6 +599,13 @@ private fun buildAttrs(t: Task): String {
 
 /** Entry point for the native `taskkling` binary (PRD §6.2, §10). */
 public fun main(args: Array<String>) {
+    // Best-effort startup hook (ADR-002): sweep a stale `taskkling.exe.old`
+    // sibling left by a prior Windows `update` run that couldn't delete it
+    // immediately (still locked while that process was exiting). No-op on
+    // POSIX and on a fresh install; never throws, so it can't break a normal
+    // command even if it fails.
+    sweepStaleOldExecutableForRunningBinary()
+
     // Hidden, undocumented self-test seam (never in help/usage, no effect on any
     // normal command): forces the ktor engine into the link graph and proves an
     // HTTPS round trip on the platform HTTP client.
@@ -531,7 +629,7 @@ public fun main(args: Array<String>) {
         DoneCmd(), DropCmd(), ReopenCmd(), WaitCmd(),
         LinkCmd(), UnlinkCmd(),
         SetCmd(), WriteCmd(), AppendCmd(),
-        DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(),
+        DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(), UpdateCmd(),
     )
     parser.parse(rest)
 }

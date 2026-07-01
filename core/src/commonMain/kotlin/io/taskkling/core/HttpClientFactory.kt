@@ -3,6 +3,7 @@ package io.taskkling.core
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import kotlinx.coroutines.runBlocking
@@ -41,3 +42,25 @@ public suspend fun httpGetText(url: String, userAgent: String? = null): Pair<Int
  */
 public fun httpGetTextBlocking(url: String, userAgent: String? = null): Pair<Int, String> =
     runBlocking { httpGetText(url, userAgent) }
+
+/**
+ * Binary counterpart to [httpGetText]: fetch [url], returning the HTTP status
+ * code and the raw response body bytes. `update` (ADR-002) needs this to
+ * download a release asset — a `.exe`/ELF binary can't round-trip through
+ * [httpGetText]'s text decoding.
+ */
+public suspend fun httpGetBytes(url: String, userAgent: String? = null): Pair<Int, ByteArray> {
+    val client = newHttpClient()
+    try {
+        val response = client.get(url) {
+            if (userAgent != null) header(HttpHeaders.UserAgent, userAgent)
+        }
+        return response.status.value to response.bodyAsBytes()
+    } finally {
+        client.close()
+    }
+}
+
+/** Synchronous bridge to [httpGetBytes], mirroring [httpGetTextBlocking]. */
+public fun httpGetBytesBlocking(url: String, userAgent: String? = null): Pair<Int, ByteArray> =
+    runBlocking { httpGetBytes(url, userAgent) }
