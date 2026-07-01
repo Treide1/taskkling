@@ -25,8 +25,10 @@ import io.taskkling.core.installNewExecutable
 import io.taskkling.core.currentReleaseAssetName
 import io.taskkling.core.findSha256
 import io.taskkling.core.GITHUB_API_LATEST_RELEASE
+import io.taskkling.core.globalInstallDirPath
 import io.taskkling.core.httpGetBytesBlocking
 import io.taskkling.core.httpGetTextBlocking
+import io.taskkling.core.InstallTier
 import io.taskkling.core.isNewerVersion
 import io.taskkling.core.linkDepends
 import io.taskkling.core.loadTasks
@@ -37,7 +39,9 @@ import io.taskkling.core.parseLatestTagName
 import io.taskkling.core.rawFile
 import io.taskkling.core.readBody
 import io.taskkling.core.releaseDownloadBaseUrl
+import io.taskkling.core.removeFromWindowsUserPath
 import io.taskkling.core.reopenTask
+import io.taskkling.core.resolveInstallTier
 import io.taskkling.core.restampLocalBinVersionIfPresent
 import io.taskkling.core.restoreTask
 import io.taskkling.core.runningExecutablePath
@@ -46,8 +50,11 @@ import io.taskkling.core.SetArgs
 import io.taskkling.core.Sha256
 import io.taskkling.core.sweepStaleOldExecutableForRunningBinary
 import io.taskkling.core.toDto
+import io.taskkling.core.uninstallOtherBinary
+import io.taskkling.core.uninstallRunningBinary
 import io.taskkling.core.unlinkDepends
 import io.taskkling.core.waitTask
+import io.taskkling.core.windowsPathHasEntry
 import io.taskkling.core.writeBody
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
@@ -57,6 +64,9 @@ import kotlinx.cli.multiple
 import kotlinx.cli.required
 import kotlinx.cli.ExperimentalCli
 import kotlinx.cinterop.ExperimentalForeignApi
+import okio.FileSystem
+import okio.Path
+import okio.Path.Companion.toPath
 import platform.posix.fputs
 import platform.posix.stderr
 import kotlinx.serialization.builtins.ListSerializer
@@ -456,6 +466,129 @@ private class UpdateCmd : TkCommand("update", "Self-update the running binary; -
     }
 }
 
+/**
+ * `uninstall [--global|--local] [--purge] [-y]` — the symmetric inverse of
+ * install (ADR-004): removes the tier-resolved binary and the `PATH` entry
+ * install(.sh/.ps1) added; NEVER the `.taskkling/` workspace (tasks, config,
+ * caches) unless `--purge` says so explicitly, on the command line, in every
+ * mode. Interactive by default (states consequences, then asks); `-y` runs
+ * the safe scope (binary + `PATH`) non-interactively; `--purge -y` is the
+ * only non-interactive way to also destroy data, and interactive `--purge`
+ * still confirms that wipe on its own, separately.
+ */
+private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary + PATH entry; --purge also deletes .taskkling/") {
+    val global by option(ArgType.Boolean, "global", description = "Target the global-tier binary explicitly").default(false)
+    val local by option(ArgType.Boolean, "local", description = "Target the per-project local-bin binary explicitly").default(false)
+    val purge by option(
+        ArgType.Boolean, "purge",
+        description = "Also PERMANENTLY delete the .taskkling/ workspace (tasks, config, caches) — irreversible",
+    ).default(false)
+    val yes by option(ArgType.Boolean, "yes", "y", description = "Run non-interactively (safe scope only unless --purge)").default(false)
+
+    private fun confirm(prompt: String): Boolean {
+        print("$prompt [y/N] ")
+        val answer = readlnOrNull()?.trim()?.lowercase()
+        return answer == "y" || answer == "yes"
+    }
+
+    /** What `uninstall` will act on: the binary, its local-bin version stamp / wrapper scripts (if any), and the tier. */
+    private data class Target(val tier: InstallTier, val path: Path, val versionStamp: Path?, val wrappers: List<Path>)
+
+    override fun run() {
+        if (global && local) throw TkError(ExitCode.USAGE, "--global and --local are mutually exclusive")
+
+        val running = runningExecutablePath()
+        val basename = running.name
+        val fs = FileSystem.SYSTEM
+
+        // Best-effort workspace discovery — uninstall is not necessarily run from inside a project
+        // (a --global removal in particular may have no workspace in scope at all).
+        fun discoverWorkspace(rootOverride: String?): Workspace? =
+            try { Workspace.discover(rootOverride) } catch (_: TkError) { null }
+
+        val target: Target
+        val workspace: Workspace?
+        when {
+            local -> {
+                val ws = Workspace.discover(root) // explicit --local: must resolve to a real workspace
+                val binDir = ws.metaDir / "bin"
+                target = Target(InstallTier.LOCAL, binDir / basename, binDir / ".version", listOf(ws.root / "taskkling", ws.root / "taskkling.cmd"))
+                workspace = ws
+            }
+            global -> {
+                target = Target(InstallTier.GLOBAL, globalInstallDirPath() / basename, null, emptyList())
+                workspace = discoverWorkspace(root)
+            }
+            else -> when (resolveInstallTier(running)) {
+                InstallTier.LOCAL -> {
+                    val binDir = running.parent ?: throw TkError(ExitCode.VALIDATION, "the running executable has no parent directory")
+                    val projectRoot = binDir.parent?.parent // bin/ -> .taskkling/ -> project root
+                    val wrappers = if (projectRoot != null) listOf(projectRoot / "taskkling", projectRoot / "taskkling.cmd") else emptyList()
+                    target = Target(InstallTier.LOCAL, running, binDir / ".version", wrappers)
+                    workspace = projectRoot?.let { discoverWorkspace(it.toString()) }
+                }
+                InstallTier.GLOBAL -> {
+                    target = Target(InstallTier.GLOBAL, running, null, emptyList())
+                    workspace = discoverWorkspace(root)
+                }
+            }
+        }
+
+        // Canonicalize before comparing — --global/--local may re-derive a path that refers to the
+        // same file as `running` through a different (but equivalent) string.
+        fun canon(p: Path): Path = try { fs.canonicalize(p) } catch (_: Exception) { p }
+        val isSelf = canon(target.path) == canon(running)
+
+        val pathEntryDir = if (target.tier == InstallTier.GLOBAL) target.path.parent?.toString() else null
+        val pathEntryPresent = pathEntryDir?.let { windowsPathHasEntry(it) } ?: false
+        val taskCount = workspace?.allKnownIds()?.size ?: 0
+
+        if (!yes) {
+            println("taskkling uninstall (${target.tier.name.lowercase()} tier):")
+            println("  binary:  ${target.path}")
+            if (pathEntryPresent) println("  PATH:    remove '$pathEntryDir' from your user PATH")
+            if (workspace != null) {
+                if (purge) {
+                    println("  PURGE:   ${workspace.metaDir} — PERMANENTLY DELETES $taskCount task(s), config, and caches")
+                } else if (taskCount > 0) {
+                    println("  (kept)   ${workspace.metaDir} — $taskCount task(s) preserved; pass --purge to also delete them")
+                }
+            }
+            if (!confirm("Proceed with removing the binary" + (if (pathEntryPresent) " and PATH entry" else "") + "?")) {
+                if (!quiet) println("taskkling: uninstall aborted; nothing was changed")
+                return
+            }
+            if (purge && workspace != null) {
+                if (!confirm("This PERMANENTLY deletes $taskCount task(s) at ${workspace.metaDir} and cannot be undone. Continue?")) {
+                    if (!quiet) println("taskkling: uninstall aborted; workspace preserved")
+                    return
+                }
+            }
+        }
+
+        // Binary + local-bin sidecar removal.
+        if (isSelf) uninstallRunningBinary(target.path) else uninstallOtherBinary(target.path)
+        target.versionStamp?.let { fs.delete(it, mustExist = false) }
+        target.wrappers.forEach { fs.delete(it, mustExist = false) }
+
+        // PATH de-entry (global tier only; a true no-op on POSIX and whenever the entry was already absent).
+        val pathChanged = pathEntryDir?.let { removeFromWindowsUserPath(it) } ?: false
+
+        // Purge — the ONLY path that touches the task graph, and only ever behind the explicit flag.
+        val purged = purge && workspace != null
+        if (purged) fs.deleteRecursively(workspace.metaDir, mustExist = false)
+
+        if (!quiet) {
+            println("taskkling: removed ${target.path}")
+            if (isSelf && fs.exists("${target.path}.old".toPath())) {
+                println("taskkling: off PATH now; the locked file will clear on your next reboot")
+            }
+            if (pathChanged) println("taskkling: removed '$pathEntryDir' from your user PATH")
+            if (purged) println("taskkling: purged workspace at ${workspace.metaDir}")
+        }
+    }
+}
+
 /** `export [--include-body] [--archived] [--ics]` — full JSON contract (PRD §12). */
 private class ExportCmd : TkCommand("export", "Print the full JSON export") {
     val includeBody by option(ArgType.Boolean, "include-body", description = "Add a per-node body field").default(false)
@@ -629,7 +762,7 @@ public fun main(args: Array<String>) {
         DoneCmd(), DropCmd(), ReopenCmd(), WaitCmd(),
         LinkCmd(), UnlinkCmd(),
         SetCmd(), WriteCmd(), AppendCmd(),
-        DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(), UpdateCmd(),
+        DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(), UpdateCmd(), UninstallCmd(),
     )
     parser.parse(rest)
 }
