@@ -6,7 +6,7 @@
      field only ever gains references — it never loses them. -->
 
 **Creation Date:** 2026-06-30
-**Follow-up ADRs:** 005
+**Follow-up ADRs:** 005, 006, 007
 
 ---
 
