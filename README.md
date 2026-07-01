@@ -126,6 +126,74 @@ always JSON); any mutation accepts `--export-on-success` for a transactional rea
 Global flags: `--root <path>`, `--quiet`, `--no-color`. Exit codes: `0` ok · `2` usage ·
 `3` validation · `4` lock timeout. Full command surface in [PRD.md §10](PRD.md).
 
+## Updating
+
+`taskkling update` replaces the running binary in place with the latest GitHub
+release: it detects your platform, downloads the matching asset, verifies it
+against `SHA256SUMS`, swaps it in, and prints `old -> new`.
+
+```sh
+taskkling update                  # update to the latest release
+taskkling update --check          # is a newer release out? report only, never installs
+taskkling update --version v0.3.0 # install a specific release tag (pin / roll back)
+```
+
+`update` acts on **whichever binary you invoked** — it resolves its own path.
+Run the global `taskkling` and it updates the global install; run a project's
+pinned copy (`./taskkling update`) and it updates that `.taskkling/bin` binary
+and re-stamps its `.version`. A global update deliberately does **not** cascade
+into a project's pinned local-bin copy — update that one separately, or re-run
+`init --local-bin` from a newer binary. On Windows the running `.exe` is locked,
+so `update` swaps it via a rename and clears the leftover on the next run; on
+Unix the file is replaced atomically.
+
+Re-running the install script (`curl … | sh` / `irm … | iex`) is always a valid
+alternative upgrade — both installers overwrite in place after the same checksum
+check.
+
+### Opt-in "newer version available" check
+
+By default nothing phones home and `taskkling --version` is fully offline. To
+get a passive heads-up, set `update_check = true` in a `config.toml`:
+
+- **User-level** config (honoured by the global binary anywhere):
+  - Linux — `~/.config/taskkling/config.toml` (or `$XDG_CONFIG_HOME/taskkling/`)
+  - macOS — `~/Library/Application Support/taskkling/config.toml`
+  - Windows — `%LOCALAPPDATA%\taskkling\config.toml`
+- A workspace's `.taskkling/config.toml` overrides the user-level value.
+
+When enabled, the check runs at most once every ~24 h, fails silently, and the
+`vX.Y.Z available` line appears on **only two** surfaces: `taskkling --version`
+and the explicit `taskkling update --check`. It never appears in `list`, `get`,
+`export`, or any `--json` output, and it only notifies — it never installs.
+
+## Uninstalling
+
+`taskkling uninstall` is the inverse of install: it removes the binary and the
+`PATH` entry the installer added — and, by design, **nothing you authored**.
+Your `.taskkling/` workspace (tasks, config, caches) is never touched unless you
+explicitly pass `--purge`.
+
+```sh
+taskkling uninstall           # interactive: shows what it will remove, then asks
+taskkling uninstall -y        # non-interactive, safe scope only (binary + PATH)
+taskkling uninstall --purge   # ALSO delete .taskkling/ (tasks + config) — irreversible
+```
+
+It is **interactive by default**: it prints exactly what it will remove — the
+binary path, the `PATH` entry, and (with `--purge`) how many tasks that would
+destroy — then waits for confirmation. `-y` skips the prompt but runs only the
+**safe scope** (binary + `PATH`); authored data is deleted **only** via
+`--purge`. So `--purge -y` is the single non-interactive form that erases a task
+graph, and that destruction is spelled out on the command line.
+
+Like `update`, it is **tier-aware**: it removes whichever binary you invoked, or
+use `--global` / `--local` to target a tier explicitly. Removing a per-project
+copy also deletes that workspace's pinned `.version` stamp and the `./taskkling`
+wrapper scripts. On Windows the `PATH` entry is removed immediately (the tool is
+gone the moment the command returns) while the locked `.exe` clears on your next
+reboot; on Unix the binary is removed right away.
+
 ## Development
 
 `java`/`gradle` are not assumed on `PATH`. Set `JAVA_HOME` to a **JDK 21 (Temurin)** first:
