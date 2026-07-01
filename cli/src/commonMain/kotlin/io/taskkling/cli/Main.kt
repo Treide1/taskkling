@@ -30,8 +30,11 @@ import io.taskkling.core.httpGetBytesBlocking
 import io.taskkling.core.httpGetTextBlocking
 import io.taskkling.core.InstallTier
 import io.taskkling.core.isNewerVersion
+import io.taskkling.core.isUpdateCheckCacheFresh
 import io.taskkling.core.linkDepends
 import io.taskkling.core.loadTasks
+import io.taskkling.core.loadUpdateCheckCache
+import io.taskkling.core.loadUserConfig
 import io.taskkling.core.markDone
 import io.taskkling.core.markDropped
 import io.taskkling.core.normalizeVersionTag
@@ -42,9 +45,11 @@ import io.taskkling.core.releaseDownloadBaseUrl
 import io.taskkling.core.removeFromWindowsUserPath
 import io.taskkling.core.reopenTask
 import io.taskkling.core.resolveInstallTier
+import io.taskkling.core.resolveUpdateCheckEnabled
 import io.taskkling.core.restampLocalBinVersionIfPresent
 import io.taskkling.core.restoreTask
 import io.taskkling.core.runningExecutablePath
+import io.taskkling.core.saveUpdateCheckCache
 import io.taskkling.core.setFields
 import io.taskkling.core.SetArgs
 import io.taskkling.core.Sha256
@@ -53,6 +58,8 @@ import io.taskkling.core.toDto
 import io.taskkling.core.uninstallOtherBinary
 import io.taskkling.core.uninstallRunningBinary
 import io.taskkling.core.unlinkDepends
+import io.taskkling.core.updateNotifierLine
+import io.taskkling.core.UpdateCheckCache
 import io.taskkling.core.waitTask
 import io.taskkling.core.windowsPathHasEntry
 import io.taskkling.core.writeBody
@@ -64,6 +71,7 @@ import kotlinx.cli.multiple
 import kotlinx.cli.required
 import kotlinx.cli.ExperimentalCli
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.datetime.Clock
 import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
@@ -403,6 +411,45 @@ private fun fetchLatestTag(userAgent: String): String? =
     }
 
 /**
+ * The opt-in notifier's cached "is a newer release known?" lookup (ADR-002 §3
+ * / ADR-005): reuse the cache if it's still fresh (~24h, [isUpdateCheckCacheFresh]);
+ * otherwise perform ONE live lookup via [fetchLatestTag] and refresh the cache
+ * on success. Silent-fail: a failed lookup returns null and leaves the cache
+ * untouched — no retry storm, no stale data invented.
+ */
+private fun resolveLatestVersionCached(currentVersion: String): String? {
+    val cache = loadUpdateCheckCache()
+    val now = Clock.System.now().epochSeconds
+    if (isUpdateCheckCacheFresh(cache, now)) return cache!!.latestVersion
+    val latest = fetchLatestTag("taskkling/$currentVersion") ?: return null
+    saveUpdateCheckCache(UpdateCheckCache(now, latest))
+    return latest
+}
+
+/**
+ * `--version`'s opt-in notifier surface (ADR-005): only fires when
+ * `update_check` is enabled somewhere in scope — a workspace's
+ * `.taskkling/config.toml` overrides the user-level one
+ * ([resolveUpdateCheckEnabled]). With the flag off (the default) this makes
+ * NO network call at all, keeping `--version` local/offline/fast for scripts
+ * and CI that scrape it. Best-effort end to end: any failure (workspace
+ * discovery, config parse, network, cache IO) is swallowed so a broken check
+ * can never break `--version` itself.
+ */
+private fun printVersionNotifierIfEnabled(currentVersion: String) {
+    try {
+        val workspaceConfig = try { Workspace.discover(null).config } catch (_: TkError) { null }
+        val userConfig = loadUserConfig()
+        if (!resolveUpdateCheckEnabled(userConfig, workspaceConfig)) return
+        val latest = resolveLatestVersionCached(currentVersion)
+        val line = updateNotifierLine(true, currentVersion, latest) ?: return
+        println("taskkling: $line")
+    } catch (_: Exception) {
+        // best-effort, silent-fail (ADR-002/005) — never break `--version`.
+    }
+}
+
+/**
  * `update [--check] [--version vX.Y.Z]` — self-replace the running binary
  * with the latest (or a pinned) GitHub release, resolve + SHA-256-verify
  * ported from `install.sh`/`install.ps1` (ADR-002). `--check` only reports
@@ -422,6 +469,14 @@ private class UpdateCmd : TkCommand("update", "Self-update the running binary; -
 
         if (check) {
             val latest = fetchLatestTag(userAgent)
+            if (latest != null) {
+                // Opportunistic cache warm (ADR-005): `update --check` always performs a
+                // LIVE lookup — it "ignores the flag" because invoking it IS the consent —
+                // but feeding its result into the shared ~24h cache lets a later opt-in
+                // `--version` notifier skip a redundant network round trip. Best-effort;
+                // never affects this command's own output.
+                saveUpdateCheckCache(UpdateCheckCache(Clock.System.now().epochSeconds, latest))
+            }
             when {
                 latest == null -> eprintln("taskkling: could not check for updates (network error or rate-limited)")
                 isNewerVersion(current, latest) ->
@@ -750,6 +805,9 @@ public fun main(args: Array<String>) {
     }
     if (args.size == 1 && (args[0] == "--version" || args[0] == "-v")) {
         println("taskkling ${Taskkling.VERSION}")
+        // Opt-in notifier only (ADR-005): with `update_check` off (the default) this
+        // makes no network call at all — `--version` stays local/offline/fast.
+        printVersionNotifierIfEnabled(Taskkling.VERSION)
         return
     }
     // Fold leading global flags (--root/--quiet/--no-color) into GlobalFlags so

@@ -7,12 +7,20 @@ import okio.Path.Companion.toPath
 /**
  * The handful of `config.toml` keys the tool reads (PRD §14). Parsed leniently;
  * unknown keys are ignored so the file can carry documented-but-unused settings.
+ *
+ * [updateCheck] is deliberately nullable — `null` means "the key is absent from
+ * THIS file", not "off" — so [resolveUpdateCheckEnabled] can implement ADR-005's
+ * precedence (a workspace `.taskkling/config.toml` overrides a user-level one;
+ * the flag defaults to `false` only once BOTH are absent). This same [load]/
+ * [Config] pair is reused to parse the user-level `config.toml` ([loadUserConfig]) —
+ * its other fields (`tasks_dir` etc.) are simply irrelevant there.
  */
 public data class Config(
     val tasksDir: String = "tasks",
     val idPrefix: String = "t-",
     val defaultThread: String = "",
     val lockTimeout: Int = 30,
+    val updateCheck: Boolean? = null,
 ) {
     public companion object {
         public val DEFAULT: Config = Config()
@@ -31,6 +39,7 @@ public data class Config(
                     "id_prefix" -> c.copy(idPrefix = value)
                     "default_thread" -> c.copy(defaultThread = value)
                     "lock_timeout" -> c.copy(lockTimeout = value.toIntOrNull() ?: c.lockTimeout)
+                    "update_check" -> c.copy(updateCheck = value.toBooleanStrictOrNull() ?: c.updateCheck)
                     else -> c
                 }
             }
@@ -46,6 +55,7 @@ public data class Config(
             default_thread  = ""           # applied by `add` when --thread omitted
             lock_timeout    = 30           # seconds before a dead-PID lock is reclaimable
             binary_path     = ""           # optional explicit path the UI uses to find the CLI
+            # update_check  = false        # opt-in newer-version notifier (ADR-005); unset here inherits the user-level config
             """.trimIndent() + "\n"
     }
 }
