@@ -57,5 +57,7 @@ jobs:
           path: ~/.konan
           key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
       - run: chmod +x ./gradlew
+      - if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
       - name: Link ${{ matrix.target }} executable
         run: ./gradlew :cli:linkDebugExecutable${{ matrix.target }} --no-daemon --stacktrace

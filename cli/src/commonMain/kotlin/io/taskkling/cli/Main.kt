@@ -508,6 +508,15 @@ private fun buildAttrs(t: Task): String {
 
 /** Entry point for the native `taskkling` binary (PRD §6.2, §10). */
 public fun main(args: Array<String>) {
+    // Hidden, undocumented self-test seam (never in help/usage, no effect on any
+    // normal command): forces the ktor engine into the link graph and proves an
+    // HTTPS round trip on the platform HTTP client.
+    if (args.size == 2 && args[0] == "__http-selftest") {
+        val (status, body) = io.taskkling.core.httpGetTextBlocking(args[1])
+        println(status)
+        println(body.take(200))
+        return
+    }
     if (args.size == 1 && (args[0] == "--version" || args[0] == "-v")) {
         println("taskkling ${Taskkling.VERSION}")
         return
