@@ -3,12 +3,14 @@ package io.taskkling.core
 import okio.FileSystem
 
 /**
- * The opt-in `update_check` notifier (ADR-002 §3, narrowed by ADR-005): a
- * best-effort, ~24h-cached, silent-on-failure "a newer version is available"
- * line, gated behind a flag that defaults off and is honoured from BOTH the
- * per-workspace `.taskkling/config.toml` and a user-level config (ADR-005's
- * new config/cache home, [userConfigDirPath] / [userCacheDirPath]) —
- * workspace overrides user. This file holds the PURE, testable pieces
+ * The `update_check` notifier (ADR-002 §3, narrowed by ADR-005, default
+ * reversed by ADR-006): a best-effort, ~24h-cached, silent-on-failure "a newer
+ * version is available" line, honoured from BOTH the per-workspace
+ * `.taskkling/config.toml` and a user-level config (ADR-005's config/cache
+ * home, [userConfigDirPath] / [userCacheDirPath]) — workspace overrides user.
+ * The flag defaults ON (ADR-006, opt-OUT), but the passive `--version` surface
+ * is additionally TTY-gated in `:cli` so automation stays offline. This file
+ * holds the PURE, testable pieces
  * (precedence, cache-freshness, and notifier-gating decisions) plus the thin
  * IO wrapping them; the actual GitHub lookup is `Update.kt`'s existing
  * [parseLatestTagName] / [isNewerVersion] — reused here, not reimplemented.
@@ -19,13 +21,17 @@ import okio.FileSystem
 // --- Config precedence (workspace overrides user; default false when neither sets it) ---------------------------
 
 /**
- * Whether the opt-in notifier should even attempt a check: [workspaceConfig]'s
+ * Whether the update-check notifier should even attempt a check: [workspaceConfig]'s
  * `update_check`, if the key is set there, wins outright; otherwise fall back
- * to [userConfig]'s; if neither config sets the key, the default is `false`
- * (ADR-002/005 — opt-in, off unless a human turned it on somewhere).
+ * to [userConfig]'s; if neither config sets the key, the default is `true`
+ * (ADR-006 reversed ADR-002/005's default-off — the check is now on unless a
+ * config turns it off, opt-OUT rather than opt-in). Note this only decides
+ * whether the check is *permitted*; the passive `--version` surface is
+ * additionally gated to an interactive TTY ([stdoutIsInteractive]) so CI /
+ * pipes / scripts stay offline even with the default on (ADR-006).
  */
 public fun resolveUpdateCheckEnabled(userConfig: Config?, workspaceConfig: Config?): Boolean =
-    workspaceConfig?.updateCheck ?: userConfig?.updateCheck ?: false
+    workspaceConfig?.updateCheck ?: userConfig?.updateCheck ?: true
 
 // --- Cache freshness (fresh / stale / missing) --------------------------------------------------------------------
 

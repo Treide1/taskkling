@@ -258,6 +258,27 @@ public fun sweepStaleOldExecutableForRunningBinary() {
 }
 
 /**
+ * Install the already-downloaded, checksum-verified [newBinaryBytes] as
+ * [exePath] when [exePath] is NOT the currently-running process — ADR-007's
+ * cross-tier update (e.g. a working global binary repairing a broken local-bin
+ * copy via `update --local`). A plain, unlocked overwrite: write to a sibling
+ * temp on the same filesystem (so the final move is atomic), mark it
+ * executable, then atomically move it into place. Unlike [installNewExecutable]
+ * there is no [renameSelfToOld] step, because only the running image is locked
+ * (ADR-004) — a different tier's copy is replaceable directly on both OSes.
+ */
+public fun installOtherExecutable(exePath: Path, newBinaryBytes: ByteArray) {
+    val fs = FileSystem.SYSTEM
+    val dir = exePath.parent ?: error("executable path has no parent directory: $exePath")
+    val tmp = dir / ".${exePath.name}.update.tmp"
+    fs.delete(tmp, mustExist = false)
+    fs.write(tmp) { write(newBinaryBytes) }
+    markExecutable(tmp.toString())
+    fs.atomicMove(tmp, exePath)
+    markExecutable(exePath.toString())
+}
+
+/**
  * If [exePath] is a per-project local-bin copy — marked by the sibling
  * `.version` file [installLocalBin] writes — re-stamp it with [newVersion] so
  * the pinned copy tracks what `update` just installed. No-op for the global

@@ -403,9 +403,10 @@ so an agent can preview impact with the very function delete will run:
 | Command | Effect |
 |---|---|
 | `init` | Scaffold `.taskkling/` (config, lock, tmp) + `tasks_dir` in the cwd. |
+| `config init` | Write the user-level `config.toml` (write-if-absent — never clobbers your edits) and print its path. Surfaces the on-by-default `update_check` toggle so its OFF switch is discoverable (ADR-006); both installers run it. |
 | `validate [--json]` | Read-only report of all preventive checks across the set. |
 | `cleanup [--delete-before <dt>] [--include-archive]` | Sweep closed → `archive/`; with `--delete-before`, purge `trash` (and, with `--include-archive`, archive) entries by `closed`. |
-| `update [--version vX.Y.Z] [--check]` | Self-replace the running binary with the latest (or a pinned `--version`) GitHub release, SHA-256-verified; prints old → new. `--check` reports whether a newer release exists without installing it (an explicit, always-on, user-initiated lookup — ignores the opt-in `update_check` setting). |
+| `update [--global \| --local] [--version vX.Y.Z] [--check]` | Self-replace the running binary — or, with `--global`/`--local` (mutually exclusive), another tier's copy — with the latest (or a pinned `--version`) GitHub release, SHA-256-verified; prints old → new. **Update-only:** a targeted tier with no install errors rather than creating one (ADR-007). `--check` reports whether a newer release exists without installing it (an explicit, always-on lookup — ignores `update_check`, and rejects `--global`/`--local`). |
 | `uninstall [--global \| --local] [-y] [--purge]` | Remove the binary and the installer's `PATH` entry for the resolved (or targeted) tier. Interactive by default, prompting through the removal choices; `-y` runs the safe scope (binary + `PATH`) non-interactively. Never touches the `.taskkling/` workspace (tasks, config) unless `--purge` is given explicitly. |
 | `doctor [--fix]` | *Stub (post-PRD).* Integrity + logical-resolution scan with deterministic A/B fixes. |
 | `export --ics` | *Stub (post-PRD).* Emit a standards-based iCalendar feed from `due` (open-standard output; no calendar-tool coupling). |
@@ -476,7 +477,11 @@ granularity     = "minute"     # day | minute | second (display/working; deferre
 default_thread  = ""           # applied by `add` when --thread omitted
 lock_timeout    = 30           # seconds before a dead-PID lock is reclaimable
 binary_path     = ""           # optional explicit path the UI uses to find the CLI
+# update_check  = true         # newer-version notifier, on by default (ADR-006); set false to disable, or leave unset to inherit the user-level config
 ```
+
+The `update_check` key is also honoured in a **user-level** `config.toml` (so the global binary
+respects it outside any workspace; a workspace's value overrides it) — see §15 and `config init`.
 
 ---
 
@@ -487,16 +492,20 @@ binary_path     = ""           # optional explicit path the UI uses to find the 
 - **UI**: packaged via Compose's native distribution (jpackage) into `.msi` / `.dmg`, **bundling a
   JRE** so nothing extra is installed. The UI requires the CLI binary present (`PATH` or
   `binary_path`).
-- **No telemetry, no network calls by default.** Nothing phones home; `--version` stays fully
-  local/offline unless the user explicitly opts in below, and reads (`list`/`get`/`export`) and
-  all machine-readable/`--json` output never touch the network, full stop.
-- **Single opt-in exception — the `update_check` notifier.** A `config.toml` flag (default
-  `false`) enables a best-effort, ~24h-cached, silent-on-failure check against GitHub Releases for
-  a newer tag. It surfaces on exactly two human-facing surfaces — `taskkling --version` and the
-  explicit, always-on `taskkling update --check` (invoking it *is* the consent, so it ignores the
-  flag) — and never on `list`/`get`/`export` or any machine-readable output. It only notifies
-  (`vX.Y.Z available — run 'taskkling update'`); it never installs anything itself. Updating and
-  uninstalling remain separate, user-initiated verb calls (`update`, `uninstall`; §10.7).
+- **No telemetry; reads never touch the network.** Nothing phones home. `list`, `get`, `export`,
+  and every machine-readable/`--json` output are fully offline, full stop — the tool's only
+  sanctioned network call is the opt-outable update check below.
+- **`update_check` notifier — on by default, terminal-gated (ADR-006, reversing ADR-005's
+  default-off).** A best-effort, ~24h-cached, silent-on-failure check against GitHub Releases for a
+  newer tag. It surfaces on exactly two human-facing surfaces: `taskkling --version` **only in an
+  interactive terminal**, and the always-on explicit `taskkling update --check` (invoking it *is*
+  the consent). A **non-interactive `--version`** — CI, pipes, scripts, docker-build — and all
+  machine-readable output stay fully offline: **no network call and no cache write**. It only
+  notifies (`vX.Y.Z available — run 'taskkling update'`); it never installs. Opt out by setting
+  `update_check = false` in a `config.toml` (a workspace's overrides the user-level one); the
+  installers materialize the user-level file via `config init` so that switch is discoverable.
+  Updating and uninstalling remain separate, user-initiated verb calls (`update`, `uninstall`;
+  §10.7).
 
 ---
 

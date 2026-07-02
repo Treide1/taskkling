@@ -55,7 +55,7 @@ public data class Config(
             default_thread  = ""           # applied by `add` when --thread omitted
             lock_timeout    = 30           # seconds before a dead-PID lock is reclaimable
             binary_path     = ""           # optional explicit path the UI uses to find the CLI
-            # update_check  = false        # opt-in newer-version notifier (ADR-005); unset here inherits the user-level config
+            # update_check  = true         # newer-version notifier, on by default (ADR-006); set false to disable, or leave unset to inherit the user-level config
             """.trimIndent() + "\n"
     }
 }

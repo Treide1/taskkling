@@ -64,6 +64,11 @@ try {
     Write-Host "Installed taskkling to $dest"
     & $dest --version
 
+    # Materialize the user-level config.toml (ADR-006) so the on-by-default
+    # update_check notifier's OFF switch is discoverable right after install.
+    # Best-effort: a config-write hiccup must never fail the install.
+    try { & $dest config init | Out-Null } catch { }
+
     # Add the install dir to the USER PATH if it is not already present.
     #
     # Edit the registry directly instead of [Environment]::*EnvironmentVariable:
