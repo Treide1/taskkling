@@ -11,7 +11,7 @@ import okio.Path
  * `validate` verbs' job (PRD §7.5), not the read path.
  */
 public fun parseTask(fileName: String, content: String): Task {
-    val text = content.replace("\r\n", "\n")
+    val text = content.removePrefix("﻿").replace("\r\n", "\n")
     val lines = text.split("\n")
 
     var fmLines: List<String> = emptyList()
@@ -20,7 +20,7 @@ public fun parseTask(fileName: String, content: String): Task {
         val end = (1 until lines.size).firstOrNull { lines[it].trim() == "---" }
         if (end != null) {
             fmLines = lines.subList(1, end)
-            body = lines.subList(minOf(end + 1, lines.size), lines.size).joinToString("\n").trim()
+            body = lines.subList(minOf(end + 1, lines.size), lines.size).joinToString("\n").trim().removePrefix("﻿")
         }
     }
 

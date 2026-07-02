@@ -64,4 +64,38 @@ class FrontmatterTest {
         val t = Task(id = "t-body", title = "no body", created = "2026-01-01T00:00:00Z")
         assertEquals("", roundTrip(t).body)
     }
+
+    @Test
+    fun fileLevelBomDoesNotBreakFrontmatterDetection() {
+        val raw = "﻿---\n" +
+            "id: t-bom1\n" +
+            "title: BOM at file start\n" +
+            "created: 2026-01-01T00:00:00Z\n" +
+            "---\n" +
+            "\n" +
+            "Body text here.\n"
+        val back = parseTask("t-bom1--bom-at-file-start.md", raw)
+        assertEquals("t-bom1", back.id)
+        assertEquals("BOM at file start", back.title)
+        assertEquals("Body text here.", back.body)
+        assertTrue(back.body.firstOrNull() != '﻿')
+    }
+
+    @Test
+    fun bodyLevelBomIsStripped() {
+        val t = Task(
+            id = "t-bom2",
+            title = "BOM at body start",
+            created = "2026-01-01T00:00:00Z",
+            body = "Body text here.",
+        )
+        val serialized = t.toMarkdown()
+        val marker = "---\n\n"
+        val idx = serialized.indexOf(marker)
+        assertTrue(idx >= 0)
+        val withBom = serialized.substring(0, idx + marker.length) + "﻿" + serialized.substring(idx + marker.length)
+        val back = parseTask(t.fileName(), withBom)
+        assertTrue(back.body.firstOrNull() != '﻿')
+        assertEquals("Body text here.", back.body)
+    }
 }
