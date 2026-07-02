@@ -1,5 +1,8 @@
 package io.taskkling.core
 
+import okio.Path
+import okio.Path.Companion.toPath
+
 /**
  * Absolute path of the **currently running executable** (PRD §6.2). Used by
  * [installLocalBin] to copy the live binary into a per-project
@@ -9,6 +12,14 @@ package io.taskkling.core
  * (macOS), `ProcessHandle` (JVM, test-only).
  */
 internal expect fun currentExecutablePath(): String
+
+/**
+ * Public accessor for [currentExecutablePath] (kept `internal` since only
+ * `:core` needs the raw platform primitive). `:cli`'s `update` self-replace
+ * flow and its startup `.old`-sweep hook both need to know which binary is
+ * actually running — this is the one place outside `:core` allowed to ask.
+ */
+public fun runningExecutablePath(): Path = currentExecutablePath().toPath()
 
 /**
  * Set the executable bit (0755) on [path] after copying a binary or wrapper.

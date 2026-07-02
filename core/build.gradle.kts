@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
+    alias(libs.plugins.kotlinSerialization)
 }
 
 // --- Version single-sourcing -------------------------------------------------
@@ -63,7 +64,19 @@ kotlin {
             api(project(":contract"))
             implementation(libs.okio)
             implementation(libs.kotlinx.datetime)
+            implementation(libs.kotlinx.serialization.json) // version-check JSON parsing (ADR-002, later task)
+            implementation(libs.ktor.client.core)
         }
+
+        // Engine per target (ADR-002 `update`/`update_check` transport), mirroring
+        // the ExePath/Lock OS-split: Curl needs libcurl dev headers at link time on
+        // linux, Darwin (NSURLSession) covers both macOS arches via the shared
+        // macosMain source set, WinHTTP is the native Windows client, CIO backs the
+        // JVM (test-only; the shipped binaries are native).
+        named("linuxX64Main") { dependencies { implementation(libs.ktor.client.curl) } }
+        named("macosMain") { dependencies { implementation(libs.ktor.client.darwin) } }
+        named("mingwX64Main") { dependencies { implementation(libs.ktor.client.winhttp) } }
+        named("jvmMain") { dependencies { implementation(libs.ktor.client.cio) } }
 
         // Pure, target-agnostic unit tests (frontmatter, compute, slug, datetime,
         // id) run on every target; CI invokes the JVM variant (:core:jvmTest).
@@ -71,7 +84,6 @@ kotlin {
         // inherit the same kotlin-test runner.
         commonTest.dependencies {
             implementation(kotlin("test"))
-            implementation(libs.kotlinx.serialization.json) // golden tests encode the export DTO
         }
     }
 }

@@ -405,6 +405,8 @@ so an agent can preview impact with the very function delete will run:
 | `init` | Scaffold `.taskkling/` (config, lock, tmp) + `tasks_dir` in the cwd. |
 | `validate [--json]` | Read-only report of all preventive checks across the set. |
 | `cleanup [--delete-before <dt>] [--include-archive]` | Sweep closed → `archive/`; with `--delete-before`, purge `trash` (and, with `--include-archive`, archive) entries by `closed`. |
+| `update [--version vX.Y.Z] [--check]` | Self-replace the running binary with the latest (or a pinned `--version`) GitHub release, SHA-256-verified; prints old → new. `--check` reports whether a newer release exists without installing it (an explicit, always-on, user-initiated lookup — ignores the opt-in `update_check` setting). |
+| `uninstall [--global \| --local] [-y] [--purge]` | Remove the binary and the installer's `PATH` entry for the resolved (or targeted) tier. Interactive by default, prompting through the removal choices; `-y` runs the safe scope (binary + `PATH`) non-interactively. Never touches the `.taskkling/` workspace (tasks, config) unless `--purge` is given explicitly. |
 | `doctor [--fix]` | *Stub (post-PRD).* Integrity + logical-resolution scan with deterministic A/B fixes. |
 | `export --ics` | *Stub (post-PRD).* Emit a standards-based iCalendar feed from `due` (open-standard output; no calendar-tool coupling). |
 
@@ -485,7 +487,16 @@ binary_path     = ""           # optional explicit path the UI uses to find the 
 - **UI**: packaged via Compose's native distribution (jpackage) into `.msi` / `.dmg`, **bundling a
   JRE** so nothing extra is installed. The UI requires the CLI binary present (`PATH` or
   `binary_path`).
-- No auto-update, no telemetry, no network calls.
+- **No telemetry, no network calls by default.** Nothing phones home; `--version` stays fully
+  local/offline unless the user explicitly opts in below, and reads (`list`/`get`/`export`) and
+  all machine-readable/`--json` output never touch the network, full stop.
+- **Single opt-in exception — the `update_check` notifier.** A `config.toml` flag (default
+  `false`) enables a best-effort, ~24h-cached, silent-on-failure check against GitHub Releases for
+  a newer tag. It surfaces on exactly two human-facing surfaces — `taskkling --version` and the
+  explicit, always-on `taskkling update --check` (invoking it *is* the consent, so it ignores the
+  flag) — and never on `list`/`get`/`export` or any machine-readable output. It only notifies
+  (`vX.Y.Z available — run 'taskkling update'`); it never installs anything itself. Updating and
+  uninstalling remain separate, user-initiated verb calls (`update`, `uninstall`; §10.7).
 
 ---
 

@@ -17,6 +17,13 @@ kotlin {
         target.binaries.executable {
             baseName = "taskkling"
             entryPoint = "io.taskkling.cli.main"
+            // `uninstall`'s Windows PATH de-entry (ADR-004) is this binary's first
+            // registry write (RegOpenKeyExW/RegSetValueExW, advapi32) — windows.def's
+            // default linkerOpts cover kernel32/user32 (already used by Lock/ExePath/
+            // Update's mingw actuals) but not advapi32, so add it explicitly here.
+            if (target.name == "mingwX64") {
+                linkerOpts += "-ladvapi32"
+            }
         }
     }
 

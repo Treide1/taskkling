@@ -21,19 +21,47 @@ import io.taskkling.core.computeAll
 import io.taskkling.core.deleteTask
 import io.taskkling.core.initWorkspace
 import io.taskkling.core.installLocalBin
+import io.taskkling.core.installNewExecutable
+import io.taskkling.core.currentReleaseAssetName
+import io.taskkling.core.findSha256
+import io.taskkling.core.GITHUB_API_LATEST_RELEASE
+import io.taskkling.core.globalInstallDirPath
+import io.taskkling.core.httpGetBytesBlocking
+import io.taskkling.core.httpGetTextBlocking
+import io.taskkling.core.InstallTier
+import io.taskkling.core.isNewerVersion
+import io.taskkling.core.isUpdateCheckCacheFresh
 import io.taskkling.core.linkDepends
 import io.taskkling.core.loadTasks
+import io.taskkling.core.loadUpdateCheckCache
+import io.taskkling.core.loadUserConfig
 import io.taskkling.core.markDone
 import io.taskkling.core.markDropped
+import io.taskkling.core.normalizeVersionTag
+import io.taskkling.core.parseLatestTagName
 import io.taskkling.core.rawFile
 import io.taskkling.core.readBody
+import io.taskkling.core.releaseDownloadBaseUrl
+import io.taskkling.core.removeFromWindowsUserPath
 import io.taskkling.core.reopenTask
+import io.taskkling.core.resolveInstallTier
+import io.taskkling.core.resolveUpdateCheckEnabled
+import io.taskkling.core.restampLocalBinVersionIfPresent
 import io.taskkling.core.restoreTask
+import io.taskkling.core.runningExecutablePath
+import io.taskkling.core.saveUpdateCheckCache
 import io.taskkling.core.setFields
 import io.taskkling.core.SetArgs
+import io.taskkling.core.Sha256
+import io.taskkling.core.sweepStaleOldExecutableForRunningBinary
 import io.taskkling.core.toDto
+import io.taskkling.core.uninstallOtherBinary
+import io.taskkling.core.uninstallRunningBinary
 import io.taskkling.core.unlinkDepends
+import io.taskkling.core.updateNotifierLine
+import io.taskkling.core.UpdateCheckCache
 import io.taskkling.core.waitTask
+import io.taskkling.core.windowsPathHasEntry
 import io.taskkling.core.writeBody
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
@@ -43,6 +71,10 @@ import kotlinx.cli.multiple
 import kotlinx.cli.required
 import kotlinx.cli.ExperimentalCli
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.datetime.Clock
+import okio.FileSystem
+import okio.Path
+import okio.Path.Companion.toPath
 import platform.posix.fputs
 import platform.posix.stderr
 import kotlinx.serialization.builtins.ListSerializer
@@ -365,6 +397,253 @@ private class DoctorCmd : TkCommand("doctor", "Integrity + logical-resolution sc
     override fun run() = eprintln("taskkling: doctor is a post-v0.1 stub (PRD §19) — not yet implemented")
 }
 
+/**
+ * Best-effort GitHub `tag_name` lookup (ADR-002): a User-Agent is required
+ * (GitHub 403s without one) and any failure — network, non-2xx, bad JSON —
+ * silently yields null rather than throwing, so callers decide how loud to be.
+ */
+private fun fetchLatestTag(userAgent: String): String? =
+    try {
+        val (status, body) = httpGetTextBlocking(GITHUB_API_LATEST_RELEASE, userAgent)
+        if (status in 200..299) parseLatestTagName(body) else null
+    } catch (_: Exception) {
+        null
+    }
+
+/**
+ * The opt-in notifier's cached "is a newer release known?" lookup (ADR-002 §3
+ * / ADR-005): reuse the cache if it's still fresh (~24h, [isUpdateCheckCacheFresh]);
+ * otherwise perform ONE live lookup via [fetchLatestTag] and refresh the cache
+ * on success. Silent-fail: a failed lookup returns null and leaves the cache
+ * untouched — no retry storm, no stale data invented.
+ */
+private fun resolveLatestVersionCached(currentVersion: String): String? {
+    val cache = loadUpdateCheckCache()
+    val now = Clock.System.now().epochSeconds
+    if (isUpdateCheckCacheFresh(cache, now)) return cache!!.latestVersion
+    val latest = fetchLatestTag("taskkling/$currentVersion") ?: return null
+    saveUpdateCheckCache(UpdateCheckCache(now, latest))
+    return latest
+}
+
+/**
+ * `--version`'s opt-in notifier surface (ADR-005): only fires when
+ * `update_check` is enabled somewhere in scope — a workspace's
+ * `.taskkling/config.toml` overrides the user-level one
+ * ([resolveUpdateCheckEnabled]). With the flag off (the default) this makes
+ * NO network call at all, keeping `--version` local/offline/fast for scripts
+ * and CI that scrape it. Best-effort end to end: any failure (workspace
+ * discovery, config parse, network, cache IO) is swallowed so a broken check
+ * can never break `--version` itself.
+ */
+private fun printVersionNotifierIfEnabled(currentVersion: String) {
+    try {
+        val workspaceConfig = try { Workspace.discover(null).config } catch (_: TkError) { null }
+        val userConfig = loadUserConfig()
+        if (!resolveUpdateCheckEnabled(userConfig, workspaceConfig)) return
+        val latest = resolveLatestVersionCached(currentVersion)
+        val line = updateNotifierLine(true, currentVersion, latest) ?: return
+        println("taskkling: $line")
+    } catch (_: Exception) {
+        // best-effort, silent-fail (ADR-002/005) — never break `--version`.
+    }
+}
+
+/**
+ * `update [--check] [--version vX.Y.Z]` — self-replace the running binary
+ * with the latest (or a pinned) GitHub release, resolve + SHA-256-verify
+ * ported from `install.sh`/`install.ps1` (ADR-002). `--check` only reports
+ * whether a newer release exists; it never installs, and it always runs
+ * (no config gate — it's unambiguously user-initiated).
+ */
+private class UpdateCmd : TkCommand("update", "Self-update the running binary; --check only reports newer-available") {
+    val check by option(ArgType.Boolean, "check", description = "Report whether a newer release is available; does not install").default(false)
+    val versionOverride by option(
+        ArgType.String, "version",
+        description = "Update to a specific release tag (e.g. v0.3.0), skipping the latest-version lookup",
+    )
+
+    override fun run() {
+        val current = Taskkling.VERSION
+        val userAgent = "taskkling/$current"
+
+        if (check) {
+            val latest = fetchLatestTag(userAgent)
+            if (latest != null) {
+                // Opportunistic cache warm (ADR-005): `update --check` always performs a
+                // LIVE lookup — it "ignores the flag" because invoking it IS the consent —
+                // but feeding its result into the shared ~24h cache lets a later opt-in
+                // `--version` notifier skip a redundant network round trip. Best-effort;
+                // never affects this command's own output.
+                saveUpdateCheckCache(UpdateCheckCache(Clock.System.now().epochSeconds, latest))
+            }
+            when {
+                latest == null -> eprintln("taskkling: could not check for updates (network error or rate-limited)")
+                isNewerVersion(current, latest) ->
+                    println("taskkling: update available: $current -> ${latest.removePrefix("v")} (run 'taskkling update')")
+                else -> println("taskkling: up to date ($current)")
+            }
+            return
+        }
+
+        val targetTag = versionOverride
+            ?: fetchLatestTag(userAgent)
+            ?: throw TkError(
+                ExitCode.VALIDATION,
+                "could not resolve the latest release (network error or rate-limited) — pass --version vX.Y.Z to update without it",
+            )
+        val targetVersion = normalizeVersionTag(targetTag).removePrefix("v")
+
+        val assetName = currentReleaseAssetName()
+        val base = releaseDownloadBaseUrl(targetTag)
+        val assetUrl = "$base/$assetName"
+        val sumsUrl = "$base/SHA256SUMS"
+
+        if (!quiet) println("Downloading $assetName ($targetVersion) ...")
+        val (assetStatus, assetBytes) = httpGetBytesBlocking(assetUrl, userAgent)
+        if (assetStatus !in 200..299) throw TkError(ExitCode.VALIDATION, "download failed: HTTP $assetStatus for $assetUrl")
+        val (sumsStatus, sumsText) = httpGetTextBlocking(sumsUrl, userAgent)
+        if (sumsStatus !in 200..299) throw TkError(ExitCode.VALIDATION, "download failed: HTTP $sumsStatus for $sumsUrl")
+
+        val expected = findSha256(sumsText, assetName)
+            ?: throw TkError(ExitCode.VALIDATION, "no checksum entry for $assetName in SHA256SUMS")
+        val actualHash = Sha256.hashHex(assetBytes)
+        if (!expected.equals(actualHash, ignoreCase = true)) {
+            throw TkError(ExitCode.VALIDATION, "checksum mismatch for $assetName (expected $expected, got $actualHash) — aborting")
+        }
+        if (!quiet) println("Checksum OK ($actualHash)")
+
+        val exePath = runningExecutablePath()
+        installNewExecutable(exePath, assetBytes)
+        restampLocalBinVersionIfPresent(exePath, targetVersion)
+
+        if (!quiet) println("$current -> $targetVersion")
+    }
+}
+
+/**
+ * `uninstall [--global|--local] [--purge] [-y]` — the symmetric inverse of
+ * install (ADR-004): removes the tier-resolved binary and the `PATH` entry
+ * install(.sh/.ps1) added; NEVER the `.taskkling/` workspace (tasks, config,
+ * caches) unless `--purge` says so explicitly, on the command line, in every
+ * mode. Interactive by default (states consequences, then asks); `-y` runs
+ * the safe scope (binary + `PATH`) non-interactively; `--purge -y` is the
+ * only non-interactive way to also destroy data, and interactive `--purge`
+ * still confirms that wipe on its own, separately.
+ */
+private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary + PATH entry; --purge also deletes .taskkling/") {
+    val global by option(ArgType.Boolean, "global", description = "Target the global-tier binary explicitly").default(false)
+    val local by option(ArgType.Boolean, "local", description = "Target the per-project local-bin binary explicitly").default(false)
+    val purge by option(
+        ArgType.Boolean, "purge",
+        description = "Also PERMANENTLY delete the .taskkling/ workspace (tasks, config, caches) — irreversible",
+    ).default(false)
+    val yes by option(ArgType.Boolean, "yes", "y", description = "Run non-interactively (safe scope only unless --purge)").default(false)
+
+    private fun confirm(prompt: String): Boolean {
+        print("$prompt [y/N] ")
+        val answer = readlnOrNull()?.trim()?.lowercase()
+        return answer == "y" || answer == "yes"
+    }
+
+    /** What `uninstall` will act on: the binary, its local-bin version stamp / wrapper scripts (if any), and the tier. */
+    private data class Target(val tier: InstallTier, val path: Path, val versionStamp: Path?, val wrappers: List<Path>)
+
+    override fun run() {
+        if (global && local) throw TkError(ExitCode.USAGE, "--global and --local are mutually exclusive")
+
+        val running = runningExecutablePath()
+        val basename = running.name
+        val fs = FileSystem.SYSTEM
+
+        // Best-effort workspace discovery — uninstall is not necessarily run from inside a project
+        // (a --global removal in particular may have no workspace in scope at all).
+        fun discoverWorkspace(rootOverride: String?): Workspace? =
+            try { Workspace.discover(rootOverride) } catch (_: TkError) { null }
+
+        val target: Target
+        val workspace: Workspace?
+        when {
+            local -> {
+                val ws = Workspace.discover(root) // explicit --local: must resolve to a real workspace
+                val binDir = ws.metaDir / "bin"
+                target = Target(InstallTier.LOCAL, binDir / basename, binDir / ".version", listOf(ws.root / "taskkling", ws.root / "taskkling.cmd"))
+                workspace = ws
+            }
+            global -> {
+                target = Target(InstallTier.GLOBAL, globalInstallDirPath() / basename, null, emptyList())
+                workspace = discoverWorkspace(root)
+            }
+            else -> when (resolveInstallTier(running)) {
+                InstallTier.LOCAL -> {
+                    val binDir = running.parent ?: throw TkError(ExitCode.VALIDATION, "the running executable has no parent directory")
+                    val projectRoot = binDir.parent?.parent // bin/ -> .taskkling/ -> project root
+                    val wrappers = if (projectRoot != null) listOf(projectRoot / "taskkling", projectRoot / "taskkling.cmd") else emptyList()
+                    target = Target(InstallTier.LOCAL, running, binDir / ".version", wrappers)
+                    workspace = projectRoot?.let { discoverWorkspace(it.toString()) }
+                }
+                InstallTier.GLOBAL -> {
+                    target = Target(InstallTier.GLOBAL, running, null, emptyList())
+                    workspace = discoverWorkspace(root)
+                }
+            }
+        }
+
+        // Canonicalize before comparing — --global/--local may re-derive a path that refers to the
+        // same file as `running` through a different (but equivalent) string.
+        fun canon(p: Path): Path = try { fs.canonicalize(p) } catch (_: Exception) { p }
+        val isSelf = canon(target.path) == canon(running)
+
+        val pathEntryDir = if (target.tier == InstallTier.GLOBAL) target.path.parent?.toString() else null
+        val pathEntryPresent = pathEntryDir?.let { windowsPathHasEntry(it) } ?: false
+        val taskCount = workspace?.allKnownIds()?.size ?: 0
+
+        if (!yes) {
+            println("taskkling uninstall (${target.tier.name.lowercase()} tier):")
+            println("  binary:  ${target.path}")
+            if (pathEntryPresent) println("  PATH:    remove '$pathEntryDir' from your user PATH")
+            if (workspace != null) {
+                if (purge) {
+                    println("  PURGE:   ${workspace.metaDir} — PERMANENTLY DELETES $taskCount task(s), config, and caches")
+                } else if (taskCount > 0) {
+                    println("  (kept)   ${workspace.metaDir} — $taskCount task(s) preserved; pass --purge to also delete them")
+                }
+            }
+            if (!confirm("Proceed with removing the binary" + (if (pathEntryPresent) " and PATH entry" else "") + "?")) {
+                if (!quiet) println("taskkling: uninstall aborted; nothing was changed")
+                return
+            }
+            if (purge && workspace != null) {
+                if (!confirm("This PERMANENTLY deletes $taskCount task(s) at ${workspace.metaDir} and cannot be undone. Continue?")) {
+                    if (!quiet) println("taskkling: uninstall aborted; workspace preserved")
+                    return
+                }
+            }
+        }
+
+        // Binary + local-bin sidecar removal.
+        if (isSelf) uninstallRunningBinary(target.path) else uninstallOtherBinary(target.path)
+        target.versionStamp?.let { fs.delete(it, mustExist = false) }
+        target.wrappers.forEach { fs.delete(it, mustExist = false) }
+
+        // PATH de-entry (global tier only; a true no-op on POSIX and whenever the entry was already absent).
+        val pathChanged = pathEntryDir?.let { removeFromWindowsUserPath(it) } ?: false
+
+        // Purge — the ONLY path that touches the task graph, and only ever behind the explicit flag.
+        val purged = purge && workspace != null
+        if (purged) fs.deleteRecursively(workspace.metaDir, mustExist = false)
+
+        if (!quiet) {
+            println("taskkling: removed ${target.path}")
+            if (isSelf && fs.exists("${target.path}.old".toPath())) {
+                println("taskkling: off PATH now; the locked file will clear on your next reboot")
+            }
+            if (pathChanged) println("taskkling: removed '$pathEntryDir' from your user PATH")
+            if (purged) println("taskkling: purged workspace at ${workspace.metaDir}")
+        }
+    }
+}
+
 /** `export [--include-body] [--archived] [--ics]` — full JSON contract (PRD §12). */
 private class ExportCmd : TkCommand("export", "Print the full JSON export") {
     val includeBody by option(ArgType.Boolean, "include-body", description = "Add a per-node body field").default(false)
@@ -508,8 +787,27 @@ private fun buildAttrs(t: Task): String {
 
 /** Entry point for the native `taskkling` binary (PRD §6.2, §10). */
 public fun main(args: Array<String>) {
+    // Best-effort startup hook (ADR-002): sweep a stale `taskkling.exe.old`
+    // sibling left by a prior Windows `update` run that couldn't delete it
+    // immediately (still locked while that process was exiting). No-op on
+    // POSIX and on a fresh install; never throws, so it can't break a normal
+    // command even if it fails.
+    sweepStaleOldExecutableForRunningBinary()
+
+    // Hidden, undocumented self-test seam (never in help/usage, no effect on any
+    // normal command): forces the ktor engine into the link graph and proves an
+    // HTTPS round trip on the platform HTTP client.
+    if (args.size == 2 && args[0] == "__http-selftest") {
+        val (status, body) = io.taskkling.core.httpGetTextBlocking(args[1])
+        println(status)
+        println(body.take(200))
+        return
+    }
     if (args.size == 1 && (args[0] == "--version" || args[0] == "-v")) {
         println("taskkling ${Taskkling.VERSION}")
+        // Opt-in notifier only (ADR-005): with `update_check` off (the default) this
+        // makes no network call at all — `--version` stays local/offline/fast.
+        printVersionNotifierIfEnabled(Taskkling.VERSION)
         return
     }
     // Fold leading global flags (--root/--quiet/--no-color) into GlobalFlags so
@@ -522,7 +820,7 @@ public fun main(args: Array<String>) {
         DoneCmd(), DropCmd(), ReopenCmd(), WaitCmd(),
         LinkCmd(), UnlinkCmd(),
         SetCmd(), WriteCmd(), AppendCmd(),
-        DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(),
+        DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(), UpdateCmd(), UninstallCmd(),
     )
     parser.parse(rest)
 }
