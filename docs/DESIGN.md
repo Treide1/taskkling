@@ -195,7 +195,8 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
 
 ## 10. Layout metrics (graph)
 
-Layered layout (`:ui` `Layout.kt`): columns = dependency layers, rows = order within layer.
+Layered layout (`:ui` `Layout.kt`): columns = dependency layers, order within a layer =
+intra-column stacking order.
 
 | constant | value |
 |----------------|-------|
@@ -205,8 +206,19 @@ Layered layout (`:ui` `Layout.kt`): columns = dependency layers, rows = order wi
 | row gap | 24 |
 | canvas padding | 28 |
 
-Edge anchors use the card's **vertical center at min-height** (y + 48) so anchor math stays
-independent of content-driven height growth.
+Vertical placement is **per-column stacking by measured height**: within a column, cards are
+laid one after another top-to-bottom — the first at the canvas padding, each next one a
+constant *row gap* below the previous card's **measured** bottom. A card taller than the
+min-height (long title, many tags) simply pushes the ones below it down; it neither collides
+nor leaves a fixed-grid gap. Columns are measured independently, so **cross-column row
+alignment is deliberately dropped** — column k's card *i* need not line up with column j's
+card *i*. Canvas size follows the content: width `2·pad + cols·card + (cols−1)·col_gap`
+(unchanged); height `2·pad + max over columns of (Σ measured heights + (n−1)·row_gap)`.
+
+Edge anchors use each card's **measured vertical center**: an edge runs from the source
+card's right edge at its measured centerY to the target card's left edge at its measured
+centerY (§7). Cards and edges are derived from the *same* measure pass, so the two never
+disagree by a frame.
 
 ## 11. Motion
 

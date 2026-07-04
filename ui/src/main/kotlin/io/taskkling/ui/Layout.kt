@@ -61,3 +61,22 @@ public fun layout(tasks: List<TaskDto>): GraphLayout {
         maxLayerSize = maxLayerSize,
     )
 }
+
+/**
+ * Per-column vertical stacking (DESIGN §10): given card [heights] top-to-bottom within a
+ * single column, returns each card's top edge in the same coordinate as [start] — the
+ * first card at [start], each subsequent card a constant [gap] below the previous card's
+ * measured bottom. Columns stack independently by measured height; cross-column row
+ * alignment is deliberately not attempted (column k's card i need not align with column
+ * j's card i). Pure math (heights + gap → tops) so the stacking rule is documented and
+ * unit-testable in isolation.
+ */
+public fun stackTops(heights: List<Int>, gap: Int, start: Int): List<Int> {
+    val tops = ArrayList<Int>(heights.size)
+    var y = start
+    for (h in heights) {
+        tops.add(y)
+        y += h + gap
+    }
+    return tops
+}

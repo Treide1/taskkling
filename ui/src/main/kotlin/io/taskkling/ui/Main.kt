@@ -33,17 +33,15 @@ import androidx.compose.ui.window.application
 import io.taskkling.contract.ExportDto
 import java.io.File
 
-// Graph layout metrics (DESIGN §10). Positions are computed by [layout]; these turn
-// a node's (layer, indexInLayer) slot into canvas coordinates and size the canvas.
+// Graph layout metrics (DESIGN §10). [layout] assigns each node a (layer, indexInLayer)
+// slot; the graph's custom Layout turns `layer` into an x column and stacks each column's
+// cards one-by-one by their MEASURED heights (indexInLayer = stacking order), so these
+// drive column x, the constant vertical gap, and the canvas padding.
 internal const val CARD_W = 210
 internal const val CARD_MIN_H = 96
 internal const val COL_GAP = 110
 internal const val ROW_GAP = 24
 internal const val PAD = 28
-
-// Edge anchors use the card's vertical centre at min-height, so the anchor math is
-// independent of content-driven height growth (DESIGN §10).
-internal const val EDGE_ANCHOR_Y = CARD_MIN_H / 2
 
 /**
  * The desktop app (PRD §13): a pure CLI client. Reads `export`, lays the DAG out
