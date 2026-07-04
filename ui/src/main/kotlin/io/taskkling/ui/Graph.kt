@@ -200,22 +200,28 @@ private fun DrawScope.drawDottedGrid() {
     }
 }
 
+/** Arrowhead length along the end tangent (DESIGN §7) — shared so the stroke can stop at the head's base. */
+private val ARROW_LEN = 8.dp
+
 /**
  * One horizontal-tangent cubic Bézier (the "S-curve", DESIGN §7) from the
- * blocker's right-centre `(x1,y1)` to the dependent's left-centre `(x2,y2)`,
- * capped with a solid arrowhead oriented along the end tangent.
+ * blocker's right-centre `(x1,y1)` towards the dependent's left-centre `(x2,y2)`.
+ * The stroke stops at the arrowhead's BASE and the solid head is drawn over the
+ * joint with its tip at `(x2,y2)` — a round-capped stroke ending at the tip
+ * would poke past the triangle's point.
  */
 private fun DrawScope.drawSCurveEdge(
     x1: Float, y1: Float, x2: Float, y2: Float,
     color: Color, strokeW: Float, alpha: Float,
 ) {
-    val dx = maxOf(40.dp.toPx(), (x2 - x1) * 0.5f)
+    val endX = x2 - ARROW_LEN.toPx()
+    val dx = maxOf(40.dp.toPx(), (endX - x1) * 0.5f)
     val path = Path().apply {
         moveTo(x1, y1)
-        cubicTo(x1 + dx, y1, x2 - dx, y2, x2, y2)
+        cubicTo(x1 + dx, y1, endX - dx, y2, endX, y2)
     }
     drawPath(path, color, alpha = alpha, style = Stroke(width = strokeW, cap = StrokeCap.Round))
-    drawArrowhead(tipX = x2, tipY = y2, fromX = x2 - dx, fromY = y2, color = color, alpha = alpha)
+    drawArrowhead(tipX = x2, tipY = y2, fromX = endX - dx, fromY = y2, color = color, alpha = alpha)
 }
 
 /** Solid ~7px triangle at the edge's target end, pointing along the tangent (DESIGN §7). */
@@ -230,7 +236,7 @@ private fun DrawScope.drawArrowhead(
     val dirY = vy / len
     val perpX = -dirY
     val perpY = dirX
-    val aLen = 8.dp.toPx()
+    val aLen = ARROW_LEN.toPx()
     val aHalf = 4.dp.toPx()
     val baseX = tipX - dirX * aLen
     val baseY = tipY - dirY * aLen

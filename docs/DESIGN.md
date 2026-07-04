@@ -143,14 +143,16 @@ Edges point **from a blocker to the task it blocks** (upstream → downstream, l
   blocker card `(x1, y1)` to the **left-center** of the dependent card `(x2, y2)`:
 
   ```
-  dx = max(40, (x2 − x1) · 0.5)
-  path = M x1,y1  C (x1+dx),y1  (x2−dx),y2  x2,y2
+  end = x2 − arrow                      # the stroke stops at the arrowhead's BASE (arrow ≈ 8px)
+  dx = max(40, (end − x1) · 0.5)
+  path = M x1,y1  C (x1+dx),y1  (end−dx),y2  end,y2
   ```
 
   Both control points are horizontal, so edges leave and enter cards flat and swing through an
   S between rows. The `40` floor keeps short/backward edges visibly curved.
-- **Arrowhead at the target end**: small solid triangle (≈7px), oriented along the path tangent,
-  same color as the stroke.
+- **Arrowhead at the target end**: small solid triangle (≈8px), tip at `(x2, y2)`, oriented
+  along the path tangent, same color as the stroke, drawn over the stroke's end so the joint
+  is seamless (the stroke itself stops at the head's base).
 - Resting: stroke `line`, width **1.6**. Highlighted (touches the selection): stroke `accent`,
   width **2.4**, arrowhead `accent`.
 - When a selection is active, non-highlighted edges drop to **20% opacity**.
