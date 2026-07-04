@@ -1,10 +1,7 @@
 package io.taskkling.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,18 +9,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.Button
-import androidx.compose.material.Divider
-import androidx.compose.material.MaterialTheme
-import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,6 +21,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -41,25 +31,19 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import io.taskkling.contract.ExportDto
-import io.taskkling.contract.TaskDto
 import java.io.File
 
-private const val NODE_W = 200
-private const val NODE_H = 64
-private const val H_GAP = 244
-private const val V_GAP = 88
-private const val PAD = 24
+// Graph layout metrics (DESIGN §10). Positions are computed by [layout]; these turn
+// a node's (layer, indexInLayer) slot into canvas coordinates and size the canvas.
+internal const val CARD_W = 210
+internal const val CARD_MIN_H = 96
+internal const val COL_GAP = 110
+internal const val ROW_GAP = 24
+internal const val PAD = 28
 
-/** Fill colour for a node from its stored status + computed state (PRD §13). */
-private fun nodeColor(t: TaskDto): Color = when {
-    t.status == "done" -> Color(0xFFB0BEC5)
-    t.status == "dropped" -> Color(0xFFCFD8DC)
-    t.computed.ready -> Color(0xFFA5D6A7)
-    t.computed.deferred -> Color(0xFFB39DDB)
-    t.status == "waiting" -> Color(0xFFFFE082)
-    t.computed.blocked -> Color(0xFFEF9A9A)
-    else -> Color(0xFFE0E0E0)
-}
+// Edge anchors use the card's vertical centre at min-height, so the anchor math is
+// independent of content-driven height growth (DESIGN §10).
+internal const val EDGE_ANCHOR_Y = CARD_MIN_H / 2
 
 /**
  * The desktop app (PRD §13): a pure CLI client. Reads `export`, lays the DAG out
@@ -84,11 +68,15 @@ fun main() {
 
     application {
         Window(onCloseRequest = ::exitApplication, title = "taskkling") {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+            TaskklingTheme {
+                Box(Modifier.fillMaxSize().background(Tk.bg)) {
                     if (binary == null) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("taskkling binary not found.\nSet it on PATH, TASKKLING_BINARY, or config binary_path.")
+                            Text(
+                                "taskkling binary not found.\nSet it on PATH, TASKKLING_BINARY, or config binary_path.",
+                                color = Tk.muted,
+                                fontSize = 13.sp,
+                            )
                         }
                     } else {
                         App(CliClient(binary, File(System.getProperty("user.dir"))))
@@ -123,144 +111,106 @@ private fun App(client: CliClient) {
             .onFailure { error = it.message }
     }
 
-    Row(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            val current = export
-            when {
-                error != null && current == null ->
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("error: $error") }
-                current == null ->
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("loading…") }
-                else -> GraphPane(current, selectedId, onSelect = { selectedId = it })
+    Column(Modifier.fillMaxSize()) {
+        Header(export)
+        Row(Modifier.weight(1f).fillMaxWidth()) {
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                val current = export
+                when {
+                    error != null && current == null ->
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("error: $error", color = Tk.blocked, fontSize = 13.sp)
+                        }
+                    current == null ->
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("loading…", color = Tk.muted, fontSize = 13.sp)
+                        }
+                    else -> GraphPane(
+                        export = current,
+                        selectedId = selectedId,
+                        onSelect = { selectedId = it },
+                        onClearSelection = { selectedId = null },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
-        }
-        Divider(Modifier.width(1.dp).fillMaxHeight())
-        Box(Modifier.width(320.dp).fillMaxHeight()) {
             DetailPane(
                 task = export?.tasks?.firstOrNull { it.id == selectedId },
                 error = error,
                 onAction = { verb, id -> mutate(listOf(verb, id)) },
-                loadBody = { id -> runCatching { client.body(id) }.getOrElse { "" } },
+                onNavigate = { selectedId = it },
             )
         }
+        Legend()
     }
 }
 
+/** Header (DESIGN §9): app title + faint suffix, a muted generated-note, count chips pushed right. */
 @Composable
-private fun GraphPane(export: ExportDto, selectedId: String?, onSelect: (String) -> Unit) {
-    val gl = remember(export) { layout(export.tasks) }
-    val byId = remember(export) { export.tasks.associateBy { it.id } }
-    fun cx(id: String) = PAD + gl.positions.getValue(id).layer * H_GAP
-    fun cy(id: String) = PAD + gl.positions.getValue(id).indexInLayer * V_GAP
-
-    val w = (PAD * 2 + gl.layerCount.coerceAtLeast(1) * H_GAP).dp
-    val h = (PAD * 2 + gl.maxLayerSize.coerceAtLeast(1) * V_GAP).dp
-
-    Box(
-        Modifier.fillMaxSize()
-            .horizontalScroll(rememberScrollState())
-            .verticalScroll(rememberScrollState()),
-    ) {
-        Box(Modifier.size(w, h)) {
-            Canvas(Modifier.fillMaxSize()) {
-                for (e in gl.edges) {
-                    if (e.from !in gl.positions || e.to !in gl.positions) continue
-                    val start = Offset((cx(e.from) + NODE_W).dp.toPx(), (cy(e.from) + NODE_H / 2).dp.toPx())
-                    val end = Offset(cx(e.to).dp.toPx(), (cy(e.to) + NODE_H / 2).dp.toPx())
-                    drawLine(Color(0xFF90A4AE), start, end, strokeWidth = 2f)
-                }
+private fun Header(export: ExportDto?) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Tk.panel)
+            .drawBehind {
+                val y = size.height - 0.5.dp.toPx()
+                drawLine(Tk.line, Offset(0f, y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
             }
-            for (t in export.tasks) {
-                val pos = gl.positions[t.id] ?: continue
-                NodeCard(
-                    task = t,
-                    selected = t.id == selectedId,
-                    modifier = Modifier
-                        .offset(cx(t.id).dp, cy(t.id).dp)
-                        .size(NODE_W.dp, NODE_H.dp)
-                        .clickable { onSelect(t.id) },
-                )
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("taskkling", fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, color = Tk.txt)
+            Text(" · graph", fontSize = 14.sp, color = Tk.faint)
+        }
+        if (export != null) {
+            Text("generated ${fmtDateTime(export.generatedAt)}", fontSize = 11.sp, color = Tk.muted)
+        }
+        Spacer(Modifier.weight(1f))
+        if (export != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CountChip(Tk.ready, export.counts.ready, "ready")
+                CountChip(Tk.blocked, export.counts.blocked, "blocked")
+                CountChip(Tk.waiting, export.counts.waiting, "waiting")
+                CountChip(Tk.done, export.counts.done, "done")
             }
         }
     }
 }
 
+private val LEGEND_ITEMS: List<Pair<Color, String>> = listOf(
+    Tk.ready to "ready",
+    Tk.blocked to "blocked",
+    Tk.waiting to "waiting",
+    Tk.deferred to "deferred",
+    Tk.done to "done",
+    Tk.dropped to "dropped",
+    Tk.open to "open",
+)
+
+/** Legend (DESIGN §9): a swatch + label per state, with the reading hint pushed right. */
 @Composable
-private fun NodeCard(task: TaskDto, selected: Boolean, modifier: Modifier) {
-    Box(
-        modifier
-            .background(nodeColor(task), RoundedCornerShape(6.dp))
-            .border(
-                width = if (selected) 2.dp else 1.dp,
-                color = if (selected) Color(0xFF1565C0) else Color(0xFF78909C),
-                shape = RoundedCornerShape(6.dp),
-            )
-            .padding(8.dp),
+private fun Legend() {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Tk.panel)
+            .drawBehind {
+                val y = 0.5.dp.toPx()
+                drawLine(Tk.line, Offset(0f, y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+            }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column {
-            Text(task.id, fontSize = 11.sp, color = Color(0xFF455A64))
-            Text(
-                task.title,
-                fontWeight = FontWeight.Medium,
-                fontSize = 13.sp,
-                maxLines = 2,
-            )
+        for ((color, label) in LEGEND_ITEMS) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(color))
+                Text(label, fontSize = 11.sp, color = Tk.muted)
+            }
         }
-    }
-}
-
-@Composable
-private fun DetailPane(
-    task: TaskDto?,
-    error: String?,
-    onAction: (verb: String, id: String) -> Unit,
-    loadBody: (String) -> String,
-) {
-    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        if (error != null) {
-            Text("error: $error", color = Color(0xFFC62828), fontSize = 12.sp)
-            Spacer(Modifier.height(8.dp))
-        }
-        if (task == null) {
-            Text("Select a node", color = Color(0xFF607D8B))
-            return@Column
-        }
-        Text(task.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(4.dp))
-        Text(task.id, fontSize = 12.sp, color = Color(0xFF607D8B))
-        Spacer(Modifier.height(12.dp))
-        field("status", task.status)
-        task.thread?.let { field("thread", it) }
-        field("priority", task.priority)
-        task.due?.let { field("due", it) }
-        task.defer?.let { field("defer", it) }
-        if (task.depends.isNotEmpty()) field("depends", task.depends.joinToString(", "))
-        if (task.computed.blockers.isNotEmpty()) field("blockers", task.computed.blockers.joinToString(", "))
-        if (task.computed.dependents.isNotEmpty()) field("dependents", task.computed.dependents.joinToString(", "))
-        field("ready", task.computed.ready.toString())
-
-        Spacer(Modifier.height(16.dp))
-        Row {
-            Button(onClick = { onAction("done", task.id) }) { Text("Done") }
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = { onAction("drop", task.id) }) { Text("Drop") }
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = { onAction("reopen", task.id) }) { Text("Reopen") }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        Divider()
-        Spacer(Modifier.height(8.dp))
-        val body = remember(task.id) { loadBody(task.id) }
-        Text("body", fontSize = 12.sp, color = Color(0xFF607D8B))
-        Text(body.ifBlank { "(empty)" }, fontSize = 13.sp)
-    }
-}
-
-@Composable
-private fun field(name: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        Text("$name: ", fontSize = 13.sp, color = Color(0xFF607D8B))
-        Text(value, fontSize = 13.sp)
+        Spacer(Modifier.weight(1f))
+        Text("→ blocker points to blocked task", fontSize = 11.sp, color = Tk.muted)
     }
 }
