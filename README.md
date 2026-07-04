@@ -182,13 +182,13 @@ silently, and the `vX.Y.Z available` line appears on **only two** surfaces:
 
 `taskkling uninstall` is the inverse of install: it removes the binary and the
 `PATH` entry the installer added — and, by design, **nothing you authored**.
-Your `.taskkling/` workspace (tasks, config, caches) is never touched unless you
-explicitly pass `--purge`.
+Your workspace — `.taskkling/` (config, caches) and your tasks directory — is
+never touched unless you explicitly pass `--purge`.
 
 ```sh
 taskkling uninstall           # interactive: shows what it will remove, then asks
 taskkling uninstall -y        # non-interactive, safe scope only (binary + PATH)
-taskkling uninstall --purge   # ALSO delete .taskkling/ (tasks + config) — irreversible
+taskkling uninstall --purge   # ALSO delete .taskkling/ AND the tasks dir — irreversible
 ```
 
 It is **interactive by default**: it prints exactly what it will remove — the

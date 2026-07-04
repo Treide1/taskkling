@@ -529,6 +529,15 @@ private class UpdateCmd : TkCommand("update", "Self-update the running binary; -
             return
         }
 
+        // Resolve what we're replacing FIRST — it's cheap and local-only, so a tier
+        // flag that can't be satisfied fails before any network IO (t-6ouc), not
+        // after a full asset download.
+        val running = runningExecutablePath()
+        val target = resolveTarget(running)
+        val fs = FileSystem.SYSTEM
+        fun canon(p: Path): Path = try { fs.canonicalize(p) } catch (_: Exception) { p }
+        val isSelf = canon(target) == canon(running)
+
         val targetTag = versionOverride
             ?: fetchLatestTag(userAgent)
             ?: throw TkError(
@@ -559,12 +568,6 @@ private class UpdateCmd : TkCommand("update", "Self-update the running binary; -
         // Self vs other, forced by the OS (ADR-007): replacing the running image needs the
         // Windows-safe self-replace dance ([installNewExecutable]); a different, unlocked
         // tier's copy is a plain overwrite ([installOtherExecutable]).
-        val running = runningExecutablePath()
-        val target = resolveTarget(running)
-        val fs = FileSystem.SYSTEM
-        fun canon(p: Path): Path = try { fs.canonicalize(p) } catch (_: Exception) { p }
-        val isSelf = canon(target) == canon(running)
-
         if (isSelf) installNewExecutable(target, assetBytes) else installOtherExecutable(target, assetBytes)
         restampLocalBinVersionIfPresent(target, targetVersion)
 
@@ -578,8 +581,9 @@ private class UpdateCmd : TkCommand("update", "Self-update the running binary; -
 /**
  * `uninstall [--global|--local] [--purge] [-y]` — the symmetric inverse of
  * install (ADR-004): removes the tier-resolved binary and the `PATH` entry
- * install(.sh/.ps1) added; NEVER the `.taskkling/` workspace (tasks, config,
- * caches) unless `--purge` says so explicitly, on the command line, in every
+ * install(.sh/.ps1) added; NEVER the workspace's data — `.taskkling/` plus the
+ * resolved tasks dir ([Workspace.purgePlan], t-qoyn) — unless `--purge` says so
+ * explicitly, on the command line, in every
  * mode. Interactive by default (states consequences, then asks); `-y` runs
  * the safe scope (binary + `PATH`) non-interactively; `--purge -y` is the
  * only non-interactive way to also destroy data, and interactive `--purge`
@@ -651,14 +655,24 @@ private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary
         val pathEntryDir = if (target.tier == InstallTier.GLOBAL) target.path.parent?.toString() else null
         val pathEntryPresent = pathEntryDir?.let { windowsPathHasEntry(it) } ?: false
         val taskCount = workspace?.allKnownIds()?.size ?: 0
+        // What --purge would erase (t-qoyn): the meta dir PLUS the default layout's
+        // root-level tasks dir. coversTasks=false flags a tasks_dir the plan refuses
+        // to touch (it resolves to the root itself, or escapes it) — the prompts
+        // below must not claim task deletion then.
+        val purgePlan = workspace?.purgePlan()
 
         if (!yes) {
             println("taskkling uninstall (${target.tier.name.lowercase()} tier):")
             println("  binary:  ${target.path}")
             if (pathEntryPresent) println("  PATH:    remove '$pathEntryDir' from your user PATH")
-            if (workspace != null) {
+            if (workspace != null && purgePlan != null) {
                 if (purge) {
-                    println("  PURGE:   ${workspace.metaDir} — PERMANENTLY DELETES $taskCount task(s), config, and caches")
+                    val what = purgePlan.targets.joinToString(" + ")
+                    if (purgePlan.coversTasks) {
+                        println("  PURGE:   $what — PERMANENTLY DELETES $taskCount task(s), config, and caches")
+                    } else {
+                        println("  PURGE:   $what — PERMANENTLY DELETES config and caches (tasks_dir '${workspace.config.tasksDir}' does not resolve to a directory inside the workspace; tasks are NOT touched)")
+                    }
                 } else if (taskCount > 0) {
                     println("  (kept)   ${workspace.metaDir} — $taskCount task(s) preserved; pass --purge to also delete them")
                 }
@@ -667,8 +681,13 @@ private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary
                 if (!quiet) println("taskkling: uninstall aborted; nothing was changed")
                 return
             }
-            if (purge && workspace != null) {
-                if (!confirm("This PERMANENTLY deletes $taskCount task(s) at ${workspace.metaDir} and cannot be undone. Continue?")) {
+            if (purge && workspace != null && purgePlan != null) {
+                val consequence = if (purgePlan.coversTasks) {
+                    "This PERMANENTLY deletes $taskCount task(s) at ${purgePlan.targets.joinToString(" + ")} and cannot be undone. Continue?"
+                } else {
+                    "This PERMANENTLY deletes the workspace config and caches at ${workspace.metaDir} and cannot be undone. Continue?"
+                }
+                if (!confirm(consequence)) {
                     if (!quiet) println("taskkling: uninstall aborted; workspace preserved")
                     return
                 }
@@ -684,8 +703,8 @@ private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary
         val pathChanged = pathEntryDir?.let { removeFromWindowsUserPath(it) } ?: false
 
         // Purge — the ONLY path that touches the task graph, and only ever behind the explicit flag.
-        val purged = purge && workspace != null
-        if (purged) fs.deleteRecursively(workspace.metaDir, mustExist = false)
+        val purgedTargets = if (purge && purgePlan != null) purgePlan.targets else emptyList()
+        purgedTargets.forEach { fs.deleteRecursively(it, mustExist = false) }
 
         if (!quiet) {
             println("taskkling: removed ${target.path}")
@@ -693,7 +712,7 @@ private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary
                 println("taskkling: off PATH now; the locked file will clear on your next reboot")
             }
             if (pathChanged) println("taskkling: removed '$pathEntryDir' from your user PATH")
-            if (purged) println("taskkling: purged workspace at ${workspace.metaDir}")
+            if (purgedTargets.isNotEmpty()) println("taskkling: purged ${purgedTargets.joinToString(" + ")}")
         }
     }
 }

@@ -61,6 +61,14 @@ public data class Config(
 }
 
 /**
+ * The directories `uninstall --purge` deletes recursively, and whether they
+ * cover the workspace's authored task files ([Workspace.purgePlan]). When
+ * [coversTasks] is false the CLI must not claim task deletion in its
+ * confirmation prompts — only config/caches (the meta dir) are erased.
+ */
+public data class PurgePlan(val targets: List<Path>, val coversTasks: Boolean)
+
+/**
  * A resolved workspace: the root directory plus the derived paths every command
  * works against (PRD §9). Construct via [discover].
  */
@@ -99,6 +107,30 @@ public class Workspace(
     /** Every id the tool has issued (active + archive + trash), for collision-free generation. */
     public fun allKnownIds(): Set<String> =
         idsInDir(tasksDir) + idsInDir(archiveDir) + idsInDir(trashDir)
+
+    /**
+     * What `uninstall --purge` erases (ADR-004; t-qoyn): the meta dir plus the
+     * resolved [tasksDir] when that lives elsewhere. The DEFAULT layout
+     * (`tasks_dir = "tasks"`) keeps authored nodes OUTSIDE `.taskkling/`, so
+     * purging the meta dir alone strands them; `archive/` and `trash/` are
+     * subdirs of [tasksDir], so covering it covers every authored node.
+     * Guarded lexically: a `tasks_dir` that resolves to the workspace root
+     * itself, or escapes it, is never purged ([coversTasks] = false) — a
+     * hand-edited `tasks_dir = "."` must not turn `--purge` into `rm -rf <root>`.
+     */
+    public fun purgePlan(): PurgePlan {
+        val rootN = root.normalized()
+        val meta = metaDir.normalized()
+        val tasks = tasksDir.normalized()
+        fun strictlyInside(p: Path, dir: Path): Boolean =
+            generateSequence(p.parent) { it.parent }.any { it == dir }
+        val coveredByMeta = tasks == meta || strictlyInside(tasks, meta)
+        return when {
+            coveredByMeta -> PurgePlan(listOf(meta), coversTasks = true)
+            strictlyInside(tasks, rootN) -> PurgePlan(listOf(meta, tasks), coversTasks = true)
+            else -> PurgePlan(listOf(meta), coversTasks = false)
+        }
+    }
 
     public companion object {
         /**
