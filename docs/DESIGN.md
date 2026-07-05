@@ -113,6 +113,9 @@ whose fill is too dark: it uses light text (`#c9d1d9`).
   texture and a sense of scale while staying far below content contrast.
 - The canvas scrolls in both axes; the grid pattern is fixed to graph space (scrolls with
   content), not to the viewport.
+- The canvas covers **at least the viewport**: when the laid-out graph is smaller than the
+  window, the grid, click-to-clear, and pan surface still extend to the window edges (the
+  content size is clamped to the viewport, §10).
 - **Panning**: an LMB drag that starts on the background (not on a card) pans the canvas —
   pointer delta = scroll delta (1:1), no inertia, clamped to the same bounds as wheel
   scrolling. Cursor: grab (hand) over the background at rest, grabbing (move) while
@@ -244,7 +247,9 @@ min-height (long title, many tags) simply pushes the ones below it down; it neit
 nor leaves a fixed-grid gap. Columns are measured independently, so **cross-column row
 alignment is deliberately dropped** — column k's card *i* need not line up with column j's
 card *i*. Canvas size follows the content: width `2·pad + cols·card + (cols−1)·col_gap`
-(unchanged); height `2·pad + max over columns of (Σ measured heights + (n−1)·row_gap)`.
+(unchanged); height `2·pad + max over columns of (Σ measured heights + (n−1)·row_gap)`;
+each dimension clamped to **at least the viewport** so the canvas never falls short of the
+window (§5).
 
 Edge anchors use each card's **measured vertical center**: an edge runs from the source
 card's right edge at its measured centerY to the target card's left edge at its measured

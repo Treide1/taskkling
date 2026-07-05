@@ -14,6 +14,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -130,117 +131,125 @@ internal fun GraphPane(
     // True while a background drag is panning; drives the grab→grabbing cursor swap.
     var panning by remember { mutableStateOf(false) }
 
-    Box(
-        modifier
-            .background(Tk.bg)
-            // Grab cursor over the background at rest, grabbing while panning (§5). Cards
-            // override with their own hand cursor — except mid-pan, where crossing a card
-            // means nothing, so the override flag pins the grabbing cursor everywhere.
-            .pointerHoverIcon(if (panning) GRABBING_CURSOR else GRAB_CURSOR, overrideDescendants = panning)
-            .pointerInput(hScroll, vScroll) {
-                // Pan on LMB background drag (§5): pointer delta == scroll delta (1:1, no
-                // inertia), through the same clamped ScrollStates the wheel mutates. The
-                // gesture claims a press only when it lands OUTSIDE every card — hit-tested
-                // against the measured rects the edge layer already uses — so cards keep
-                // their click/hover behaviour untouched.
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
-                    // The gesture sees viewport coordinates; the rects live in content px.
-                    val inContent = down.position + Offset(hScroll.value.toFloat(), vScroll.value.toFloat())
-                    if (cardRects.values.any { inContent in it }) return@awaitEachGesture
-                    // A few px of slop before committing keeps click-to-clear (§1.4) alive
-                    // under mouse jitter; the accrued delta is replayed on commit, so the
-                    // total pan stays 1:1 with the pointer.
-                    val slop = PAN_SLOP.toPx()
-                    var acc = Offset.Zero
-                    try {
-                        drag(down.id) { change ->
-                            val delta = change.positionChange()
-                            if (!panning) {
-                                acc += delta
-                                if (acc.getDistance() > slop) {
-                                    panning = true
-                                    hScroll.dispatchRawDelta(-acc.x)
-                                    vScroll.dispatchRawDelta(-acc.y)
+    // The canvas covers at least the viewport (§5): these pre-scroll constraints are
+    // the viewport size, and the measure pass clamps the content to them, so the grid
+    // and the click/pan surface reach the window edges even on small graphs.
+    BoxWithConstraints(modifier.background(Tk.bg)) {
+        val viewportW = constraints.maxWidth
+        val viewportH = constraints.maxHeight
+        Box(
+            Modifier
+                // Grab cursor over the background at rest, grabbing while panning (§5). Cards
+                // override with their own hand cursor — except mid-pan, where crossing a card
+                // means nothing, so the override flag pins the grabbing cursor everywhere.
+                .pointerHoverIcon(if (panning) GRABBING_CURSOR else GRAB_CURSOR, overrideDescendants = panning)
+                .pointerInput(hScroll, vScroll) {
+                    // Pan on LMB background drag (§5): pointer delta == scroll delta (1:1, no
+                    // inertia), through the same clamped ScrollStates the wheel mutates. The
+                    // gesture claims a press only when it lands OUTSIDE every card — hit-tested
+                    // against the measured rects the edge layer already uses — so cards keep
+                    // their click/hover behaviour untouched.
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
+                        // The gesture sees viewport coordinates; the rects live in content px.
+                        val inContent = down.position + Offset(hScroll.value.toFloat(), vScroll.value.toFloat())
+                        if (cardRects.values.any { inContent in it }) return@awaitEachGesture
+                        // A few px of slop before committing keeps click-to-clear (§1.4) alive
+                        // under mouse jitter; the accrued delta is replayed on commit, so the
+                        // total pan stays 1:1 with the pointer.
+                        val slop = PAN_SLOP.toPx()
+                        var acc = Offset.Zero
+                        try {
+                            drag(down.id) { change ->
+                                val delta = change.positionChange()
+                                if (!panning) {
+                                    acc += delta
+                                    if (acc.getDistance() > slop) {
+                                        panning = true
+                                        hScroll.dispatchRawDelta(-acc.x)
+                                        vScroll.dispatchRawDelta(-acc.y)
+                                        change.consume()
+                                    }
+                                } else {
+                                    hScroll.dispatchRawDelta(-delta.x)
+                                    vScroll.dispatchRawDelta(-delta.y)
                                     change.consume()
                                 }
-                            } else {
-                                hScroll.dispatchRawDelta(-delta.x)
-                                vScroll.dispatchRawDelta(-delta.y)
-                                change.consume()
                             }
+                        } finally {
+                            panning = false
                         }
-                    } finally {
-                        panning = false
                     }
                 }
-            }
-            .horizontalScroll(hScroll)
-            .verticalScroll(vScroll),
-    ) {
-        Layout(
-            content = {
-                for (p in placed) {
-                    NodeCard(
-                        task = p.task,
-                        selected = p.task.id == selectedId,
-                        pinned = p.task.id == pinnedId,
-                        dimmed = highlightedId != null && p.task.id !in star,
-                        onSelect = { onSelect(p.task.id) },
-                        onPinToggle = { onPinToggle(p.task.id) },
-                    )
-                }
-            },
-            modifier = Modifier
-                // Grid + edges render UNDER the cards (the Layout's children) and never
-                // capture pointer input (§5, §7). Edge anchors are each card's MEASURED
-                // vertical centre (§10), read from the map the measure pass just filled.
-                .drawBehind {
-                    drawDottedGrid()
-                    for (e in gl.edges) {
-                        val a = cardRects[e.from] ?: continue
-                        val b = cardRects[e.to] ?: continue
-                        val highlighted = highlightedId != null && (e.from == highlightedId || e.to == highlightedId)
-                        val color = if (highlighted) Tk.accent else Tk.line
-                        val strokeW = if (highlighted) 2.4.dp.toPx() else 1.6.dp.toPx()
-                        val alpha = if (highlighted) 1f else 1f - 0.8f * dimFraction
-                        drawSCurveEdge(a.right, a.centerY, b.left, b.centerY, color, strokeW, alpha)
+                .horizontalScroll(hScroll)
+                .verticalScroll(vScroll),
+        ) {
+            Layout(
+                content = {
+                    for (p in placed) {
+                        NodeCard(
+                            task = p.task,
+                            selected = p.task.id == selectedId,
+                            pinned = p.task.id == pinnedId,
+                            dimmed = highlightedId != null && p.task.id !in star,
+                            onSelect = { onSelect(p.task.id) },
+                            onPinToggle = { onPinToggle(p.task.id) },
+                        )
+                    }
+                },
+                modifier = Modifier
+                    // Grid + edges render UNDER the cards (the Layout's children) and never
+                    // capture pointer input (§5, §7). Edge anchors are each card's MEASURED
+                    // vertical centre (§10), read from the map the measure pass just filled.
+                    .drawBehind {
+                        drawDottedGrid()
+                        for (e in gl.edges) {
+                            val a = cardRects[e.from] ?: continue
+                            val b = cardRects[e.to] ?: continue
+                            val highlighted = highlightedId != null && (e.from == highlightedId || e.to == highlightedId)
+                            val color = if (highlighted) Tk.accent else Tk.line
+                            val strokeW = if (highlighted) 2.4.dp.toPx() else 1.6.dp.toPx()
+                            val alpha = if (highlighted) 1f else 1f - 0.8f * dimFraction
+                            drawSCurveEdge(a.right, a.centerY, b.left, b.centerY, color, strokeW, alpha)
+                        }
+                    }
+                    .clickable(interactionSource = canvasClick, indication = null) { onClearSelection() },
+            ) { measurables, _ ->
+                val cardWpx = CARD_W.dp.roundToPx()
+                val colGapPx = COL_GAP.dp.roundToPx()
+                val rowGapPx = ROW_GAP.dp.roundToPx()
+                val padPx = PAD.dp.roundToPx()
+
+                // Measure every card (~60 nodes) at its content-driven height; `placed[i]`
+                // pairs with `measurables[i]` since content was emitted in that same order.
+                val measured = measurables.mapIndexed { i, m -> placed[i] to m.measure(Constraints()) }
+
+                cardRects.clear()
+                val placements = ArrayList<Pair<Placeable, IntOffset>>(measured.size)
+                var maxBottom = padPx
+                for ((col, entries) in measured.groupBy { it.first.pos.layer }) {
+                    val x = padPx + col * (cardWpx + colGapPx)
+                    val tops = stackTops(entries.map { it.second.height }, rowGapPx, padPx)
+                    entries.forEachIndexed { j, entry ->
+                        val node = entry.first
+                        val placeable = entry.second
+                        val top = tops[j]
+                        cardRects[node.task.id] =
+                            CardRect(x.toFloat(), top.toFloat(), placeable.width.toFloat(), placeable.height.toFloat())
+                        placements += placeable to IntOffset(x, top)
+                        maxBottom = maxOf(maxBottom, top + placeable.height)
                     }
                 }
-                .clickable(interactionSource = canvasClick, indication = null) { onClearSelection() },
-        ) { measurables, _ ->
-            val cardWpx = CARD_W.dp.roundToPx()
-            val colGapPx = COL_GAP.dp.roundToPx()
-            val rowGapPx = ROW_GAP.dp.roundToPx()
-            val padPx = PAD.dp.roundToPx()
 
-            // Measure every card (~60 nodes) at its content-driven height; `placed[i]`
-            // pairs with `measurables[i]` since content was emitted in that same order.
-            val measured = measurables.mapIndexed { i, m -> placed[i] to m.measure(Constraints()) }
-
-            cardRects.clear()
-            val placements = ArrayList<Pair<Placeable, IntOffset>>(measured.size)
-            var maxBottom = padPx
-            for ((col, entries) in measured.groupBy { it.first.pos.layer }) {
-                val x = padPx + col * (cardWpx + colGapPx)
-                val tops = stackTops(entries.map { it.second.height }, rowGapPx, padPx)
-                entries.forEachIndexed { j, entry ->
-                    val node = entry.first
-                    val placeable = entry.second
-                    val top = tops[j]
-                    cardRects[node.task.id] =
-                        CardRect(x.toFloat(), top.toFloat(), placeable.width.toFloat(), placeable.height.toFloat())
-                    placements += placeable to IntOffset(x, top)
-                    maxBottom = maxOf(maxBottom, top + placeable.height)
+                // Width from the column count, height from the tallest column's measured
+                // stack — each clamped to the viewport so the canvas never falls short
+                // of the window (§5, §10).
+                val contentWidth = maxOf(padPx * 2 + cols * cardWpx + (cols - 1) * colGapPx, viewportW)
+                val contentHeight = maxOf(maxBottom + padPx, viewportH)
+                layout(contentWidth, contentHeight) {
+                    placements.forEach { (placeable, offset) -> placeable.place(offset) }
                 }
-            }
-
-            // Width unchanged (§10); height follows the tallest column's measured stack.
-            val contentWidth = padPx * 2 + cols * cardWpx + (cols - 1) * colGapPx
-            val contentHeight = maxBottom + padPx
-            layout(contentWidth, contentHeight) {
-                placements.forEach { (placeable, offset) -> placeable.place(offset) }
             }
         }
     }
