@@ -31,6 +31,7 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.taskkling.contract.TaskDto
@@ -68,7 +69,7 @@ internal fun DetailPane(
                     Spacer(Modifier.height(8.dp))
                 }
                 Text(
-                    "Select a node to inspect.\nEdges point from a blocker → the task it blocks.",
+                    "Select a task to inspect.\nEdges point from a blocker → the task it blocks.",
                     color = Tk.muted,
                     fontSize = 13.sp,
                     textAlign = TextAlign.Center,
@@ -91,7 +92,7 @@ internal fun DetailPane(
         Field("status", task.status)
         Field("thread", task.thread)
         Field("priority", task.priority)
-        Field("waiting on", task.waitingOn)
+        Field("external requirement", task.waitingOn)
         Field("due", task.due?.let(::fmtDateTime))
         Field("defer", task.defer?.let(::fmtDateTime))
         Field("created", fmtDateTime(task.created))
@@ -109,9 +110,8 @@ internal fun DetailPane(
         }
         Spacer(Modifier.height(9.dp))
 
-        RefField("blocks on (depends)", task.depends, onNavigate)
-        RefField("blockers (unmet)", c.blockers, onNavigate)
-        RefField("dependents", c.dependents, onNavigate)
+        RefField("blocked by", task.depends, onNavigate, resolved = task.depends.toSet() - c.blockers.toSet())
+        RefField("blocker of", c.dependents, onNavigate)
 
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -139,10 +139,19 @@ private fun Field(label: String, value: String?) {
     }
 }
 
-/** A field whose value is a comma-separated list of `accent` reference links (DESIGN §9). */
+/**
+ * A field whose value is a comma-separated list of `accent` reference links (DESIGN §9).
+ * Ids in [resolved] (upstream tasks already done — no longer blocking) render muted +
+ * struck through instead of accent, but stay clickable.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun RefField(label: String, ids: List<String>, onNavigate: (String) -> Unit) {
+private fun RefField(
+    label: String,
+    ids: List<String>,
+    onNavigate: (String) -> Unit,
+    resolved: Set<String> = emptySet(),
+) {
     Column(Modifier.padding(bottom = 9.dp)) {
         FieldLabel(label)
         Spacer(Modifier.height(2.dp))
@@ -152,10 +161,12 @@ private fun RefField(label: String, ids: List<String>, onNavigate: (String) -> U
             FlowRow {
                 ids.forEachIndexed { i, id ->
                     if (i > 0) Text(", ", fontSize = 13.sp, color = Tk.muted)
+                    val isResolved = id in resolved
                     Text(
                         id,
                         fontSize = 13.sp,
-                        color = Tk.accent,
+                        color = if (isResolved) Tk.muted else Tk.accent,
+                        textDecoration = if (isResolved) TextDecoration.LineThrough else null,
                         modifier = Modifier
                             .pointerHoverIcon(PointerIcon.Hand)
                             .clickable { onNavigate(id) },

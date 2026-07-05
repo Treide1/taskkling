@@ -4,11 +4,11 @@ import io.taskkling.contract.ExportDto
 import okio.FileSystem
 
 /**
- * `delete <id>` (PRD §9.5, §10.5) — move the node to `trash/`, stamp `closed`,
+ * `delete <id>` (PRD §9.5, §10.5) — move the task to `trash/`, stamp `closed`,
  * and **cascade-prune** this id from the `depends` of every active dependent so
  * no dangling edge survives. **Validation-free** by design (the single mutation
  * that skips §7.5 preventive checks); reversible via [restoreTask]. The whole
- * operation runs under the global lock. Dependents are pruned *before* the node
+ * operation runs under the global lock. Dependents are pruned *before* the task
  * leaves the active set, so a lock-free reader never observes a dangling edge.
  */
 public fun Workspace.deleteTask(id: String, exportAfter: Boolean = false): MutationResult = withLock {
@@ -24,7 +24,7 @@ public fun Workspace.deleteTask(id: String, exportAfter: Boolean = false): Mutat
         }
     }
 
-    // Move the node to trash/, stamping closed (preserving an existing stamp).
+    // Move the task to trash/, stamping closed (preserving an existing stamp).
     val trashed = task.copy(closed = task.closed ?: nowUtc())
     writeFileAtomic(trashDir / trashed.fileName(), trashed.toMarkdown())
     fs.delete(path, mustExist = false)
@@ -44,19 +44,19 @@ public data class RestoreResult(
 )
 
 /**
- * `restore <id>` (PRD §9.5, §10.5) — move a node from `trash/` (preferred) or
- * `archive/` back into the active set. Clears `closed`; a node that was
+ * `restore <id>` (PRD §9.5, §10.5) — move a task from `trash/` (preferred) or
+ * `archive/` back into the active set. Clears `closed`; a task that was
  * `done`/`dropped` returns as `open` (so it is actionable again and `cleanup`
  * won't immediately re-sweep it), which also clears `waiting_on`. Severed
  * inbound edges are **not** re-added (git history is the only full undo); and any
- * of the node's own `depends` whose target is no longer active is dropped and
+ * of the task's own `depends` whose target is no longer active is dropped and
  * reported, keeping the active set free of dangling edges.
  */
 public fun Workspace.restoreTask(id: String, exportAfter: Boolean = false): RestoreResult = withLock {
     val fs = FileSystem.SYSTEM
     if (findActiveFile(id) != null) throw TkError(ExitCode.USAGE, "'$id' is already active")
     val src = fileFor(trashDir, id) ?: fileFor(archiveDir, id)
-        ?: throw TkError(ExitCode.USAGE, "no trashed or archived node '$id'")
+        ?: throw TkError(ExitCode.USAGE, "no trashed or archived task '$id'")
 
     val task = parseTask(src.name, fs.read(src) { readUtf8() })
     val active = activeIds()
@@ -75,12 +75,12 @@ public fun Workspace.restoreTask(id: String, exportAfter: Boolean = false): Rest
     RestoreResult(restored, drop, if (exportAfter) buildExport(includeBody = false, includeArchived = false) else null)
 }
 
-/** Outcome of [cleanup]: how many nodes were swept to archive and purged. */
+/** Outcome of [cleanup]: how many tasks were swept to archive and purged. */
 public data class CleanupResult(val archived: Int, val purged: Int, val export: ExportDto?)
 
 /**
  * `cleanup [--delete-before <dt>] [--include-archive]` (PRD §9.5, §10.7).
- * Always sweeps closed (`done`/`dropped`) active nodes from `tasks/` → `archive/`.
+ * Always sweeps closed (`done`/`dropped`) active tasks from `tasks/` → `archive/`.
  * With [deleteBefore], permanently purges `trash/` entries whose `closed < dt`
  * (and, with [includeArchive], `archive/` entries too). ISO-8601 UTC stamps
  * compare lexicographically, so the string `<` is a chronological one.

@@ -27,9 +27,10 @@ public data class CountsDto(
 )
 
 /**
- * One node = one task. Stored fields (PRD §8.1) plus a nested [ComputedDto]
- * (PRD §8.2, derived at read, never stored). `body` is present only when the
- * export was produced with `--include-body`.
+ * One task = one markdown file. Stored fields (PRD §8.1) plus a nested
+ * [ComputedDto] (PRD §8.2, derived at read, never stored). Field names mirror
+ * the stored vocabulary, never UI labels (ADR-008, DOMAIN_LANGUAGE §6). `body`
+ * is present only when the export was produced with `--include-body`.
  */
 @Serializable
 public data class TaskDto(

@@ -7,7 +7,7 @@ import io.taskkling.contract.TaskDto
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 
-/** Derived, read-time attributes for one node (PRD §8.2); never stored. */
+/** Derived, read-time attributes for one task (PRD §8.2); never stored. */
 public data class Computed(
     val ready: Boolean,
     val blocked: Boolean,
@@ -22,7 +22,7 @@ private fun instantOrNull(iso: String?): Instant? =
     iso?.let { runCatching { Instant.parse(it) }.getOrNull() }
 
 /**
- * Compute every node's derived attributes over the given set (PRD §8.2, §11).
+ * Compute every task's derived attributes over the given set (PRD §8.2, §11).
  * A `depends` id that isn't `done` (including dangling ids) counts as a blocker;
  * `dependents` is the inverse edge. A `defer`/`due` that won't parse is ignored
  * rather than fatal (the read path stays robust).

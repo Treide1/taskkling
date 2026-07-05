@@ -1,7 +1,7 @@
 # taskkling
 
 A git-native, **markdown-file-per-task DAG task manager** for solo operators and
-human + agent teams. Work is modelled as nodes (tasks) connected by `depends` edges;
+human + agent teams. Work is modelled as tasks connected by `depends` edges;
 the source of truth is **one markdown file per task** (YAML frontmatter + freeform body)
 in a git repository. No database, daemon, or server.
 
@@ -107,7 +107,7 @@ after a fresh install to set up the per-project wrapper in one step.
 ## Usage
 
 ```sh
-taskkling add "Draft the proposal" -t docs        # create a node, prints its id
+taskkling add "Draft the proposal" -t docs        # create a task, prints its id
 taskkling add "Ship it" -t docs -d t-a1z9         # ... that depends on t-a1z9
 taskkling list                                    # whole backlog, ls -la style
 taskkling list --ready                            # what's actionable right now
@@ -118,7 +118,7 @@ taskkling set <id> --due 2026-07-31 --priority high
 taskkling write <id> "body text"                  # body I/O: write / append / read (- = stdin)
 taskkling link <id> --depends <dep>               # edges: link / unlink (cycle-checked)
 taskkling delete <id>                             # -> trash, prunes dependents; restore <id> undoes
-taskkling cleanup                                 # sweep closed nodes -> archive/
+taskkling cleanup                                 # sweep closed tasks -> archive/
 ```
 
 Conventions: human-readable output by default, `--json` where applicable (`export` is

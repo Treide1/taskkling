@@ -209,7 +209,7 @@ private class InitCmd : TkCommand("init", "Scaffold a taskkling workspace (.task
     }
 }
 
-/** `add "<title>" [flags]` — create a node, print its id (PRD §10.4). */
+/** `add "<title>" [flags]` — create a task, print its id (PRD §10.4). */
 private class AddCmd : MutationCommand("add", "Create a task; prints the new id") {
     val title by argument(ArgType.String, description = "Task title")
     val thread by option(ArgType.String, "thread", "t", description = "Grouping label")
@@ -239,19 +239,19 @@ private class AddCmd : MutationCommand("add", "Create a task; prints the new id"
 }
 
 /**
- * `get <id> [--body|--info|-f field…] [--json]` — read a node. The common case,
+ * `get <id> [--body|--info|-f field…] [--json]` — read a task. The common case,
  * bare `get <id>`, prints the raw `.md` **verbatim** (frontmatter + body) so an
  * agent picking up a task sees the whole brief in one cheap read (this subsumes the
  * former `show`). Narrowings: `--body`/`-b` the body alone; `--info`/`-i` the parsed
  * fields — stored **and** computed, the value-add over the raw frontmatter; `-f`
- * plucks named field values. `--json` emits the structured node (body unless `--info`).
+ * plucks named field values. `--json` emits the structured task (body unless `--info`).
  */
-private class GetCmd : TkCommand("get", "Print a node verbatim (.md); --body / --info / -f narrow it") {
+private class GetCmd : TkCommand("get", "Print a task verbatim (.md); --body / --info / -f narrow it") {
     val id by argument(ArgType.String, description = "Task id")
     val body by option(ArgType.Boolean, "body", "b", description = "Print the body only (frontmatter stripped)").default(false)
     val info by option(ArgType.Boolean, "info", "i", description = "Print parsed fields only (stored + computed)").default(false)
     val fields by option(ArgType.String, "field", "f", description = "Field to print (repeatable)").multiple()
-    val asJson by option(ArgType.Boolean, "json", description = "Emit the node as a JSON object").default(false)
+    val asJson by option(ArgType.Boolean, "json", description = "Emit the task as a JSON object").default(false)
 
     override fun run() {
         val ws = Workspace.discover(root)
@@ -302,10 +302,10 @@ private class ReopenCmd : MutationCommand("reopen", "Reopen a task (clears close
 }
 
 /** `wait <id> [--until <dt>] [--on "<text>"]` — set waiting, fold defer (PRD §10.5). */
-private class WaitCmd : MutationCommand("wait", "Set status=waiting; optionally defer (--until) and reason (--on)") {
+private class WaitCmd : MutationCommand("wait", "Set status=waiting; optionally defer (--until) and external requirement (--on)") {
     val id by argument(ArgType.String, description = "Task id")
     val until by option(ArgType.String, "until", description = "Defer until this datetime (suppresses readiness)")
-    val on by option(ArgType.String, "on", description = "waiting_on reason text")
+    val on by option(ArgType.String, "on", description = "External requirement text (stored as waiting_on)")
     override fun run() = emit(Workspace.discover(root).waitTask(id, until, on, exportOnSuccess))
 }
 
@@ -362,7 +362,7 @@ private class DeleteCmd : MutationCommand("delete", "Move a task to trash and pr
     override fun run() = emit(Workspace.discover(root).deleteTask(id, exportOnSuccess))
 }
 
-/** `restore <id>` — bring a node back from trash/archive; report non-rewired edges (PRD §9.5). */
+/** `restore <id>` — bring a task back from trash/archive; report non-rewired edges (PRD §9.5). */
 private class RestoreCmd : MutationCommand("restore", "Restore a task from trash/archive to the active set") {
     val id by argument(ArgType.String, description = "Task id")
     override fun run() {
@@ -379,7 +379,7 @@ private class RestoreCmd : MutationCommand("restore", "Restore a task from trash
 }
 
 /** `cleanup [--delete-before <dt>] [--include-archive]` — sweep closed → archive; purge trash (PRD §10.7). */
-private class CleanupCmd : MutationCommand("cleanup", "Sweep closed nodes to archive; optionally purge old trash") {
+private class CleanupCmd : MutationCommand("cleanup", "Sweep closed tasks to archive; optionally purge old trash") {
     val deleteBefore by option(ArgType.String, "delete-before", description = "Purge trash entries closed before this datetime")
     val includeArchive by option(ArgType.Boolean, "include-archive", description = "Also purge archive entries with --delete-before").default(false)
 
@@ -762,7 +762,7 @@ private class ConfigInitCmd(private val parent: ConfigCmd) :
 
 /** `export [--include-body] [--archived] [--ics]` — full JSON contract (PRD §12). */
 private class ExportCmd : TkCommand("export", "Print the full JSON export") {
-    val includeBody by option(ArgType.Boolean, "include-body", description = "Add a per-node body field").default(false)
+    val includeBody by option(ArgType.Boolean, "include-body", description = "Add a per-task body field").default(false)
     val archived by option(ArgType.Boolean, "archived", description = "Include the archive subtree").default(false)
     val ics by option(ArgType.Boolean, "ics", description = "Emit an iCalendar feed from due dates (stub)").default(false)
 
@@ -786,14 +786,14 @@ private class ExportCmd : TkCommand("export", "Print the full JSON export") {
 private class ListCmd : TkCommand("list", "List tasks (ls -la style); filters fold computed states") {
     val archived by option(ArgType.Boolean, "archived", description = "Include the archive subtree").default(false)
     val idOnly by option(ArgType.Boolean, "id-only", description = "Print only ids, one per line").default(false)
-    val asJson by option(ArgType.Boolean, "json", description = "Emit JSON array of nodes").default(false)
+    val asJson by option(ArgType.Boolean, "json", description = "Emit JSON array of tasks").default(false)
     val status by option(ArgType.String, "status", "s", description = "Filter by stored status")
     val thread by option(ArgType.String, "thread", "t", description = "Filter by thread")
-    val ready by option(ArgType.Boolean, "ready", description = "Only ready nodes").default(false)
-    val blocked by option(ArgType.Boolean, "blocked", description = "Only blocked nodes").default(false)
-    val waiting by option(ArgType.Boolean, "waiting", description = "Only waiting nodes").default(false)
-    val blocking by option(ArgType.String, "blocking", description = "Nodes that <id> depends on (upstream)")
-    val blockedBy by option(ArgType.String, "blocked-by", description = "Nodes that depend on <id> (downstream)")
+    val ready by option(ArgType.Boolean, "ready", description = "Only ready tasks").default(false)
+    val blocked by option(ArgType.Boolean, "blocked", description = "Only blocked tasks").default(false)
+    val waiting by option(ArgType.Boolean, "waiting", description = "Only waiting tasks").default(false)
+    val blocking by option(ArgType.String, "blocking", description = "Tasks blocking <id> — its upstream depends")
+    val blockedBy by option(ArgType.String, "blocked-by", description = "Tasks blocked by <id> — its downstream dependents")
 
     override fun run() {
         val ws = Workspace.discover(root)

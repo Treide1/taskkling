@@ -4,16 +4,16 @@ import io.taskkling.contract.ExportDto
 import okio.FileSystem
 import okio.Path
 
-/** Path of the active node [id] (`tasks/<id>--*.md`), or null if absent. */
+/** Path of the active task [id] (`tasks/<id>--*.md`), or null if absent. */
 public fun Workspace.findActiveFile(id: String): Path? = fileFor(tasksDir, id)
 
-/** Raw `.md` content of the active node [id], verbatim (for `show`); null if absent. */
+/** Raw `.md` content of the active task [id], verbatim (for `show`); null if absent. */
 public fun Workspace.rawFile(id: String): String? {
     val path = findActiveFile(id) ?: return null
     return FileSystem.SYSTEM.read(path) { readUtf8() }
 }
 
-/** Parse the active node [id] into a [Task]; null if absent. */
+/** Parse the active task [id] into a [Task]; null if absent. */
 public fun Workspace.loadTask(id: String): Task? {
     val path = findActiveFile(id) ?: return null
     return parseTask(path.name, FileSystem.SYSTEM.read(path) { readUtf8() })
@@ -27,7 +27,7 @@ public fun Workspace.loadTask(id: String): Task? {
 public data class MutationResult(val task: Task, val export: ExportDto?)
 
 /**
- * The generic write path for editing one existing node (PRD §7.1): under the
+ * The generic write path for editing one existing task (PRD §7.1): under the
  * global lock, read the file **fresh**, apply [transform], validate, and write
  * via temp→rename. Carrying the whole task from the fresh read (not a stale
  * blob) means concurrent edits to different fields both survive. Renames the
@@ -184,6 +184,6 @@ public fun Workspace.appendBody(id: String, text: String, exportAfter: Boolean =
         t.copy(body = if (t.body.isBlank()) add else t.body.trimEnd() + "\n" + add)
     }
 
-/** `get <id> --body` — the node's body only, frontmatter stripped (PRD §10.2). */
+/** `get <id> --body` — the task's body only, frontmatter stripped (PRD §10.2). */
 public fun Workspace.readBody(id: String): String =
     loadTask(id)?.body ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")

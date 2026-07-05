@@ -10,7 +10,7 @@
 ## 1. Summary
 
 **taskkling** is a lightweight, git-native, **directed-acyclic-graph (DAG) task manager** for
-solo operators and **human + agent** teams. Work is modelled as nodes (tasks) connected by
+solo operators and **human + agent** teams. Work is modelled as tasks connected by
 `depends` edges. The source of truth is **one markdown file per task** (YAML frontmatter +
 freeform body) in a git repository. There is no database, daemon, server, or background process.
 
@@ -39,7 +39,7 @@ force a **binary, sequential** shape onto items that are not binary or sequentia
 - Items have **deadlines** and **defer-until** dates that are orthogonal to dependency order.
 
 A DAG models all of this directly: ordering becomes edges, grouping becomes a label, deadlines
-and defers become per-node metadata, and "what can I work on right now" becomes a computed query.
+and defers become per-task metadata, and "what can I work on right now" becomes a computed query.
 
 Existing tools in this space either pull in a **heavy backbone** (a sync server, an embedded SQL
 database, background daemons, git-hook takeovers) that generates exactly the drift and operational
@@ -101,7 +101,7 @@ backbone **dumb** — plain files + a tiny binary — and invests only where the
 
 Representative flows: capture a task; link it behind a prerequisite; park it `wait`-ing on an
 external party until a date; ask "what's actionable now?"; mark done; review the agenda by `due`;
-delete a node and have its edges cleaned up; restore it.
+delete a task and have its edges cleaned up; restore it.
 
 ---
 
@@ -136,7 +136,7 @@ replace) live in a small `expect/actual` shim.
 A **light** Compose Desktop app (JVM — the supported Compose desktop target; *not* native-desktop
 Compose). It is a **pure CLI client (Option A)**:
 
-- **Reads**: invokes `taskkling export` (and `get --body` for a node's body on demand), renders
+- **Reads**: invokes `taskkling export` (and `get --body` for a task's body on demand), renders
   the DAG and detail panels from the returned JSON.
 - **Writes**: every mutation is a `taskkling <verb> … --export-on-success` subprocess call; the
   UI refreshes from the returned full export. It does not diff server-side or hold a parallel
@@ -216,11 +216,11 @@ longer alive is reclaimable, so a crashed process cannot wedge the repo.
 
 ---
 
-## 8. Data model — the node
+## 8. Data model — the task
 
-One node = one markdown file: **YAML frontmatter (machine-owned metadata) + body (human-owned
-freeform markdown)**. There is exactly one node type; "phases" are expressed by `thread` +
-dependencies + ordinary gate tasks (not a node taxonomy).
+One task = one markdown file: **YAML frontmatter (machine-owned metadata) + body (human-owned
+freeform markdown)**. There is exactly one task type; "phases" are expressed by `thread` +
+dependencies + ordinary gate tasks (not a task taxonomy).
 
 ### 8.1 Stored fields
 
@@ -230,13 +230,13 @@ dependencies + ordinary gate tasks (not a node taxonomy).
 | `title` | ✅ | string | One-line summary (frontmatter, not a body heading). |
 | `thread` | ➖ | slug | Single optional grouping label. |
 | `status` | ✅ | `open` \| `waiting` \| `done` \| `dropped` | Default `open`. Stored, human-decided. |
-| `waiting_on` | ➖ | string | Free text reason; **may be set only when `status = waiting`** (optional even then). |
-| `depends` | ➖ | list\<id> | Upstream predecessors that must be `done` for this node to be ready. |
+| `waiting_on` | ➖ | string | Free text naming the **external requirement** the task waits on — never a task id (that's an edge); **may be set only when `status = waiting`** (optional even then). |
+| `depends` | ➖ | list\<id> | Upstream predecessors that must be `done` for this task to be ready. |
 | `due` | ➖ | datetime | Deadline → drives urgency / overdue / agenda. Never gates readiness. |
 | `defer` | ➖ | datetime | "Not before" — suppresses readiness until then (set via `wait --until`). |
 | `priority` | ➖ | `low` \| `normal` \| `high` | Default `normal`. |
 | `created` | ✅ | datetime | Stamped at creation. |
-| `closed` | ➖ | datetime | Stamped when the node leaves the active set (`done` / `dropped` / `delete`). |
+| `closed` | ➖ | datetime | Stamped when the task leaves the active set (`done` / `dropped` / `delete`). |
 
 **Datetimes**: ISO-8601 UTC, minute granularity, e.g. `2026-07-31T23:59:00Z`. Day-level values are
 `…T00:00:00Z`. Storage is always full datetime; **display/working granularity (day ↔ minute ↔
@@ -255,8 +255,8 @@ surfaced through `set --<field>` / `get --<field>` without breaking existing fil
 | `deferred` | `defer` set ∧ `defer > now` |
 | `overdue` | `due` set ∧ `due < now` ∧ `status ∉ {done, dropped}` |
 | `resurfaced` | `status=waiting` ∧ `defer` set ∧ `defer ≤ now` (tickler is due for a decision) |
-| `blockers` | the subset of this node's `depends` that are not yet `done` |
-| `dependents` | ids of nodes whose `depends` contains this node (downstream) |
+| `blockers` | the subset of this task's `depends` that are not yet `done` — the tasks blocking it right now |
+| `dependents` | ids of tasks whose `depends` contains this task (downstream) |
 
 ### 8.3 On-disk example
 
@@ -289,13 +289,13 @@ not filename, so titles/slugs can change freely.
 
 ```
 <repo-root>/                       # discovered by walking up for .taskkling/ (git-style)
-├─ tasks/                          # = config.tasks_dir; ACTIVE nodes (top level only)
+├─ tasks/                          # = config.tasks_dir; ACTIVE tasks (top level only)
 │   ├─ t-a1z9--acquire-liability-insurance.md
 │   ├─ archive/                    # done/dropped, moved here by `cleanup` (flat)
 │   │   └─ t-….md
 │   └─ trash/                      # deleted, restorable via `restore` (flat)
 │       └─ t-….md
-└─ .taskkling/                     # tool-owned; never a node
+└─ .taskkling/                     # tool-owned; never a task
     ├─ config.toml
     ├─ lock                        # advisory global write lock (PID + timestamp)
     └─ tmp/                        # temp files for atomic temp→rename
@@ -313,10 +313,10 @@ not filename, so titles/slugs can change freely.
 - `delete` **immediately moves** the file to `trash/`, stamps `closed`, and **prunes this id from
   the `depends` of every dependent** (§10). It is **validation-free**; referential integrity is
   preserved by the prune (no dangling edges).
-- `restore` moves a node from `trash/` (or `archive/`) back to active `tasks/` and clears
-  `closed`. It **does not re-add pruned edges** — the node returns, severed dependencies do not;
+- `restore` moves a task from `trash/` (or `archive/`) back to active `tasks/` and clears
+  `closed`. It **does not re-add pruned edges** — the task returns, severed dependencies do not;
   git history is the only full undo. `restore` reports how many edges it could not re-wire.
-- `cleanup` moves closed nodes → `archive/` (mechanical). `cleanup --delete-before <dt>`
+- `cleanup` moves closed tasks → `archive/` (mechanical). `cleanup --delete-before <dt>`
   permanently purges **trash** entries with `closed < dt`. Archive is kept indefinitely unless
   `--include-archive` is also passed.
 
@@ -339,9 +339,9 @@ considered and rejected). The CLI is the single read and write interface.
 
 | Command | Returns |
 |---|---|
-| `export [--include-body] [--archived]` | Full JSON: all active nodes (stored + computed). `--include-body` adds a per-node `body` field (markdown sans frontmatter, JSON-escaped). `--archived` includes the archive subtree. |
-| `list [filters] [sorts] [--id-only] [--json] [--archived]` | A filtered/sorted **collection**, `ls -la`-style (no body). `--json` → array of per-node objects (= `export.tasks[]` subset). |
-| `get <id> [--body] [--info] [--<field>…] [--json]` | Read a node — the single read verb. Bare → the raw `.md` (frontmatter + body) printed **verbatim** (the common case; the full brief in one read). `--body`/`-b` → the body only (the `write`/`append`-symmetric read); `--info`/`-i` → parsed **field values**, stored **and** computed (read-only ones can't be `set`); `--<field>…` plucks named fields; `--json` → the structured node (body unless `--info`). Symmetric with `set`. |
+| `export [--include-body] [--archived]` | Full JSON: all active tasks (stored + computed). `--include-body` adds a per-task `body` field (markdown sans frontmatter, JSON-escaped). `--archived` includes the archive subtree. |
+| `list [filters] [sorts] [--id-only] [--json] [--archived]` | A filtered/sorted **collection**, `ls -la`-style (no body). `--json` → array of per-task objects (= `export.tasks[]` subset). |
+| `get <id> [--body] [--info] [--<field>…] [--json]` | Read a task — the single read verb. Bare → the raw `.md` (frontmatter + body) printed **verbatim** (the common case; the full brief in one read). `--body`/`-b` → the body only (the `write`/`append`-symmetric read); `--info`/`-i` → parsed **field values**, stored **and** computed (read-only ones can't be `set`); `--<field>…` plucks named fields; `--json` → the structured task (body unless `--info`). Symmetric with `set`. |
 
 **`list` filters**: `--ready` · `--blocked` · `--overdue` · `--status <s>` · `--thread <t>` ·
 `--due-before <dt>` · `--blocking <id>` · `--blocked-by <id>`.
@@ -364,8 +364,8 @@ filter for piping.
 
 | Query | Meaning |
 |---|---|
-| `list --blocking <id>` | nodes that `<id>` depends on — **upstream predecessors** (= `<id>`'s `depends`). |
-| `list --blocked-by <id>` | nodes that depend on `<id>` — **downstream dependents**. |
+| `list --blocking <id>` | the tasks **blocking** `<id>` — upstream (= `<id>`'s `depends`). |
+| `list --blocked-by <id>` | the tasks **blocked by** `<id>` — its downstream dependents. |
 
 These are backed by two single core functions — `dependencies(id)` (`--blocking`) and
 `dependents(id)` (`--blocked-by`). **`delete` consumes `dependents(id)`** for its cascade prune,
@@ -376,7 +376,7 @@ so an agent can preview impact with the very function delete will run:
 
 | Command | Effect |
 |---|---|
-| `add "<title>" [--thread t] [--depends a,b] [--due dt] [--defer dt] [--priority p] [--body txt]` | Create a node; print the new id (cycle/dangling-checked). |
+| `add "<title>" [--thread t] [--depends a,b] [--due dt] [--defer dt] [--priority p] [--body txt]` | Create a task; print the new id (cycle/dangling-checked). |
 | `set <id> [--<field> <value>…] [--clear <field>…]` | Atomic multi-field metadata edit (`--due/--defer/--priority/--thread/--title`, extensible). `--clear` (or `--<field> ""`) unsets a field. |
 | `get <id> [--info] [--<field>…]` | (read; §10.2) symmetric counterpart (`--info`/`-f` for parsed fields). |
 
@@ -386,7 +386,7 @@ so an agent can preview impact with the very function delete will run:
 |---|---|
 | `done <id>` / `drop <id>` | Set status + stamp `closed` (file stays until `cleanup`). |
 | `reopen <id>` | Return to `open`; clear `closed`. |
-| `wait <id> [--until <dt>] [--on "<text>"]` | Set `status=waiting`; optionally set `defer` (`--until`) and/or `waiting_on` (`--on`). Both optional (folds the former separate `defer` verb). |
+| `wait <id> [--until <dt>] [--on "<text>"]` | Set `status=waiting`; optionally set `defer` (`--until`) and/or the external requirement `waiting_on` (`--on`). Both optional (folds the former separate `defer` verb). |
 | `delete <id>` | Move → `trash/`, stamp `closed`, prune id from dependents. **No validation.** Reversible via `restore`. |
 | `restore <id>` | Move from `trash/`/`archive/` → active; clear `closed`; report non-rewired edges. |
 
@@ -416,10 +416,10 @@ so an agent can preview impact with the very function delete will run:
 
 ## 11. Ready-set & time semantics
 
-The ready-set is the product's core query. A node is **ready** iff it is `open`, all its `depends`
+The ready-set is the product's core query. A task is **ready** iff it is `open`, all its `depends`
 are `done`, and it is not deferred (`defer` unset or in the past). **Time has two independent
 roles**: `defer` gates *readiness* (a "not before"); `due` drives a separate *urgency/agenda* axis
-and **never** affects readiness. A `waiting` node whose `defer` has elapsed is **`resurfaced`** —
+and **never** affects readiness. A `waiting` task whose `defer` has elapsed is **`resurfaced`** —
 flagged for a human/agent decision (it is not auto-actioned), matching tickler semantics. The
 agenda is simply `list --sort due` / `list --due-before <dt>`.
 
@@ -458,7 +458,7 @@ drift.
 
 - **Light Compose Desktop (JVM)** app; pure CLI client (§6.3). Reads `export`; renders the DAG as
   a node-link graph with computed state (ready/blocked/deferred/overdue/resurfaced) shown
-  visually; a detail panel lazy-loads a node's body via `get --body`.
+  visually; a detail panel lazy-loads a task's body via `get --body`.
 - **All mutations** go through `taskkling <verb> … --export-on-success`; the UI refreshes from the
   returned export and may diff old-vs-new **client-side** for incremental updates.
 - **Read-only `index.html` spike** first (render an `export` dump; no callbacks) as the early
@@ -473,8 +473,8 @@ drift.
 ## 14. Configuration — `config.toml`
 
 ```toml
-tasks_dir       = "tasks"      # active-node directory (archive/ and trash/ are subdirs)
-id_prefix       = "t-"         # node id prefix
+tasks_dir       = "tasks"      # active-task directory (archive/ and trash/ are subdirs)
+id_prefix       = "t-"         # task id prefix
 granularity     = "minute"     # day | minute | second (display/working; deferred feature)
 default_thread  = ""           # applied by `add` when --thread omitted
 lock_timeout    = 30           # seconds before a dead-PID lock is reclaimable
@@ -565,14 +565,24 @@ respects it outside any workspace; a workspace's value overrides it) — see §1
 
 ## 20. Glossary
 
-- **node / task** — one markdown file; a vertex in the DAG.
-- **thread** — optional grouping label (not a node).
-- **ready** — open, all dependencies done, not deferred (computed).
-- **blocked** — open with an unsatisfied dependency (computed).
-- **deferred** — has a `defer` date in the future (computed).
-- **resurfaced** — a waiting node whose `defer` has elapsed; due for a decision (computed).
-- **dependents / `--blocked-by`** — nodes that depend on a given node (downstream).
-- **dependencies / `--blocking`** — nodes a given node depends on (upstream).
-- **archive** — flat store for closed (done/dropped) nodes.
-- **trash** — flat store for deleted nodes; restorable.
-- **the contract** — the `:contract` DTOs / `export` JSON shape shared by CLI and UI.
+The canonical vocabulary is **`docs/DOMAIN_LANGUAGE.md`** (grouped by layer, with the
+cross-layer mappings and renaming tiers); this list is the short form.
+
+- **task** — one markdown file; the unit of work. Its graph vertex is a **node** (internal
+  DAG vocabulary only); its rendering in the UI is a **card**.
+- **thread** — optional grouping label (not a task).
+- **ready** — open, every `depends` done, not deferred (computed).
+- **blocked** — open with at least one task still blocking it (computed).
+- **blocker** — an upstream task another task depends on. UI direction labels: "blocked by"
+  (upstream) / "blocker of" (downstream); *dependency/depends/dependents* stay off UI surfaces.
+- **blockers** (computed) — the unmet subset of `depends`: the tasks blocking one right now.
+- **dependents / `--blocked-by`** — tasks that depend on a given task (downstream).
+- **`--blocking`** — the tasks blocking a given task (upstream, = its `depends`).
+- **external requirement** — the outside-the-graph thing a `waiting` task needs (`waiting_on`
+  free text); never modelled as a placeholder task.
+- **deferred** — has a `defer` date in the future (computed); a time gate, not a requirement.
+- **resurfaced** — a waiting task whose `defer` has elapsed; due for a decision (computed).
+- **archive** — flat store for closed (done/dropped) tasks.
+- **trash** — flat store for deleted tasks; restorable.
+- **the contract** — the `:contract` DTOs / `export` JSON shape shared by CLI and UI; field
+  names mirror the stored vocabulary, never UI labels (ADR-008).

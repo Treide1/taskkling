@@ -28,7 +28,7 @@ public enum class Priority(public val wire: String) {
 }
 
 /**
- * One node = one task: the **stored** fields only (PRD §8.1). Computed
+ * One task = one markdown file: the **stored** fields only (PRD §8.1). Computed
  * attributes (ready/blocked/…) are derived at read time and never live here.
  * Datetimes are canonical ISO-8601 UTC strings (PRD §8.1, §11).
  */

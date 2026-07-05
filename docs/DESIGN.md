@@ -22,7 +22,7 @@ mutation flow, discovery), see PRD §6.3 and §13.
 3. **State is color; color is state.** Each task renders in exactly one *primary state*, and the
    state palette is the only saturated color on screen (plus the single accent for selection).
    If something is vivid, it means something.
-4. **Focus by dimming, not by zooming.** Selecting a node highlights its neighborhood (the node,
+4. **Focus by dimming, not by zooming.** Selecting a card highlights its neighborhood (the card,
    its blockers, its dependents, the edges between them) and *dims everything else*. The graph
    never rearranges under the user.
 5. **Density over whitespace.** A card shows id, title, and a full row of metadata tags in
@@ -73,8 +73,8 @@ own color token).
 | state | hex | notes |
 |------------|-----------|--------------------------------------------|
 | `ready` | `#3fb950` | green — actionable now |
-| `blocked` | `#f85149` | red — unmet dependencies |
-| `waiting` | `#d29922` | amber — waiting on external |
+| `blocked` | `#f85149` | red — blocked by unmet tasks |
+| `waiting` | `#d29922` | amber — waiting on an external requirement |
 | `deferred` | `#58a6ff` | blue — snoozed |
 | `done` | `#6e7681` | gray — completed |
 | `dropped` | `#484f58` | darker gray — abandoned |
@@ -118,7 +118,7 @@ whose fill is too dark: it uses light text (`#c9d1d9`).
 - Clicking empty canvas clears the selection (a background drag past the ~3px slop is a
   pan, not a click).
 
-## 6. Task cards (nodes)
+## 6. Task cards
 
 Geometry & resting look:
 
@@ -167,9 +167,9 @@ Edges point **from a blocker to the task it blocks** (upstream → downstream, l
 Small rounded capsules, radius 10, padding ~1×7, size 10.
 
 - **Tag (outline)**: `panel2` fill, 1px `line` border, `muted` text. Prefixes carry meaning:
-  `#` thread, `⛓ n` dependency count, `⏳ date` defer, `⌛ text` waiting-on.
-- **Card tag order** (fixed): state pill, `#thread`, priority, `⛓ deps`, due/overdue,
-  `⏳ defer`, `⌛ waiting-on`.
+  `#` thread, `⛓ n` blocked-by count, `⏳ date` defer, `⌛ text` external requirement.
+- **Card tag order** (fixed): state pill, `#thread`, priority, `⛓ blocked-by`, due/overdue,
+  `⏳ defer`, `⌛ external requirement`.
 - **State pill (filled)**: primary-state color fill, no border, bold `bg`-colored text (see §3
   for the `dropped` exception).
 - **Semantic tag colors** (outline variant, tinted text + darker tinted border):
@@ -190,9 +190,13 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
   + faint context suffix), a `muted` "generated …" timestamp from the export, and count chips
   for ready / blocked / waiting / done pushed to the right.
 - **Detail panel** (right, **320 wide**, `panel`, 1px `line` left border, padding 16):
-  - Empty state: centered `muted` hint ("Select a node to inspect…").
-  - Selected: title → id → labeled fields (status, thread, priority, waiting on, due, defer,
-    created, closed) → computed flag chips → reference lists (depends / blockers / dependents).
+  - Empty state: centered `muted` hint ("Select a task to inspect…").
+  - Selected: title → id → labeled fields (status, thread, priority, external requirement, due,
+    defer, created, closed) → computed flag chips → reference lists (blocked by / blocker of).
+    "blocked by" lists **every** upstream task; ids whose task is already `done` render
+    *resolved* — `muted` + struck through, still clickable — while unmet ones stay `accent`.
+    "blocker of" lists the downstream dependents. (UI labels are blocker-vocabulary
+    translations of the contract's `depends`/`blockers`/`dependents` — DOMAIN_LANGUAGE §7.)
   - Absent values render as `faint` "—" rather than disappearing, so the panel shape is stable.
   - **Reference ids are links**: `accent` colored, click navigates the selection to that task
     AND pans the canvas to centre its card (150ms, clamped to the scroll bounds). Plain card

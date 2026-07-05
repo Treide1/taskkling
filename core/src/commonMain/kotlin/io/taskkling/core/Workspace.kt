@@ -49,8 +49,8 @@ public data class Config(
         /** The documented default `config.toml` written by `init` (PRD §14). */
         public fun defaultToml(): String =
             """
-            tasks_dir       = "tasks"      # active-node directory (archive/ and trash/ are subdirs)
-            id_prefix       = "t-"         # node id prefix
+            tasks_dir       = "tasks"      # active-task directory (archive/ and trash/ are subdirs)
+            id_prefix       = "t-"         # task id prefix
             granularity     = "minute"     # day | minute | second (display/working; deferred feature)
             default_thread  = ""           # applied by `add` when --thread omitted
             lock_timeout    = 30           # seconds before a dead-PID lock is reclaimable
@@ -94,7 +94,7 @@ public class Workspace(
             .toSet()
     }
 
-    /** The `.md` file for node [id] in [dir] (`<id>--*.md`), or null if absent. */
+    /** The `.md` file for task [id] in [dir] (`<id>--*.md`), or null if absent. */
     public fun fileFor(dir: Path, id: String): Path? {
         val fs = FileSystem.SYSTEM
         if (!fs.exists(dir)) return null
@@ -111,9 +111,9 @@ public class Workspace(
     /**
      * What `uninstall --purge` erases (ADR-004; t-qoyn): the meta dir plus the
      * resolved [tasksDir] when that lives elsewhere. The DEFAULT layout
-     * (`tasks_dir = "tasks"`) keeps authored nodes OUTSIDE `.taskkling/`, so
+     * (`tasks_dir = "tasks"`) keeps authored tasks OUTSIDE `.taskkling/`, so
      * purging the meta dir alone strands them; `archive/` and `trash/` are
-     * subdirs of [tasksDir], so covering it covers every authored node.
+     * subdirs of [tasksDir], so covering it covers every authored task.
      * Guarded lexically: a `tasks_dir` that resolves to the workspace root
      * itself, or escapes it, is never purged ([coversTasks] = false) — a
      * hand-edited `tasks_dir = "."` must not turn `--purge` into `rm -rf <root>`.
