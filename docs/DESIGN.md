@@ -112,7 +112,12 @@ whose fill is too dark: it uses light text (`#c9d1d9`).
   texture and a sense of scale while staying far below content contrast.
 - The canvas scrolls in both axes; the grid pattern is fixed to graph space (scrolls with
   content), not to the viewport.
-- Clicking empty canvas clears the selection.
+- **Panning**: an LMB drag that starts on the background (not on a card) pans the canvas —
+  pointer delta = scroll delta (1:1), no inertia, clamped to the same bounds as wheel
+  scrolling. Cursor: grab (hand) over the background at rest, grabbing (move) while
+  dragging. Drags that start on a card do nothing; card click/hover is untouched.
+- Clicking empty canvas clears the selection (a background drag past the ~3px slop is a
+  pan, not a click).
 
 ## 6. Task cards (nodes)
 
@@ -256,6 +261,6 @@ No entrance animations, no layout animation, nothing longer than 200ms.
 
 - **Light theme.** The language is dark-first; a light variant is a deliberate later project,
   not a toggle to improvise.
-- Pan/zoom gestures, edge routing around cards, crossing minimisation — layout refinements
-  tracked as tasks, not design debt.
+- Zoom gestures, edge routing around cards, crossing minimisation — layout refinements
+  tracked as tasks, not design debt. (Drag-to-pan shipped in §5.)
 - Any UI-side derivation beyond §2 precedence.

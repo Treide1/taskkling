@@ -3,8 +3,12 @@ package io.taskkling.ui
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -18,13 +22,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -39,7 +44,10 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.text.font.FontWeight
@@ -56,6 +64,10 @@ import kotlin.math.hypot
  * The canvas: a scrolling, dotted-grid surface of task cards over a layer of
  * S-curve dependency edges (DESIGN §5–§7). Clicking empty canvas clears the
  * selection (§1.4); selecting a node dims everything outside its neighbourhood.
+ * An LMB drag that starts on the background pans the canvas 1:1 (§5).
+ *
+ * [hScroll]/[vScroll] are hoisted to the caller so wheel scrolling, drag
+ * panning, and programmatic pan-to-card all mutate the same clamped state.
  */
 @Composable
 internal fun GraphPane(
@@ -63,6 +75,8 @@ internal fun GraphPane(
     selectedId: String?,
     onSelect: (String) -> Unit,
     onClearSelection: () -> Unit,
+    hScroll: ScrollState,
+    vScroll: ScrollState,
     modifier: Modifier = Modifier,
 ) {
     val gl = remember(export) { layout(export.tasks) }
@@ -100,11 +114,57 @@ internal fun GraphPane(
     // after measure, and any re-measure re-runs the draw that reads the map.
     val cardRects = remember { HashMap<String, CardRect>() }
 
+    // True while a background drag is panning; drives the grab→grabbing cursor swap.
+    var panning by remember { mutableStateOf(false) }
+
     Box(
         modifier
             .background(Tk.bg)
-            .horizontalScroll(rememberScrollState())
-            .verticalScroll(rememberScrollState()),
+            // Grab cursor over the background at rest, grabbing while panning (§5). Cards
+            // override with their own hand cursor — except mid-pan, where crossing a card
+            // means nothing, so the override flag pins the grabbing cursor everywhere.
+            .pointerHoverIcon(if (panning) GRABBING_CURSOR else GRAB_CURSOR, overrideDescendants = panning)
+            .pointerInput(hScroll, vScroll) {
+                // Pan on LMB background drag (§5): pointer delta == scroll delta (1:1, no
+                // inertia), through the same clamped ScrollStates the wheel mutates. The
+                // gesture claims a press only when it lands OUTSIDE every card — hit-tested
+                // against the measured rects the edge layer already uses — so cards keep
+                // their click/hover behaviour untouched.
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
+                    // The gesture sees viewport coordinates; the rects live in content px.
+                    val inContent = down.position + Offset(hScroll.value.toFloat(), vScroll.value.toFloat())
+                    if (cardRects.values.any { inContent in it }) return@awaitEachGesture
+                    // A few px of slop before committing keeps click-to-clear (§1.4) alive
+                    // under mouse jitter; the accrued delta is replayed on commit, so the
+                    // total pan stays 1:1 with the pointer.
+                    val slop = PAN_SLOP.toPx()
+                    var acc = Offset.Zero
+                    try {
+                        drag(down.id) { change ->
+                            val delta = change.positionChange()
+                            if (!panning) {
+                                acc += delta
+                                if (acc.getDistance() > slop) {
+                                    panning = true
+                                    hScroll.dispatchRawDelta(-acc.x)
+                                    vScroll.dispatchRawDelta(-acc.y)
+                                    change.consume()
+                                }
+                            } else {
+                                hScroll.dispatchRawDelta(-delta.x)
+                                vScroll.dispatchRawDelta(-delta.y)
+                                change.consume()
+                            }
+                        }
+                    } finally {
+                        panning = false
+                    }
+                }
+            }
+            .horizontalScroll(hScroll)
+            .verticalScroll(vScroll),
     ) {
         Layout(
             content = {
@@ -182,7 +242,16 @@ private class PlacedNode(val task: TaskDto, val pos: NodePos)
 private class CardRect(val left: Float, val top: Float, val width: Float, val height: Float) {
     val right: Float get() = left + width
     val centerY: Float get() = top + height / 2f
+    operator fun contains(p: Offset): Boolean =
+        p.x >= left && p.x < left + width && p.y >= top && p.y < top + height
 }
+
+/** Pan cursors (§5): AWT has no grab/grabbing pair, so hand stands in for grab, move for grabbing. */
+private val GRAB_CURSOR = PointerIcon(java.awt.Cursor(java.awt.Cursor.HAND_CURSOR))
+private val GRABBING_CURSOR = PointerIcon(java.awt.Cursor(java.awt.Cursor.MOVE_CURSOR))
+
+/** Pointer travel before a background press commits to panning instead of a click (§1.4 vs §5). */
+private val PAN_SLOP = 3.dp
 
 /** Dotted grid: 1dp-radius `dot` circles on a 26dp grid, anchored at `(1,1)` (DESIGN §5). */
 private fun DrawScope.drawDottedGrid() {

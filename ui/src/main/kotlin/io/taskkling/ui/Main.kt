@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
@@ -91,6 +92,11 @@ private fun App(client: CliClient) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    // The canvas scroll state lives here, above GraphPane, so wheel scrolling, drag
+    // panning, and programmatic pan-to-card all share one clamped position.
+    val hScroll = rememberScrollState()
+    val vScroll = rememberScrollState()
+
     fun refresh(next: ExportDto) {
         export = next
         error = null
@@ -128,6 +134,8 @@ private fun App(client: CliClient) {
                         selectedId = selectedId,
                         onSelect = { selectedId = it },
                         onClearSelection = { selectedId = null },
+                        hScroll = hScroll,
+                        vScroll = vScroll,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
