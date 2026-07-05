@@ -180,11 +180,17 @@ private abstract class MutationCommand(name: String, description: String) : TkCo
         description = "Emit the full post-mutation export instead of the id",
     ).default(false)
 
-    fun emit(result: MutationResult) {
+    /**
+     * Emit the mutation's result: the full export when `--export-on-success`, else the
+     * affected id. `--quiet` suppresses the id echo — except when [idIsEssential], the
+     * case where the id *is* the primary result (`add` mints a fresh id you can't know
+     * beforehand and capture to wire deps), so it prints even under `-q`.
+     */
+    fun emit(result: MutationResult, idIsEssential: Boolean = false) {
         val export = result.export
         when {
             export != null -> println(json.encodeToString(ExportDto.serializer(), export))
-            !quiet -> println(result.task.id)
+            !quiet || idIsEssential -> println(result.task.id)
         }
     }
 }
@@ -234,6 +240,7 @@ private class AddCmd : MutationCommand("add", "Create a task; prints the new id"
                 ),
                 exportAfter = exportOnSuccess,
             ),
+            idIsEssential = true,
         )
     }
 }
