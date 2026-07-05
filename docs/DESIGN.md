@@ -22,9 +22,11 @@ mutation flow, discovery), see PRD §6.3 and §13.
 3. **State is color; color is state.** Each task renders in exactly one *primary state*, and the
    state palette is the only saturated color on screen (plus the single accent for selection).
    If something is vivid, it means something.
-4. **Focus by dimming, not by zooming.** Selecting a card highlights its neighborhood (the card,
-   its blockers, its dependents, the edges between them) and *dims everything else*. The graph
-   never rearranges under the user.
+4. **Focus by dimming, not by zooming.** The highlighted card's **Star** — the card, its
+   blockers, its dependents, the edges between them — stays at full prominence and *everything
+   else dims*. Without a pin the selected card is highlighted; **pinning makes the focus
+   sticky**: the pinned card stays highlighted until unpinned, while selection moves freely
+   (DOMAIN_LANGUAGE §7). The graph never rearranges under the user.
 5. **Density over whitespace.** A card shows id, title, and a full row of metadata tags in
    ~96px. Field labels are small uppercase captions. This is a power tool; respect the user's
    screen real estate.
@@ -115,8 +117,8 @@ whose fill is too dark: it uses light text (`#c9d1d9`).
   pointer delta = scroll delta (1:1), no inertia, clamped to the same bounds as wheel
   scrolling. Cursor: grab (hand) over the background at rest, grabbing (move) while
   dragging. Drags that start on a card do nothing; card click/hover is untouched.
-- Clicking empty canvas clears the selection (a background drag past the ~3px slop is a
-  pan, not a click).
+- Clicking empty canvas clears the selection — never the pin (a background drag past the
+  ~3px slop is a pan, not a click).
 
 ## 6. Task cards
 
@@ -126,16 +128,23 @@ Geometry & resting look:
 - Surface `panel`, corner radius **7**, border **1px `line`** — except the **left edge: a 4px
   accent border** in the primary-state color. The accent edge is the card's loudest state cue.
 - Padding: 8 vertical, 10 horizontal.
-- Content, top-down: id (11, `faint`) → title (12.5, `txt`, wraps) → wrapping tag row (gap 4).
+- Content, top-down: id row — id (11, `faint`) left, a fixed **14×14 pin slot** right →
+  title (12.5, `txt`, wraps) → wrapping tag row (gap 4).
 
 Card states (composable, in addition to primary-state accent):
 
 | state | treatment |
 |------------|----------------------------------------------------------------------------|
-| hover | lift: translate **y −1px** + shadow `0 4px 18px rgba(0,0,0,.5)` |
+| hover | lift: translate **y −1px** + shadow `0 4px 18px rgba(0,0,0,.5)`; outline pin (`muted`) reveals in the pin slot of unpinned cards |
 | selected | ring: **2px `accent`** outline + deeper shadow `0 6px 22px rgba(0,0,0,.55)` |
-| dimmed | whole card at **28% opacity** (when a selection excludes it) |
+| pinned | filled pin (`accent`) always visible in the pin slot; the card is permanently inside the highlighted Star |
+| dimmed | whole card at **28% opacity** (when outside the highlighted Star). A selected card outside Star(pinned) keeps its ring *at* the dimmed alpha — ring stays, dim stays |
 | done/dropped | title in `muted`; dropped additionally struck through |
+
+**Pinning** (single pin, session-only — never persisted): clicking the outline pin pins the
+card *and* selects it; pinning while another card is pinned transfers the pin. Clicking the
+filled pin unpins and leaves the selection untouched. The pin slot is a fixed reservation so
+the hover reveal never re-measures the card.
 
 Cursor: pointer/hand over cards.
 
@@ -157,9 +166,10 @@ Edges point **from a blocker to the task it blocks** (upstream → downstream, l
 - **Arrowhead at the target end**: small solid triangle (≈8px), tip at `(x2, y2)`, oriented
   along the path tangent, same color as the stroke, drawn over the stroke's end so the joint
   is seamless (the stroke itself stops at the head's base).
-- Resting: stroke `line`, width **1.6**. Highlighted (touches the selection): stroke `accent`,
-  width **2.4**, arrowhead `accent`.
-- When a selection is active, non-highlighted edges drop to **20% opacity**.
+- Resting: stroke `line`, width **1.6**. Highlighted (touches the highlighted card — the
+  pinned card if any, else the selected one): stroke `accent`, width **2.4**, arrowhead
+  `accent`.
+- While a card is highlighted, non-highlighted edges drop to **20% opacity**.
 - Edges render *under* cards and never capture pointer input.
 
 ## 8. Tags, pills, chips

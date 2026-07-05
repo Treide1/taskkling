@@ -15,21 +15,27 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -63,8 +69,14 @@ import kotlin.math.hypot
 /**
  * The canvas: a scrolling, dotted-grid surface of task cards over a layer of
  * S-curve dependency edges (DESIGN §5–§7). Clicking empty canvas clears the
- * selection (§1.4); selecting a node dims everything outside its neighbourhood.
- * An LMB drag that starts on the background pans the canvas 1:1 (§5).
+ * selection — never the pin (§1.4, §5); highlighting dims everything outside
+ * the highlighted node's Star. An LMB drag that starts on the background pans
+ * the canvas 1:1 (§5).
+ *
+ * [selectedId] drives only the selection ring; [highlightedId] (the pinned
+ * node if any, else the selected one — resolved by the caller) drives the
+ * Star dim and the hot edges, so a selected card outside Star(pinned) keeps
+ * its ring at the dimmed alpha (§6).
  *
  * [hScroll]/[vScroll] are hoisted to the caller so wheel scrolling, drag
  * panning, and programmatic pan-to-card all mutate the same clamped state.
@@ -75,7 +87,10 @@ import kotlin.math.hypot
 internal fun GraphPane(
     export: ExportDto,
     selectedId: String?,
+    highlightedId: String?,
+    pinnedId: String?,
     onSelect: (String) -> Unit,
+    onPinToggle: (String) -> Unit,
     onClearSelection: () -> Unit,
     hScroll: ScrollState,
     vScroll: ScrollState,
@@ -96,19 +111,20 @@ internal fun GraphPane(
             .sortedWith(compareBy({ it.pos.layer }, { it.pos.indexInLayer }))
     }
 
-    // Highlight neighbourhood: the selected node plus every node one edge away.
-    val neighborhood = remember(selectedId, gl) {
-        if (selectedId == null) emptySet() else buildSet {
-            add(selectedId)
+    // Star(highlighted) (DOMAIN_LANGUAGE §7): the highlighted node plus every node
+    // one edge away — the subgraph kept at full prominence while the rest dims.
+    val star = remember(highlightedId, gl) {
+        if (highlightedId == null) emptySet() else buildSet {
+            add(highlightedId)
             for (e in gl.edges) {
-                if (e.from == selectedId) add(e.to)
-                if (e.to == selectedId) add(e.from)
+                if (e.from == highlightedId) add(e.to)
+                if (e.to == highlightedId) add(e.from)
             }
         }
     }
 
-    // Drives the fade of non-highlighted edges while a selection is active (§7, §11).
-    val dimFraction by animateFloatAsState(if (selectedId != null) 1f else 0f, tween(150))
+    // Drives the fade of non-highlighted edges while a highlight is active (§7, §11).
+    val dimFraction by animateFloatAsState(if (highlightedId != null) 1f else 0f, tween(150))
     val canvasClick = remember { MutableInteractionSource() }
 
     // True while a background drag is panning; drives the grab→grabbing cursor swap.
@@ -169,8 +185,10 @@ internal fun GraphPane(
                     NodeCard(
                         task = p.task,
                         selected = p.task.id == selectedId,
-                        dimmed = selectedId != null && p.task.id !in neighborhood,
+                        pinned = p.task.id == pinnedId,
+                        dimmed = highlightedId != null && p.task.id !in star,
                         onSelect = { onSelect(p.task.id) },
+                        onPinToggle = { onPinToggle(p.task.id) },
                     )
                 }
             },
@@ -183,7 +201,7 @@ internal fun GraphPane(
                     for (e in gl.edges) {
                         val a = cardRects[e.from] ?: continue
                         val b = cardRects[e.to] ?: continue
-                        val highlighted = selectedId != null && (e.from == selectedId || e.to == selectedId)
+                        val highlighted = highlightedId != null && (e.from == highlightedId || e.to == highlightedId)
                         val color = if (highlighted) Tk.accent else Tk.line
                         val strokeW = if (highlighted) 2.4.dp.toPx() else 1.6.dp.toPx()
                         val alpha = if (highlighted) 1f else 1f - 0.8f * dimFraction
@@ -324,15 +342,18 @@ private fun DrawScope.drawArrowhead(
 /**
  * A task card (DESIGN §6): 210 wide, min-height 96, `panel` surface with a 4dp
  * left accent border in the primary-state colour. Composable states — hover lift,
- * selection ring, neighbourhood dim — layer on top of that resting look.
+ * selection ring, Star dim, pin — layer on top of that resting look. The id row
+ * carries the pin toggle: outline on hover, filled always while [pinned].
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NodeCard(
     task: TaskDto,
     selected: Boolean,
+    pinned: Boolean,
     dimmed: Boolean,
     onSelect: () -> Unit,
+    onPinToggle: () -> Unit,
 ) {
     val state = stateOf(task)
     val interaction = remember { MutableInteractionSource() }
@@ -393,7 +414,30 @@ private fun NodeCard(
             .padding(vertical = 8.dp, horizontal = 10.dp),
     ) {
         Column {
-            Text(task.id, fontSize = 11.sp, color = Tk.faint)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(task.id, fontSize = 11.sp, color = Tk.faint)
+                Spacer(Modifier.weight(1f))
+                // Fixed 14dp slot so the hover reveal never re-measures the card (§6,
+                // §11): filled pin always visible while pinned, outline pin on hover
+                // elsewhere. The pin's own clickable consumes the press, so toggling
+                // never falls through to the card's select.
+                Box(Modifier.size(14.dp)) {
+                    if (pinned || hovered) {
+                        Icon(
+                            imageVector = if (pinned) PinIcons.Filled else PinIcons.Outline,
+                            contentDescription = if (pinned) "unpin" else "pin",
+                            tint = if (pinned) Tk.accent else Tk.muted,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerHoverIcon(PointerIcon.Hand)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { onPinToggle() },
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(2.dp))
             Text(
                 task.title,

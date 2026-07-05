@@ -95,6 +95,9 @@ fun main() {
 private fun App(client: CliClient) {
     var export by remember { mutableStateOf<ExportDto?>(null) }
     var selectedId by remember { mutableStateOf<String?>(null) }
+    // The pinned task (DESIGN §6): stays highlighted while selection moves freely.
+    // Session-only UI state — never persisted; the CLI stays the single write path.
+    var pinnedId by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     // True while a CLI call is in flight; the panel's mutation buttons render disabled
     // off it, so a double-click can't queue a second subprocess (t-t36o).
@@ -131,6 +134,7 @@ private fun App(client: CliClient) {
         export = next
         error = null
         if (selectedId != null && next.tasks.none { it.id == selectedId }) selectedId = null
+        if (pinnedId != null && next.tasks.none { it.id == pinnedId }) pinnedId = null
     }
 
     LaunchedEffect(Unit) {
@@ -170,7 +174,21 @@ private fun App(client: CliClient) {
                     else -> GraphPane(
                         export = current,
                         selectedId = selectedId,
+                        // Highlight source: the pin wins; without one, selection highlights.
+                        highlightedId = pinnedId ?: selectedId,
+                        pinnedId = pinnedId,
                         onSelect = { selectedId = it },
+                        // Pinning selects too (one click = full focus); a second click on
+                        // the pinned card's pin unpins and leaves selection untouched.
+                        onPinToggle = { id ->
+                            if (pinnedId == id) {
+                                pinnedId = null
+                            } else {
+                                pinnedId = id
+                                selectedId = id
+                            }
+                        },
+                        // Background click clears the selection, never the pin (§5).
                         onClearSelection = { selectedId = null },
                         hScroll = hScroll,
                         vScroll = vScroll,
