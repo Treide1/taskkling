@@ -135,6 +135,20 @@ Vocabulary of the rendered surface (visual spec: `docs/DESIGN.md`):
 - **state pill / tag / flag chip / count chip / legend** — per DESIGN §8/§9.
 - **selection / dimming / pan** — focus by dimming, never rearranging.
 
+Pinning & focus:
+
+- **Star(A)** — internal-only notation: the star-topology subgraph centred on node A — A,
+  its upstream neighbours (`depends`), its downstream neighbours (`dependents`), and the
+  edges between them. Graph-math vocabulary (§5); never user-facing.
+- **highlighted** — the node whose Star is visually prominent while everything else dims.
+  Exactly one highlight source: the pinned node if any, else the selected node.
+- **pinned** — the node that stays highlighted until unpinned. Single pin; pinning another
+  node transfers it. Session-only UI state — never persisted to task files (the CLI stays
+  the single write path).
+- **selected** — the node whose content the detail panel shows. Selection and pin are
+  orthogonal: a selected node outside Star(pinned) keeps its selection ring at the dimmed
+  alpha.
+
 Label mapping (contract → UI), the render-time translation of §3/§4:
 
 | contract | UI label | rendering rule |
