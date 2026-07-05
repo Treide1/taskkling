@@ -1,9 +1,16 @@
-# Line-ending policy. POSIX shell scripts and the `./taskkling` launcher MUST stay
-# LF on every platform: a CRLF byte in a `#!/bin/sh` shebang breaks the interpreter,
-# and `curl | sh` runs install.sh under /bin/sh regardless of the checkout's autocrlf.
+# Line-ending policy: LF everywhere, in the index AND the working tree, on every
+# platform. The explicit catch-all overrides each clone's core.autocrlf, so checkouts
+# are deterministic and tools that write LF never trigger conversion warnings.
+# (text=auto leaves auto-detected binaries alone.)
+*           text=auto eol=lf
+
+# POSIX shell scripts and the `./taskkling` launcher MUST stay LF: a CRLF byte in a
+# `#!/bin/sh` shebang breaks the interpreter, and `curl | sh` runs install.sh under
+# /bin/sh regardless of the checkout. (Covered by the catch-all; kept explicit.)
 *.sh        text eol=lf
 /taskkling  text eol=lf
 
-# Windows-only scripts keep CRLF.
+# Windows-only scripts keep CRLF (cmd.exe batch parsing has LF edge cases).
 *.cmd       text eol=crlf
+*.bat       text eol=crlf
 *.ps1       text eol=crlf
