@@ -410,7 +410,7 @@ private fun NodeCard(
     }
 }
 
-/** The card's wrapping metadata row (DESIGN §6/§8), in the spike's order. */
+/** The card's wrapping metadata row, in the fixed DESIGN §8 tag order. */
 @Composable
 private fun CardTags(task: TaskDto, state: TaskState) {
     StatePill(state)

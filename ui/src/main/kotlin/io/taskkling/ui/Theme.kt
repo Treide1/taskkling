@@ -17,7 +17,7 @@ import io.taskkling.contract.TaskDto
 /**
  * The one place the DESIGN.md §3 tokens live (PRD §13, DESIGN §12). Every colour
  * on screen resolves through [Tk] — no hex literals are scattered through the
- * composables. Names mirror the spike's CSS custom properties 1:1 so the two
+ * composables. Names match the DESIGN §3 token names 1:1 so code and contract
  * stay auditable against each other.
  */
 public object Tk {
@@ -70,9 +70,9 @@ public enum class TaskState(public val label: String, public val color: Color) {
 }
 
 /**
- * Primary-state precedence, first match wins (DESIGN §2, mirrors the spike's
- * `stateOf()`). This is the *only* semantic derivation the UI performs — a pure
- * presentation choice; every other field comes straight from `taskkling export`.
+ * Primary-state precedence, first match wins (DESIGN §2). This is the *only*
+ * semantic derivation the UI performs — a pure presentation choice; every other
+ * field comes straight from `taskkling export`.
  */
 public fun stateOf(t: TaskDto): TaskState = when {
     t.status == "done" -> TaskState.DONE
@@ -91,7 +91,7 @@ public fun pillTextColor(state: TaskState): Color =
 /** ISO-8601 → `YYYY-MM-DD` (DESIGN date tags). */
 public fun fmtDate(iso: String): String = iso.take(10)
 
-/** ISO-8601 → `YYYY-MM-DD HH:MM UTC`, dropping seconds (mirrors the spike's `fmtDateTime`). */
+/** ISO-8601 → `YYYY-MM-DD HH:MM UTC`, dropping seconds (header/panel timestamps, DESIGN §9). */
 public fun fmtDateTime(iso: String): String =
     iso.replace("T", " ").replace(Regex(":\\d\\dZ$"), "").replace("Z", "") + " UTC"
 

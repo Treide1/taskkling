@@ -1,10 +1,10 @@
 # taskkling — design principles & visual language
 
-This document is the canonical description of taskkling's visual language. It was extracted
-from **`spike/index.html`**, the reference implementation of the look: a dark, terminal-adjacent
-graph view. The Compose Desktop app (`:ui`) implements this language natively; the spike stays
-the quickest place to *see* it. When the two disagree, the spike's rendered output is the
-reference and this document is the contract — fix whichever drifted.
+This document is the canonical description of taskkling's visual language: a dark,
+terminal-adjacent graph view. The Compose Desktop app (`:ui`) implements it natively; when
+the app and this document disagree, this document is the contract — fix the app, or amend
+the contract deliberately. (Origin: extracted from the throwaway `spike/index.html`
+reference implementation, since untracked.)
 
 Scope: visual + interaction design of the graph UI. For *what* the UI does (pure CLI client,
 mutation flow, discovery), see PRD §6.3 and §13.
@@ -37,7 +37,7 @@ mutation flow, discovery), see PRD §6.3 and §13.
 ## 2. Primary state & precedence
 
 A task's *primary state* drives its accent border, state pill, and legend bucket. Precedence
-(first match wins), mirroring the spike's `stateOf()`:
+(first match wins), implemented as the UI's `stateOf()`:
 
 | # | condition | state |
 |---|--------------------------|------------|
@@ -86,9 +86,8 @@ whose fill is too dark: it uses light text (`#c9d1d9`).
 
 ## 4. Typography
 
-- **Family: monospace everywhere.** The spike's stack is `ui-monospace, "Cascadia Code",
-  "SF Mono", Menlo, Consolas, monospace`. In Compose, bundle **JetBrains Mono** (Apache-2.0)
-  as the app font, falling back to `FontFamily.Monospace`. One family, no serif/sans anywhere.
+- **Family: monospace everywhere.** Bundle **JetBrains Mono** (Apache-2.0) as the app font,
+  falling back to `FontFamily.Monospace`. One family, no serif/sans anywhere.
 - **Base: 13px / 1.5 line-height.** The whole UI reads at caption sizes.
 
 | element | size | weight / treatment |
@@ -169,6 +168,8 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
 
 - **Tag (outline)**: `panel2` fill, 1px `line` border, `muted` text. Prefixes carry meaning:
   `#` thread, `⛓ n` dependency count, `⏳ date` defer, `⌛ text` waiting-on.
+- **Card tag order** (fixed): state pill, `#thread`, priority, `⛓ deps`, due/overdue,
+  `⏳ defer`, `⌛ waiting-on`.
 - **State pill (filled)**: primary-state color fill, no border, bold `bg`-colored text (see §3
   for the `dropped` exception).
 - **Semantic tag colors** (outline variant, tinted text + darker tinted border):
@@ -240,7 +241,7 @@ No entrance animations, no layout animation, nothing longer than 200ms.
 
 ## 12. Compose mapping notes
 
-- **Units**: treat spike px as `dp` (text: `sp`) 1:1.
+- **Units**: treat this document's px values as `dp` (text: `sp`) 1:1.
 - **Theme**: define the §3 tokens once (e.g. an immutable `TaskklingTheme` object / CompositionLocal).
   Don't scatter hex literals through composables, and don't fight Material defaults — the
   Material theme is at most a carrier for these colors.

@@ -144,7 +144,8 @@ Compose). It is a **pure CLI client (Option A)**:
 - Locates the binary via `PATH`, overridable by config.
 
 An early, throwaway **`index.html` spike** (read-only: render an `export` JSON dump, no callbacks)
-is the first visible milestone, built while only the CLI exists.
+was the first visible milestone, built while only the CLI existed. Its look was later codified
+as **`docs/DESIGN.md`** — the canonical visual language — and the spike itself is untracked.
 
 ### 6.4 Data flow
 
@@ -461,7 +462,8 @@ drift.
 - **All mutations** go through `taskkling <verb> … --export-on-success`; the UI refreshes from the
   returned export and may diff old-vs-new **client-side** for incremental updates.
 - **Read-only `index.html` spike** first (render an `export` dump; no callbacks) as the early
-  visible result while only the CLI exists.
+  visible result while only the CLI existed — since untracked; its visual language lives on
+  as `docs/DESIGN.md`.
 - Graph layout: a layered DAG layout (Sugiyama-style); threads shown as visual clusters/colour.
   *(Layout-library choice is an implementation detail, tracked under §17/§18.)*
 - Binary discovery: `PATH`, overridable via config.
