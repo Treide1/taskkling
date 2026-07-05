@@ -86,7 +86,7 @@ whose fill is too dark: it uses light text (`#c9d1d9`).
 
 ## 4. Typography
 
-- **Family: monospace everywhere.** Bundle **JetBrains Mono** (Apache-2.0) as the app font,
+- **Family: monospace everywhere.** Bundle **JetBrains Mono** (OFL-1.1) as the app font,
   falling back to `FontFamily.Monospace`. One family, no serif/sans anywhere.
 - **Base: 13px / 1.5 line-height.** The whole UI reads at caption sizes.
 

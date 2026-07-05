@@ -11,6 +11,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.platform.Font
 import androidx.compose.ui.unit.sp
 import io.taskkling.contract.TaskDto
 
@@ -52,8 +54,15 @@ public object Tk {
     val droppedPillText = Color(0xFFC9D1D9)
 }
 
-/** Monospace everywhere (DESIGN §4). JetBrains Mono bundling is a tracked follow-up. */
-public val Mono: FontFamily = FontFamily.Monospace
+/**
+ * Monospace everywhere (DESIGN §4): bundled JetBrains Mono (OFL-1.1, license ships
+ * beside the TTFs in resources/fonts/). Only the two weights the UI uses are bundled;
+ * Skia falls back to a system font for glyphs the family lacks.
+ */
+public val Mono: FontFamily = FontFamily(
+    Font(resource = "fonts/JetBrainsMono-Regular.ttf", weight = FontWeight.Normal),
+    Font(resource = "fonts/JetBrainsMono-Bold.ttf", weight = FontWeight.Bold),
+)
 
 /**
  * A task's **primary state** (DESIGN §2). Drives the card's accent border, its
