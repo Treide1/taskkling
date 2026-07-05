@@ -194,7 +194,9 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
   - Selected: title → id → labeled fields (status, thread, priority, waiting on, due, defer,
     created, closed) → computed flag chips → reference lists (depends / blockers / dependents).
   - Absent values render as `faint` "—" rather than disappearing, so the panel shape is stable.
-  - **Reference ids are links**: `accent` colored, click navigates the selection to that task.
+  - **Reference ids are links**: `accent` colored, click navigates the selection to that task
+    AND pans the canvas to centre its card (150ms, clamped to the scroll bounds). Plain card
+    clicks on the canvas never pan.
   - Mutation actions (done / drop / reopen) live here; style them as quiet outline buttons
     (`panel2` fill, `line` border, `txt` label) — utilitarian, not primary-colored. While a
     mutation is in flight they render disabled (0.4 alpha, no hand cursor); the UI never

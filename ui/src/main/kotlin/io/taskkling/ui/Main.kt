@@ -1,5 +1,6 @@
 package io.taskkling.ui
 
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -101,9 +102,30 @@ private fun App(client: CliClient) {
     val scope = rememberCoroutineScope()
 
     // The canvas scroll state lives here, above GraphPane, so wheel scrolling, drag
-    // panning, and programmatic pan-to-card all share one clamped position.
+    // panning, and programmatic pan-to-card all share one clamped position. The measured
+    // card rects are hoisted alongside: GraphPane's measure pass fills the map, pan-to-card
+    // below reads a target's centre from it.
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
+    val cardRects = remember { HashMap<String, CardRect>() }
+
+    // Ref-id navigation (DESIGN §9): select the target AND centre its card in the
+    // viewport, clamped to the scroll bounds, 150ms on both axes together. Plain card
+    // clicks on the canvas select without panning (§1.4).
+    fun navigateTo(id: String) {
+        selectedId = id
+        val rect = cardRects[id] ?: return
+        scope.launch {
+            launch {
+                val x = (rect.centerX - hScroll.viewportSize / 2f).toInt().coerceIn(0, hScroll.maxValue)
+                hScroll.animateScrollTo(x, tween(150))
+            }
+            launch {
+                val y = (rect.centerY - vScroll.viewportSize / 2f).toInt().coerceIn(0, vScroll.maxValue)
+                vScroll.animateScrollTo(y, tween(150))
+            }
+        }
+    }
 
     fun refresh(next: ExportDto) {
         export = next
@@ -152,6 +174,7 @@ private fun App(client: CliClient) {
                         onClearSelection = { selectedId = null },
                         hScroll = hScroll,
                         vScroll = vScroll,
+                        cardRects = cardRects,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -161,7 +184,7 @@ private fun App(client: CliClient) {
                 error = error,
                 busy = busy,
                 onAction = { verb, id -> mutate(listOf(verb, id)) },
-                onNavigate = { selectedId = it },
+                onNavigate = ::navigateTo,
             )
         }
         Legend()

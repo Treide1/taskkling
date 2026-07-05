@@ -68,6 +68,8 @@ import kotlin.math.hypot
  *
  * [hScroll]/[vScroll] are hoisted to the caller so wheel scrolling, drag
  * panning, and programmatic pan-to-card all mutate the same clamped state.
+ * [cardRects] is hoisted for the same reason: the measure pass below fills it,
+ * and the caller's pan-to-card (§9) reads a target card's centre from it.
  */
 @Composable
 internal fun GraphPane(
@@ -77,6 +79,7 @@ internal fun GraphPane(
     onClearSelection: () -> Unit,
     hScroll: ScrollState,
     vScroll: ScrollState,
+    cardRects: HashMap<String, CardRect>,
     modifier: Modifier = Modifier,
 ) {
     val gl = remember(export) { layout(export.tasks) }
@@ -107,14 +110,6 @@ internal fun GraphPane(
     // Drives the fade of non-highlighted edges while a selection is active (§7, §11).
     val dimFraction by animateFloatAsState(if (selectedId != null) 1f else 0f, tween(150))
     val canvasClick = remember { MutableInteractionSource() }
-
-    // Every card's MEASURED rect in canvas px, filled by the custom Layout's single
-    // measure pass below and read straight back by the edge underlay's `drawBehind`.
-    // One measurement feeds both cards and edges, so an edge can never lag its cards by
-    // a frame. A plain (non-snapshot) map is deliberate: writing it during measure and
-    // reading it during the same frame's draw needs no invalidation — draw always runs
-    // after measure, and any re-measure re-runs the draw that reads the map.
-    val cardRects = remember { HashMap<String, CardRect>() }
 
     // True while a background drag is panning; drives the grab→grabbing cursor swap.
     var panning by remember { mutableStateOf(false) }
@@ -238,11 +233,17 @@ private class PlacedNode(val task: TaskDto, val pos: NodePos)
 
 /**
  * One card's measured geometry in canvas px, produced by [GraphPane]'s measure pass and
- * consumed by the edge underlay (§7). [right]/[centerY] give an S-curve its source and
- * target anchors: the right edge and MEASURED vertical centre of a card (§10).
+ * consumed by the edge underlay (§7), the pan hit-test (§5), and pan-to-card (§9).
+ * [right]/[centerY] give an S-curve its source and target anchors: the right edge and
+ * MEASURED vertical centre of a card (§10). The hoisted map holding these is a plain
+ * (non-snapshot) HashMap deliberately: writing it during measure and reading it during
+ * the same frame's draw needs no invalidation — draw always runs after measure, and any
+ * re-measure re-runs the draw that reads the map. The caller's pan-to-card reads it from
+ * a click handler, which likewise always runs after the frame that measured the cards.
  */
-private class CardRect(val left: Float, val top: Float, val width: Float, val height: Float) {
+internal class CardRect(val left: Float, val top: Float, val width: Float, val height: Float) {
     val right: Float get() = left + width
+    val centerX: Float get() = left + width / 2f
     val centerY: Float get() = top + height / 2f
     operator fun contains(p: Offset): Boolean =
         p.x >= left && p.x < left + width && p.y >= top && p.y < top + height
