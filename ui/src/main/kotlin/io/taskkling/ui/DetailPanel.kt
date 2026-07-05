@@ -14,10 +14,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -25,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -42,44 +45,69 @@ import io.taskkling.contract.TaskDto
  * as a faint "—"), computed-flag chips, clickable reference ids, and the quiet
  * outline mutation buttons wired through [onAction]. While a mutation is in
  * flight ([busy]) the buttons render disabled so actions can't stack.
+ *
+ * Whenever a pin exists but [task] isn't the pinned one — another selection or
+ * the empty state — the pinned-card return FAB floats top-right; clicking it
+ * hands [pinnedId] to [onNavigate] (re-select + pan-to-card).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun DetailPane(
     task: TaskDto?,
+    pinnedId: String?,
     error: String?,
     busy: Boolean,
     onAction: (verb: String, id: String) -> Unit,
     onNavigate: (String) -> Unit,
 ) {
-    val panel = Modifier
-        .width(320.dp)
-        .fillMaxHeight()
-        .background(Tk.panel)
-        .drawBehind {
-            val x = 0.5.dp.toPx()
-            drawLine(Tk.line, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.dp.toPx())
-        }
-
-    if (task == null) {
-        Box(panel.padding(16.dp), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (error != null) {
-                    Text("error: $error", color = Tk.blocked, fontSize = 12.sp, textAlign = TextAlign.Center)
-                    Spacer(Modifier.height(8.dp))
+    Box(
+        Modifier
+            .width(320.dp)
+            .fillMaxHeight()
+            .background(Tk.panel)
+            .drawBehind {
+                val x = 0.5.dp.toPx()
+                drawLine(Tk.line, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.dp.toPx())
+            },
+    ) {
+        if (task == null) {
+            Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (error != null) {
+                        Text("error: $error", color = Tk.blocked, fontSize = 12.sp, textAlign = TextAlign.Center)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Text(
+                        "Select a task to inspect.\nEdges point from a blocker → the task it blocks.",
+                        color = Tk.muted,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                    )
                 }
-                Text(
-                    "Select a task to inspect.\nEdges point from a blocker → the task it blocks.",
-                    color = Tk.muted,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center,
-                )
             }
+        } else {
+            TaskDetails(task, error, busy, onAction, onNavigate)
         }
-        return
+        if (pinnedId != null && pinnedId != task?.id) {
+            PinReturnFab(
+                onClick = { onNavigate(pinnedId) },
+                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+            )
+        }
     }
+}
 
-    Column(panel.padding(16.dp).verticalScroll(rememberScrollState())) {
+/** The selected task's scrolling field list — the panel body of DESIGN §9. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TaskDetails(
+    task: TaskDto,
+    error: String?,
+    busy: Boolean,
+    onAction: (verb: String, id: String) -> Unit,
+    onNavigate: (String) -> Unit,
+) {
+    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         if (error != null) {
             Text("error: $error", color = Tk.blocked, fontSize = 12.sp)
             Spacer(Modifier.height(8.dp))
@@ -174,6 +202,36 @@ private fun RefField(
                 }
             }
         }
+    }
+}
+
+/**
+ * The pinned-card return FAB (DESIGN §9): a small floating rounded-rect card
+ * reading "filled-pin →". Same quiet chrome as the outline buttons but with a
+ * shadow — it floats over the panel instead of sitting in its flow.
+ */
+@Composable
+private fun PinReturnFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(7.dp)
+    Row(
+        modifier
+            .shadow(8.dp, shape, clip = false)
+            .clip(shape)
+            .background(Tk.panel2)
+            .border(1.dp, Tk.line, shape)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(
+            imageVector = PinIcons.Filled,
+            contentDescription = "return to pinned task",
+            tint = Tk.accent,
+            modifier = Modifier.size(13.dp),
+        )
+        Text("→", fontSize = 13.sp, color = Tk.txt)
     }
 }
 

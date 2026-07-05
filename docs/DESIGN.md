@@ -211,6 +211,11 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
   - **Reference ids are links**: `accent` colored, click navigates the selection to that task
     AND pans the canvas to centre its card (150ms, clamped to the scroll bounds). Plain card
     clicks on the canvas never pan.
+  - **Pinned-card return FAB**: while a task is pinned and its content is not on the panel
+    (another selection, or the empty state), a small rounded-rect card — filled pin (`accent`)
+    + "→" — floats at the panel's top-right (`panel2` fill, `line` border, shadow). Clicking
+    it re-selects the pinned task and pans its card back into view (the same navigate as
+    reference links).
   - Mutation actions (done / drop / reopen) live here; style them as quiet outline buttons
     (`panel2` fill, `line` border, `txt` label) — utilitarian, not primary-colored. While a
     mutation is in flight they render disabled (0.4 alpha, no hand cursor); the UI never

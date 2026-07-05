@@ -199,6 +199,7 @@ private fun App(client: CliClient) {
             }
             DetailPane(
                 task = export?.tasks?.firstOrNull { it.id == selectedId },
+                pinnedId = pinnedId,
                 error = error,
                 busy = busy,
                 onAction = { verb, id -> mutate(listOf(verb, id)) },
