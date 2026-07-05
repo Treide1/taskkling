@@ -18,11 +18,11 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.FlowRow
@@ -426,23 +426,26 @@ private fun NodeCard(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(task.id, fontSize = 11.sp, color = Tk.faint)
                 Spacer(Modifier.weight(1f))
-                // Fixed 14dp slot so the hover reveal never re-measures the card (§6,
+                // Fixed 20dp slot so the hover reveal never re-measures the card (§6,
                 // §11): filled pin always visible while pinned, outline pin on hover
-                // elsewhere. The pin's own clickable consumes the press, so toggling
-                // never falls through to the card's select.
-                Box(Modifier.size(14.dp)) {
+                // elsewhere. The clickable spans a 36dp hit target overflowing the slot
+                // (requiredSize; pointer hits aren't clipped to parent bounds) with the
+                // glyph drawn at 20dp inside, and consumes the press so toggling never
+                // falls through to the card's select.
+                Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
                     if (pinned || hovered) {
                         Icon(
                             imageVector = if (pinned) PinIcons.Filled else PinIcons.Outline,
                             contentDescription = if (pinned) "unpin" else "pin",
                             tint = if (pinned) Tk.accent else Tk.muted,
                             modifier = Modifier
-                                .fillMaxSize()
+                                .requiredSize(36.dp)
                                 .pointerHoverIcon(PointerIcon.Hand)
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
-                                ) { onPinToggle() },
+                                ) { onPinToggle() }
+                                .padding(8.dp),
                         )
                     }
                 }

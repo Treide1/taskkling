@@ -131,8 +131,9 @@ Geometry & resting look:
 - Surface `panel`, corner radius **7**, border **1px `line`** — except the **left edge: a 4px
   accent border** in the primary-state color. The accent edge is the card's loudest state cue.
 - Padding: 8 vertical, 10 horizontal.
-- Content, top-down: id row — id (11, `faint`) left, a fixed **14×14 pin slot** right →
-  title (12.5, `txt`, wraps) → wrapping tag row (gap 4).
+- Content, top-down: id row — id (11, `faint`) left, a fixed **20×20 pin slot** right
+  (glyph 20, inside a **36dp click target** that overflows the slot) → title (12.5, `txt`,
+  wraps) → wrapping tag row (gap 4).
 
 Card states (composable, in addition to primary-state accent):
 
