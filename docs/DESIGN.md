@@ -196,7 +196,9 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
   - Absent values render as `faint` "—" rather than disappearing, so the panel shape is stable.
   - **Reference ids are links**: `accent` colored, click navigates the selection to that task.
   - Mutation actions (done / drop / reopen) live here; style them as quiet outline buttons
-    (`panel2` fill, `line` border, `txt` label) — utilitarian, not primary-colored.
+    (`panel2` fill, `line` border, `txt` label) — utilitarian, not primary-colored. While a
+    mutation is in flight they render disabled (0.4 alpha, no hand cursor); the UI never
+    blocks on the CLI subprocess and refreshes from its returned export.
 - **Legend** (bottom, `panel`, 1px `line` top border, padding 8×16): one 12px rounded swatch +
   `muted` label per state, plus the reading hint "→ blocker points to blocked task" pushed
   right.

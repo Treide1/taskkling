@@ -22,6 +22,7 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -38,13 +39,15 @@ import io.taskkling.contract.TaskDto
  * The detail panel (DESIGN §9): a fixed 320dp column with a `line` left border.
  * Empty state is a centred hint; a selection shows styled fields (absent values
  * as a faint "—"), computed-flag chips, clickable reference ids, and the quiet
- * outline mutation buttons wired through [onAction].
+ * outline mutation buttons wired through [onAction]. While a mutation is in
+ * flight ([busy]) the buttons render disabled so actions can't stack.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun DetailPane(
     task: TaskDto?,
     error: String?,
+    busy: Boolean,
     onAction: (verb: String, id: String) -> Unit,
     onNavigate: (String) -> Unit,
 ) {
@@ -112,9 +115,9 @@ internal fun DetailPane(
 
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlineButton("done") { onAction("done", task.id) }
-            OutlineButton("drop") { onAction("drop", task.id) }
-            OutlineButton("reopen") { onAction("reopen", task.id) }
+            OutlineButton("done", enabled = !busy) { onAction("done", task.id) }
+            OutlineButton("drop", enabled = !busy) { onAction("drop", task.id) }
+            OutlineButton("reopen", enabled = !busy) { onAction("reopen", task.id) }
         }
     }
 }
@@ -165,14 +168,15 @@ private fun RefField(label: String, ids: List<String>, onNavigate: (String) -> U
 
 /** Utilitarian outline button (DESIGN §9): `panel2` fill, `line` border, `txt` label — not primary. */
 @Composable
-private fun OutlineButton(text: String, onClick: () -> Unit) {
+private fun OutlineButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
     Box(
         Modifier
+            .alpha(if (enabled) 1f else 0.4f)
             .clip(RoundedCornerShape(6.dp))
             .background(Tk.panel2)
             .border(1.dp, Tk.line, RoundedCornerShape(6.dp))
-            .pointerHoverIcon(PointerIcon.Hand)
-            .clickable { onClick() }
+            .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
+            .clickable(enabled = enabled) { onClick() }
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Text(text, fontSize = 13.sp, color = Tk.txt)

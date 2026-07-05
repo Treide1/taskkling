@@ -85,8 +85,10 @@ internal fun GraphPane(
 
     // Cards ordered by (layer, indexInLayer): column then the intra-column stacking order
     // that [layout] fixed. Emitting content in this order lets the measure pass keep a
-    // simple per-column running sum (§10).
-    val placed = remember(gl) {
+    // simple per-column running sum (§10). Keyed on `export`, NOT `gl`: a status-only
+    // mutation yields a value-equal GraphLayout, and keying on it alone would keep the
+    // stale TaskDtos cached here while the detail panel shows the fresh ones.
+    val placed = remember(export) {
         export.tasks.mapNotNull { t -> gl.positions[t.id]?.let { PlacedNode(t, it) } }
             .sortedWith(compareBy({ it.pos.layer }, { it.pos.indexInLayer }))
     }

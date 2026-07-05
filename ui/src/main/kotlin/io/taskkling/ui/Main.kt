@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +34,9 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import io.taskkling.contract.ExportDto
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // Graph layout metrics (DESIGN §10). [layout] assigns each node a (layer, indexInLayer)
 // slot; the graph's custom Layout turns `layer` into an x column and stacks each column's
@@ -91,6 +95,10 @@ private fun App(client: CliClient) {
     var export by remember { mutableStateOf<ExportDto?>(null) }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    // True while a CLI call is in flight; the panel's mutation buttons render disabled
+    // off it, so a double-click can't queue a second subprocess (t-t36o).
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     // The canvas scroll state lives here, above GraphPane, so wheel scrolling, drag
     // panning, and programmatic pan-to-card all share one clamped position.
@@ -104,15 +112,23 @@ private fun App(client: CliClient) {
     }
 
     LaunchedEffect(Unit) {
-        runCatching { client.export() }
+        withContext(Dispatchers.IO) { runCatching { client.export() } }
             .onSuccess { refresh(it) }
-            .onFailure { error = it.message }
+            .onFailure { error = it.message ?: it.toString() }
     }
 
+    // Every mutation shells out OFF the UI thread — CliClient.run blocks on the
+    // subprocess — then refreshes from the export the CLI returned (t-t36o). The
+    // Result hops back to the UI thread before touching snapshot state.
     fun mutate(args: List<String>) {
-        runCatching { client.mutate(args) }
-            .onSuccess { refresh(it) }
-            .onFailure { error = it.message }
+        if (busy) return
+        busy = true
+        scope.launch {
+            withContext(Dispatchers.IO) { runCatching { client.mutate(args) } }
+                .onSuccess { refresh(it) }
+                .onFailure { error = "${args.firstOrNull() ?: "cli"}: ${it.message ?: it}" }
+            busy = false
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -143,6 +159,7 @@ private fun App(client: CliClient) {
             DetailPane(
                 task = export?.tasks?.firstOrNull { it.id == selectedId },
                 error = error,
+                busy = busy,
                 onAction = { verb, id -> mutate(listOf(verb, id)) },
                 onNavigate = { selectedId = it },
             )
