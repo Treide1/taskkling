@@ -170,9 +170,17 @@ public fun Workspace.setFields(id: String, args: SetArgs, exportAfter: Boolean =
         x
     }
 
+/**
+ * Strip one leading U+FEFF from an incoming body chunk: Windows PowerShell 5.1
+ * pipes prepend a UTF-8 BOM to each piped payload, which would otherwise land
+ * verbatim in the stored body (mid-file for `append`, where the parse-side
+ * strip in [parseTask] can't reach it). A FEFF anywhere else is content.
+ */
+private fun String.stripLeadingBom(): String = removePrefix("﻿")
+
 /** `write <id> "<text>"` — replace the body in full (PRD §10.6). */
 public fun Workspace.writeBody(id: String, text: String, exportAfter: Boolean = false): MutationResult =
-    updateTask(id, exportAfter) { it.copy(body = text.trim()) }
+    updateTask(id, exportAfter) { it.copy(body = text.stripLeadingBom().trim()) }
 
 /**
  * `append <id> "<text>"` — append to the body (PRD §10.6), joined to existing
@@ -180,7 +188,7 @@ public fun Workspace.writeBody(id: String, text: String, exportAfter: Boolean = 
  */
 public fun Workspace.appendBody(id: String, text: String, exportAfter: Boolean = false): MutationResult =
     updateTask(id, exportAfter) { t ->
-        val add = text.trim()
+        val add = text.stripLeadingBom().trim()
         t.copy(body = if (t.body.isBlank()) add else t.body.trimEnd() + "\n" + add)
     }
 
