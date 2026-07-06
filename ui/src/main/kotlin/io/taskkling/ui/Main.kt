@@ -120,11 +120,11 @@ private fun App(client: CliClient) {
         val rect = cardRects[id] ?: return
         scope.launch {
             launch {
-                val x = (rect.centerX - hScroll.viewportSize / 2f).toInt().coerceIn(0, hScroll.maxValue)
+                val x = centerScrollOffset(rect.centerX, hScroll.viewportSize, hScroll.maxValue)
                 hScroll.animateScrollTo(x, tween(150))
             }
             launch {
-                val y = (rect.centerY - vScroll.viewportSize / 2f).toInt().coerceIn(0, vScroll.maxValue)
+                val y = centerScrollOffset(rect.centerY, vScroll.viewportSize, vScroll.maxValue)
                 vScroll.animateScrollTo(y, tween(150))
             }
         }

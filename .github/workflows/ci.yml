@@ -27,7 +27,10 @@ jobs:
           key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
       - run: chmod +x ./gradlew
       - name: Build & test JVM
-        run: ./gradlew :contract:jvmTest :core:jvmTest :ui:compileKotlin --no-daemon --stacktrace
+        # :ui is a plain kotlin-jvm module, so its test task is `test` (not `jvmTest`); it
+        # compiles main + test and runs the Layout/viewport math unit tests, subsuming the
+        # previous compile-only check.
+        run: ./gradlew :contract:jvmTest :core:jvmTest :ui:test --no-daemon --stacktrace
 
   native:
     name: Native (${{ matrix.target }})

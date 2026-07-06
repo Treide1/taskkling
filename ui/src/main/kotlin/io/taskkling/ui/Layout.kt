@@ -80,3 +80,25 @@ public fun stackTops(heights: List<Int>, gap: Int, start: Int): List<Int> {
     }
     return tops
 }
+
+/**
+ * Clamp a target scroll offset to a Compose `ScrollState`'s reachable range `0..maxScroll`.
+ * [maxScroll] is `0` when the content fits its viewport (nothing to scroll), so every target
+ * collapses to `0`; otherwise an offset past either end is pulled to the nearest reachable
+ * edge. Idempotent — `coerceIn` of an already-in-range value is a no-op. Pure (offset + bound →
+ * offset) so the pan bound is unit-testable without a live `ScrollState`; the same bound is what
+ * `ScrollState` enforces on the wheel/drag pan path.
+ */
+public fun clampScroll(offset: Int, maxScroll: Int): Int = offset.coerceIn(0, maxScroll)
+
+/**
+ * Pan-to-card target offset (DESIGN §9): the scroll position that places a card whose measured
+ * centre sits at [center] content-px in the middle of a [viewport]-px window, clamped to the
+ * scroll range via [clampScroll]. Centring means scrolling to `center - viewport / 2`; the clamp
+ * means a card near a content edge lands as close to centred as the bounds allow rather than
+ * over-scrolling past `0` or [maxScroll]. The same function serves both axes (x and y). Pure
+ * (centre + viewport + bound → offset) so the centring rule is unit-testable without a
+ * `ScrollState`.
+ */
+public fun centerScrollOffset(center: Float, viewport: Int, maxScroll: Int): Int =
+    clampScroll((center - viewport / 2f).toInt(), maxScroll)

@@ -15,6 +15,13 @@ dependencies {
     // The DTOs in :contract carry generated serializers; the UI needs the JSON
     // runtime to decode `taskkling export` output (PRD §6.3, §12).
     implementation(libs.kotlinx.serialization.json)
+
+    // Pure layout/viewport math (stackTops, clampScroll, centerScrollOffset in Layout.kt)
+    // ships compile+visual-only otherwise — this JVM test source set unit-tests those seams
+    // in isolation. Plain JVM tests over pure functions; no Compose UI is instantiated. The
+    // kotlin-test runner mirrors :core; the module is plain kotlin-jvm, so the task is
+    // `:ui:test` (not `:ui:jvmTest`, which is a KMP-only name).
+    testImplementation(kotlin("test"))
 }
 
 compose.desktop {
