@@ -175,8 +175,9 @@ public fun Workspace.setFields(id: String, args: SetArgs, exportAfter: Boolean =
  * pipes prepend a UTF-8 BOM to each piped payload, which would otherwise land
  * verbatim in the stored body (mid-file for `append`, where the parse-side
  * strip in [parseTask] can't reach it). A FEFF anywhere else is content.
+ * `internal` so the sibling `add` path ([addTask], fed a piped body) shares it.
  */
-private fun String.stripLeadingBom(): String = removePrefix("﻿")
+internal fun String.stripLeadingBom(): String = removePrefix("﻿")
 
 /** `write <id> "<text>"` — replace the body in full (PRD §10.6). */
 public fun Workspace.writeBody(id: String, text: String, exportAfter: Boolean = false): MutationResult =

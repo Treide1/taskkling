@@ -83,7 +83,7 @@ public fun Workspace.addTask(args: AddArgs, exportAfter: Boolean = false): Mutat
         defer = defer,
         priority = priority,
         created = nowUtc(),
-        body = args.body?.trim().orEmpty(),
+        body = args.body?.stripLeadingBom()?.trim().orEmpty(),
     )
     writeFileAtomic(tasksDir / task.fileName(), task.toMarkdown())
     MutationResult(task, if (exportAfter) buildExport(includeBody = false, includeArchived = false) else null)

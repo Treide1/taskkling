@@ -376,7 +376,7 @@ so an agent can preview impact with the very function delete will run:
 
 | Command | Effect |
 |---|---|
-| `add "<title>" [--thread t] [--depends a,b] [--due dt] [--defer dt] [--priority p] [--body txt]` | Create a task; print the new id (cycle/dangling-checked). |
+| `add "<title>" [--thread t] [--depends a,b] [--due dt] [--defer dt] [--priority p] [--body txt]` | Create a task; print the new id (cycle/dangling-checked). `--body -` reads the body from stdin (symmetric with `write <id> -`) — a full multi-line body in one call. |
 | `set <id> [--<field> <value>…] [--clear <field>…]` | Atomic multi-field metadata edit (`--due/--defer/--priority/--thread/--title`, extensible). `--clear` (or `--<field> ""`) unsets a field. |
 | `get <id> [--info] [--<field>…]` | (read; §10.2) symmetric counterpart (`--info`/`-f` for parsed fields). |
 

@@ -231,7 +231,7 @@ private class AddCmd : MutationCommand("add", "Create a task; prints the new id"
     val due by option(ArgType.String, "due", description = "Deadline (e.g. 2026-07-31T23:59:00Z or 2026-07-31)")
     val defer by option(ArgType.String, "defer", description = "Not-before datetime (suppresses readiness)")
     val priority by option(ArgType.String, "priority", "p", description = "low | normal | high")
-    val body by option(ArgType.String, "body", "b", description = "Body text")
+    val body by option(ArgType.String, "body", "b", description = "Body text; - reads the body from stdin")
 
     override fun run() {
         val ws = Workspace.discover(root)
@@ -244,7 +244,7 @@ private class AddCmd : MutationCommand("add", "Create a task; prints the new id"
                     due = due,
                     defer = defer,
                     priority = priority,
-                    body = body,
+                    body = body?.let { bodyArg(it) },
                 ),
                 exportAfter = exportOnSuccess,
             ),

@@ -19,6 +19,15 @@ class BodyBomTest {
         FileSystem.SYSTEM.read(ws.findActiveFile(id)!!) { readUtf8() }
 
     @Test
+    fun addWithBomBodyPersistsClean() {
+        val ws = tempWorkspace()
+        // `add "<title>" -b -` on PS5.1 feeds the body with a leading BOM.
+        val id = ws.addReturningId(AddArgs(title = "add bom", body = "﻿piped from PowerShell"))
+        assertEquals("piped from PowerShell", ws.loadTask(id)!!.body)
+        assertFalse(rawOnDisk(ws, id).contains('﻿'), "no FEFF may be persisted")
+    }
+
+    @Test
     fun writeStripsLeadingBom() {
         val ws = tempWorkspace()
         val id = ws.addReturningId(AddArgs(title = "write bom"))
