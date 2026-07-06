@@ -71,7 +71,6 @@ import kotlinx.cli.ArgType
 import kotlinx.cli.Subcommand
 import kotlinx.cli.default
 import kotlinx.cli.multiple
-import kotlinx.cli.required
 import kotlinx.cli.ExperimentalCli
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.datetime.Clock
@@ -105,6 +104,15 @@ private fun readStdin(): String = buildString {
 
 /** Resolve body text: a literal `-` means "read the body from stdin". */
 private fun bodyArg(text: String): String = if (text == "-") readStdin() else text
+
+/**
+ * Normalize `-d`/`--depends` values into a clean id list. The option may be
+ * repeated AND each occurrence may itself be comma-separated, so `-d a -d b,c`
+ * == `-d a,b,c`. Segments are trimmed, empties (stray/trailing commas) dropped,
+ * and the union de-duplicated preserving first-seen order.
+ */
+private fun flattenDepends(raw: List<String>): List<String> =
+    raw.flatMap { it.split(",") }.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
 /**
  * Global flags parsed from the **leading** position (before the subcommand),
@@ -219,7 +227,7 @@ private class InitCmd : TkCommand("init", "Scaffold a taskkling workspace (.task
 private class AddCmd : MutationCommand("add", "Create a task; prints the new id") {
     val title by argument(ArgType.String, description = "Task title")
     val thread by option(ArgType.String, "thread", "t", description = "Grouping label")
-    val depends by option(ArgType.String, "depends", "d", description = "Comma-separated dependency ids")
+    val depends by option(ArgType.String, "depends", "d", description = "Dependency ids (comma-separated and/or repeatable)").multiple()
     val due by option(ArgType.String, "due", description = "Deadline (e.g. 2026-07-31T23:59:00Z or 2026-07-31)")
     val defer by option(ArgType.String, "defer", description = "Not-before datetime (suppresses readiness)")
     val priority by option(ArgType.String, "priority", "p", description = "low | normal | high")
@@ -232,7 +240,7 @@ private class AddCmd : MutationCommand("add", "Create a task; prints the new id"
                 AddArgs(
                     title = title,
                     thread = thread,
-                    depends = depends?.split(",").orEmpty(),
+                    depends = flattenDepends(depends),
                     due = due,
                     defer = defer,
                     priority = priority,
@@ -319,15 +327,23 @@ private class WaitCmd : MutationCommand("wait", "Set status=waiting; optionally 
 /** `link <id> --depends <dep>` — add a dependency edge; cycle-checked (PRD §10.6). */
 private class LinkCmd : MutationCommand("link", "Add a dependency edge (<id> depends on <dep>)") {
     val id by argument(ArgType.String, description = "Task id")
-    val depends by option(ArgType.String, "depends", "d", description = "Dependency id to add").required()
-    override fun run() = emit(Workspace.discover(root).linkDepends(id, depends, exportOnSuccess))
+    val depends by option(ArgType.String, "depends", "d", description = "Dependency id(s) to add (comma-separated and/or repeatable)").multiple()
+    override fun run() {
+        val deps = flattenDepends(depends)
+        if (deps.isEmpty()) throw TkError(ExitCode.USAGE, "link needs at least one --depends id")
+        emit(Workspace.discover(root).linkDepends(id, deps, exportOnSuccess))
+    }
 }
 
 /** `unlink <id> --depends <dep>` — remove a dependency edge (PRD §10.6). */
 private class UnlinkCmd : MutationCommand("unlink", "Remove a dependency edge (<id> depends on <dep>)") {
     val id by argument(ArgType.String, description = "Task id")
-    val depends by option(ArgType.String, "depends", "d", description = "Dependency id to remove").required()
-    override fun run() = emit(Workspace.discover(root).unlinkDepends(id, depends, exportOnSuccess))
+    val depends by option(ArgType.String, "depends", "d", description = "Dependency id(s) to remove (comma-separated and/or repeatable)").multiple()
+    override fun run() {
+        val deps = flattenDepends(depends)
+        if (deps.isEmpty()) throw TkError(ExitCode.USAGE, "unlink needs at least one --depends id")
+        emit(Workspace.discover(root).unlinkDepends(id, deps, exportOnSuccess))
+    }
 }
 
 /** `set <id> [--<field> …] [--clear <field>…]` — atomic multi-field edit (PRD §10.4). */

@@ -394,7 +394,7 @@ so an agent can preview impact with the very function delete will run:
 
 | Command | Effect |
 |---|---|
-| `link <id> --depends <id>` / `unlink <id> --depends <id>` | Add/remove a dependency edge (cycle-checked on add). |
+| `link <id> --depends <id>[,…]` / `unlink <id> --depends <id>[,…]` | Add/remove dependency edges (cycle-checked on add); `--depends` is comma-separated and/or repeatable. |
 | `write <id> "<text>"` | Replace the body in full. |
 | `append <id> "<text>"` | Append to the body. |
 | `get <id> --body` | (read; §10.2) the body — symmetric counterpart. |

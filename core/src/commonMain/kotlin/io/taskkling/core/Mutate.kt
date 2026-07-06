@@ -117,13 +117,13 @@ public fun Workspace.waitTask(id: String, until: String?, on: String?, exportAft
         )
     }
 
-/** `link <id> --depends <dep>` — add a dependency edge; cycle-checked (PRD §10.6). */
-public fun Workspace.linkDepends(id: String, dep: String, exportAfter: Boolean = false): MutationResult =
-    updateTask(id, exportAfter) { it.copy(depends = (it.depends + dep).distinct()) }
+/** `link <id> --depends <dep>…` — add one or more dependency edges in one mutation; cycle-checked (PRD §10.6). */
+public fun Workspace.linkDepends(id: String, deps: List<String>, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { it.copy(depends = (it.depends + deps).distinct()) }
 
-/** `unlink <id> --depends <dep>` — remove a dependency edge (PRD §10.6). */
-public fun Workspace.unlinkDepends(id: String, dep: String, exportAfter: Boolean = false): MutationResult =
-    updateTask(id, exportAfter) { t -> t.copy(depends = t.depends.filter { it != dep }) }
+/** `unlink <id> --depends <dep>…` — remove one or more dependency edges in one mutation (PRD §10.6). */
+public fun Workspace.unlinkDepends(id: String, deps: List<String>, exportAfter: Boolean = false): MutationResult =
+    updateTask(id, exportAfter) { t -> t.copy(depends = t.depends.filter { it !in deps }) }
 
 /**
  * Inputs for `set` (PRD §10.4). Each non-null field is applied; an empty string

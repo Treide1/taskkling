@@ -19,7 +19,7 @@ class ValidateTest {
     fun selfDependencyIsRejected() {
         val ws = tempWorkspace()
         val a = ws.addReturningId(AddArgs(title = "a"))
-        assertFailsWith<TkError> { ws.linkDepends(a, a) }
+        assertFailsWith<TkError> { ws.linkDepends(a, listOf(a)) }
     }
 
     @Test
@@ -28,7 +28,7 @@ class ValidateTest {
         val a = ws.addReturningId(AddArgs(title = "a"))
         val b = ws.addReturningId(AddArgs(title = "b", depends = listOf(a)))
         // a -> b would close the loop a -> b -> a
-        assertFailsWith<TkError> { ws.linkDepends(a, b) }
+        assertFailsWith<TkError> { ws.linkDepends(a, listOf(b)) }
     }
 
     @Test

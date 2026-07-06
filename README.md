@@ -108,7 +108,7 @@ after a fresh install to set up the per-project wrapper in one step.
 
 ```sh
 taskkling add "Draft the proposal" -t docs        # create a task, prints its id
-taskkling add "Ship it" -t docs -d t-a1z9         # ... that depends on t-a1z9
+taskkling add "Ship it" -t docs -d t-a1z9         # depends on t-a1z9 (-d repeats; or -d a,b)
 taskkling list                                    # whole backlog, ls -la style
 taskkling list --ready                            # what's actionable right now
 taskkling export                                  # full JSON (stored + computed)
