@@ -16,10 +16,30 @@ defaults:
     shell: bash
 
 jobs:
+  # 0) Gate: run the JVM test suites before spending native-build minutes. `build`
+  #    (and transitively `publish`) needs this, so a red suite skips the whole native
+  #    matrix AND blocks the release — a pushed tag can never publish an untested
+  #    commit, regardless of how it was cut. Mirrors ci.yml's JVM job (:ui is plain
+  #    kotlin-jvm, so its task is `:ui:test`, not KMP's jvmTest).
+  test:
+    name: Test (JVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x ./gradlew
+      - name: JVM + UI test suites
+        run: ./gradlew :contract:jvmTest :core:jvmTest :ui:test --no-daemon --stacktrace
+
   # 1) Fan out: link each target's release binary and upload it as a workflow
   #    artifact. macOS rows additionally inspect the linker's ad-hoc signature.
   build:
     name: ${{ matrix.artifact }}
+    needs: test
     strategy:
       fail-fast: false
       matrix:
