@@ -26,9 +26,16 @@ private fun instantOrNull(iso: String?): Instant? =
  * A `depends` id that isn't `done` (including dangling ids) counts as a blocker;
  * `dependents` is the inverse edge. A `defer`/`due` that won't parse is ignored
  * rather than fatal (the read path stays robust).
+ *
+ * [now] is the reference instant for all time-relative attributes (defer/due
+ * boundaries, waiting resurface). It defaults to the current System clock so
+ * existing callers are unchanged; tests inject a fixed instant to pin the
+ * defer/due/resurface edges deterministically.
  */
-public fun computeAll(tasks: List<Task>): Map<String, Computed> {
-    val now = Clock.System.now()
+public fun computeAll(
+    tasks: List<Task>,
+    now: Instant = Clock.System.now(),
+): Map<String, Computed> {
     val doneIds = tasks.asSequence().filter { it.status == Status.DONE }.map { it.id }.toSet()
 
     val dependents = HashMap<String, MutableList<String>>()
