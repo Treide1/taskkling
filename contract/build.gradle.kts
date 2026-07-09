@@ -16,5 +16,14 @@ kotlin {
         commonMain.dependencies {
             implementation(libs.kotlinx.serialization.json)
         }
+
+        // Pure DTO wire tests (field names + round-trip) guard the ADR-008
+        // vocabulary boundary. Target-agnostic, so they live in commonTest and run
+        // on every target; CI invokes the JVM variant (:contract:jvmTest), mirroring
+        // :core. The kotlinx JSON runtime is on the test classpath via commonMain's
+        // implementation dependency.
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
     }
 }
