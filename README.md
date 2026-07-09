@@ -4,34 +4,30 @@
 
 # taskkling
 
-A git-native, **markdown-file-per-task DAG task manager** for solo operators and
-human + agent teams. Work is modelled as tasks connected by `depends` edges;
-the source of truth is **one markdown file per task** (YAML frontmatter + freeform body)
-in a git repository. No database, daemon, or server.
+taskkling is a task manager for people whose work doesn't fit a flat checklist.
+Every task is a plain markdown file in your git repository, tasks can depend on
+each other, and one command answers the question you actually have:
+*"what can I work on right now?"*
 
-It ships two artifacts:
+There's no database, no server, no account. Your tasks are files you own —
+readable in any editor, versioned with your code, greppable, and still yours if
+you stop using the tool tomorrow.
 
-- a **Kotlin/Native CLI** (`taskkling`) — the single read **and** write path; fast cold
-  start, no JVM needed. This is what humans and agents drive.
-- a **Compose Desktop UI** — a *pure CLI client*: it renders the CLI's JSON `export` and
-  performs every mutation by invoking the CLI, so it can never become a second writer.
+## Why taskkling?
 
-> Design north star: **"file I/O with editable metadata."** Everything the CLI does, a
-> human could do by hand-editing markdown — the CLI just makes it safe, concurrent, and
-> queryable. See **[PRD.md](PRD.md)** for the full design.
+Real work has shape: B can't start until A is done, C is parked until next
+week, D has a deadline. A checklist flattens all of that into one anxious list.
 
-## Why a DAG?
+taskkling models the dependencies directly and *computes* your to-do list from
+them. A task is **ready** when it's open, nothing it depends on is unfinished,
+and it isn't deferred — so `taskkling list --ready` always shows exactly what's
+actionable, and nothing that isn't.
 
-Flat checklists force a binary, sequential shape onto work that isn't. A DAG models
-dependencies (`can't start B until A is done`), deadlines (`due`) and defer-until dates
-(`defer`) directly, and turns *"what can I work on right now?"* into a computed query —
-the **ready set**: a task is `ready` when it is `open`, all its `depends` are `done`, and
-it is not deferred.
+And because every task is just a markdown file with a small metadata header,
+you're never locked in. Everything the tool does, you could do by hand-editing
+files — taskkling just makes it fast, safe, and queryable.
 
-## Install
-
-> These install scripts are available from the **v0.2.0 release onward**. The release
-> pipeline is wired; the release itself is cut by a human when the milestone is complete.
+## Get started
 
 **macOS / Linux**
 
@@ -45,171 +41,86 @@ curl -fsSL https://github.com/Treide1/taskkling/releases/latest/download/install
 irm https://github.com/Treide1/taskkling/releases/latest/download/install.ps1 | iex
 ```
 
-Both scripts fetch the `taskkling` binary for your platform and put it on `PATH`:
-`~/.local/bin` on Unix, `%LOCALAPPDATA%\Programs\taskkling` on Windows. Restart your
-shell (or open a new terminal) so the new location is picked up.
+The script fetches the right binary for your platform, puts it on your `PATH`
+(`~/.local/bin` on Unix, `%LOCALAPPDATA%\Programs\taskkling` on Windows), and
+verifies it against the published checksums. Open a new terminal afterwards so
+the `PATH` change is picked up.
 
-### Manual install
+Prefer a manual install? Grab a binary from the
+[Releases page](../../releases) and check it against the `SHA256SUMS` file
+published alongside it. On macOS, a browser-downloaded binary needs
+`xattr -dr com.apple.quarantine ./taskkling` before its first run (the
+`curl | sh` path doesn't).
 
-Download the binary for your platform from the [Releases page](../../releases) and place
-it somewhere on your `PATH`. Verify it against the accompanying `SHA256SUMS` file:
-
-```sh
-# Unix
-sha256sum -c SHA256SUMS
-
-# macOS (shasum ships by default)
-shasum -a 256 -c SHA256SUMS
-```
-
-On **Windows (PowerShell)**, compare the binary's hash against its `SHA256SUMS` line
-(`-eq` is case-insensitive, so the upper-case `Get-FileHash` digest still matches):
-
-```powershell
-$want = (((Get-Content SHA256SUMS | Select-String 'taskkling-windows-x64.exe') -split '\s+')[0])
-$got  = (Get-FileHash -Algorithm SHA256 .\taskkling-windows-x64.exe).Hash
-if ($got -eq $want) { 'OK' } else { 'MISMATCH' }
-```
-
-**macOS quarantine caveat:** a binary downloaded via a browser carries the quarantine
-attribute and will be blocked by Gatekeeper on first run. Clear it with:
+Then, in any project:
 
 ```sh
-xattr -dr com.apple.quarantine ./taskkling
+taskkling init                                    # scaffold .taskkling/ + tasks/ (idempotent)
+
+taskkling add "Draft the proposal" -t docs        # prints the new task's id, e.g. t-a1z9
+taskkling add "Ship it" -d t-a1z9                 # "Ship it" depends on the draft
+taskkling list --ready                            # → only "Draft the proposal" is actionable
+taskkling done t-a1z9                             # finish it...
+taskkling list --ready                            # → now "Ship it" is ready
 ```
 
-This is not needed when using the `curl | sh` path above — `curl` does not set the
-quarantine attribute.
+You can run `taskkling` from anywhere inside the project — it walks up the
+directory tree to find the workspace. For team repos where not everyone has a
+global install, `taskkling init --local-bin` pins a copy of the binary into the
+project and drops `./taskkling` / `./taskkling.cmd` wrapper scripts at the root,
+so contributors can use it straight from a clone.
 
-### First run
-
-In any repo, scaffold the taskkling workspace:
-
-```sh
-taskkling init          # creates .taskkling/ + tasks/, idempotent
-```
-
-## Invocation
-
-There are three ways to drive `taskkling` after install:
-
-**1. Global PATH (recommended for personal machines)**
-Run `taskkling …` from anywhere inside a project tree. The CLI walks up the directory
-tree until it finds a `.taskkling/` directory, so you don't need to be at the root.
-
-**2. Per-project wrapper scripts**
-A tracked `./taskkling` (Unix) and `./taskkling.cmd` (Windows) at the repo root exec
-the project-pinned binary in `.taskkling/bin`. Contributors can run `./taskkling …`
-without a global install — useful in team repos where you can't assume everyone has
-`taskkling` on their `PATH`.
-
-**3. `taskkling init --local-bin`**
-Scaffolds the workspace AND copies the running binary into `.taskkling/bin`, then drops
-the wrapper scripts (`./taskkling` + `./taskkling.cmd`) in the repo root. Run this once
-after a fresh install to set up the per-project wrapper in one step.
-
-## Usage
+## Everyday commands
 
 ```sh
-taskkling add "Draft the proposal" -t docs        # create a task, prints its id (-b - = body from stdin)
-taskkling add "Ship it" -t docs -d t-a1z9         # depends on t-a1z9 (-d repeats; or -d a,b)
-taskkling list                                    # whole backlog, ls -la style
-taskkling list --ready                            # what's actionable right now
-taskkling export                                  # full JSON (stored + computed)
-
-taskkling done <id>                               # lifecycle: done / drop / reopen / wait
+taskkling list                          # the whole backlog, ls -la style
+taskkling list --ready                  # what's actionable right now
+taskkling done <id>                     # lifecycle: done / drop / reopen / wait
 taskkling set <id> --due 2026-07-31 --priority high
-taskkling write <id> "body text"                  # body I/O: write / append / read (- = stdin)
-taskkling link <id> --depends <dep>               # edges: link / unlink (cycle-checked)
-taskkling delete <id>                             # -> trash, prunes dependents; restore <id> undoes
-taskkling cleanup                                 # sweep closed tasks -> archive/
+taskkling write <id> "body text"        # body I/O: write / append / read (- = stdin)
+taskkling link <id> --depends <dep>     # add/remove edges (cycles are rejected)
+taskkling delete <id>                   # -> trash; restore <id> undoes it
+taskkling cleanup                       # sweep closed tasks into archive/
 ```
 
-Conventions: human-readable output by default, `--json` where applicable (`export` is
-always JSON); any mutation accepts `--export-on-success` for a transactional read-after-write.
-Global flags: `--root <path>`, `--quiet`, `--no-color`. Exit codes: `0` ok · `2` usage ·
-`3` validation · `4` lock timeout. Full command surface in [PRD.md §10](PRD.md).
+Output is human-readable by default; most commands take `--json`, and
+`taskkling export` dumps the entire graph as JSON. The full command surface is
+specified in [PRD.md](PRD.md).
 
-## Updating
+## The desktop app
 
-`taskkling update` replaces the running binary in place with the latest GitHub
-release: it detects your platform, downloads the matching asset, verifies it
-against `SHA256SUMS`, swaps it in, and prints `old -> new`.
+Alongside the CLI there's a desktop UI (Compose Desktop) that renders your task
+graph and performs every change by driving the CLI — so the two can never
+disagree about your data. Since v0.6.0 it ships with the CLI: `taskkling ui`
+fetches the UI and its trimmed Java runtime on first launch (~80–100 MB,
+checksum-verified, cached from then on) and starts it detached — no Java
+install, no Gradle. `taskkling ui --fetch-only` prefetches without launching;
+running from a clone with `./gradlew :ui:run` remains the contributor path.
+
+## Staying current, and leaving cleanly
 
 ```sh
-taskkling update                  # update to the latest release
-taskkling update --check          # is a newer release out? report only, never installs
-taskkling update --version v0.3.0 # install a specific release tag (pin / roll back)
+taskkling update              # self-update to the latest release (checksum-verified)
+taskkling update --check      # just tell me if something newer exists
+taskkling uninstall           # remove the binary + PATH entry — never your tasks
 ```
 
-`update` acts on **whichever binary you invoked** — it resolves its own path.
-Run the global `taskkling` and it updates the global install; run a project's
-pinned copy (`./taskkling update`) and it updates that `.taskkling/bin` binary
-and re-stamps its `.version`. A global update deliberately does **not** cascade
-into a project's pinned local-bin copy — update that one separately, or re-run
-`init --local-bin` from a newer binary. On Windows the running `.exe` is locked,
-so `update` swaps it via a rename and clears the leftover on the next run; on
-Unix the file is replaced atomically.
+`taskkling --version` also mentions (in interactive terminals only, at most once
+a day) when a newer release is out; set `update_check = false` in your
+`config.toml` (`taskkling config init` creates it and prints its path) to turn
+that off. Nothing you authored is ever deleted unless you explicitly run
+`uninstall --purge`. The finer points — per-project vs. global binaries, how the
+locked `.exe` is swapped on Windows — are recorded in [docs/adr/](docs/adr/).
 
-Re-running the install script (`curl … | sh` / `irm … | iex`) is always a valid
-alternative upgrade — both installers overwrite in place after the same checksum
-check.
+## Project status
 
-### "Newer version available" check
+taskkling is pre-1.0 and under active development; the current release is
+**v0.6.0**. Binaries ship for Linux x64, macOS (Intel and Apple Silicon), and
+Windows x64 on every tagged release — since v0.6.0 each release also carries
+the desktop UI, fetched on demand by `taskkling ui` — and CI builds and tests
+all native targets on every push. The project manages its own backlog with taskkling.
 
-taskkling gives you a passive heads-up when a newer release is out. On
-`taskkling --version` this check is **on by default**, but only in an
-**interactive terminal** — pipes, scripts, CI, and any `--json`/machine-readable
-output stay fully offline (no network call, no cache write). The explicit
-`taskkling update --check` always runs, terminal or not. It only notifies; it
-never installs.
-
-To turn the passive check **off**, set `update_check = false` in a `config.toml`:
-
-- **User-level** config (honoured by the global binary anywhere):
-  - Linux — `~/.config/taskkling/config.toml` (or `$XDG_CONFIG_HOME/taskkling/`)
-  - macOS — `~/Library/Application Support/taskkling/config.toml`
-  - Windows — `%LOCALAPPDATA%\taskkling\config.toml`
-- A workspace's `.taskkling/config.toml` overrides the user-level value.
-
-Both installers run `taskkling config init` for you, which writes that
-user-level file (write-if-absent, never clobbering your edits) pre-populated
-with the `update_check` toggle and prints its path — run it yourself anytime to
-create or locate the file.
-
-When it runs, the check hits GitHub Releases at most once every ~24 h, fails
-silently, and the `vX.Y.Z available` line appears on **only two** surfaces:
-`taskkling --version` (interactive only) and the explicit `taskkling update
---check`. It never appears in `list`, `get`, `export`, or any `--json` output.
-
-## Uninstalling
-
-`taskkling uninstall` is the inverse of install: it removes the binary and the
-`PATH` entry the installer added — and, by design, **nothing you authored**.
-Your workspace — `.taskkling/` (config, caches) and your tasks directory — is
-never touched unless you explicitly pass `--purge`.
-
-```sh
-taskkling uninstall           # interactive: shows what it will remove, then asks
-taskkling uninstall -y        # non-interactive, safe scope only (binary + PATH)
-taskkling uninstall --purge   # ALSO delete .taskkling/ AND the tasks dir — irreversible
-```
-
-It is **interactive by default**: it prints exactly what it will remove — the
-binary path, the `PATH` entry, and (with `--purge`) how many tasks that would
-destroy — then waits for confirmation. `-y` skips the prompt but runs only the
-**safe scope** (binary + `PATH`); authored data is deleted **only** via
-`--purge`. So `--purge -y` is the single non-interactive form that erases a task
-graph, and that destruction is spelled out on the command line.
-
-Like `update`, it is **tier-aware**: it removes whichever binary you invoked, or
-use `--global` / `--local` to target a tier explicitly. Removing a per-project
-copy also deletes that workspace's pinned `.version` stamp and the `./taskkling`
-wrapper scripts. On Windows the `PATH` entry is removed immediately (the tool is
-gone the moment the command returns) while the locked `.exe` clears on your next
-reboot; on Unix the binary is removed right away.
-
-## Development
+## Building from source
 
 Any JDK findable on `PATH` or `JAVA_HOME` boots Gradle; the build then
 auto-provisions the JDK 21 it actually compiles with (foojay toolchain
@@ -217,7 +128,6 @@ resolver) — no manual Temurin install, no `JAVA_HOME` ritual.
 
 ```sh
 ./gradlew :cli:linkDebugExecutableMingwX64    # native CLI (host target: Mingw/Linux/Macos)
-./gradlew :cli:linkReleaseExecutableMingwX64  # optimized release binary
 ./gradlew :contract:jvmTest :core:jvmTest     # fast JVM unit/golden tests
 ./gradlew :ui:run                             # launch the Compose Desktop UI from source
 ./gradlew :ui:createDistributable             # assemble the packaged app image
@@ -231,7 +141,44 @@ resolver) — no manual Temurin install, no `JAVA_HOME` ritual.
 The debug CLI lands at `cli/build/bin/<target>/debugExecutable/taskkling[.exe]`
 (`<target>` = `mingwX64` on Windows, `linuxX64` / `macosArm64` elsewhere).
 
-### Modules
+## License
+
+[MIT](LICENSE).
+
+---
+
+## For agents
+
+Machine-facing summary for coding agents and automation working in or against a
+taskkling workspace.
+
+**Data model.** One markdown file per task (YAML frontmatter + freeform body)
+under the workspace's tasks directory; edges are `depends` lists in
+frontmatter. `ready` is computed: `open` ∧ all `depends` `done` ∧ not deferred.
+Source of truth is the files; git is the history/sync layer. Design north star:
+"file I/O with editable metadata" — hand-editing files is legal, but the CLI is
+the safe, lock-aware path.
+
+**Single write path.** The Kotlin/Native CLI (`taskkling`) is the only
+programmatic reader/writer. The desktop UI is a pure CLI client: it links only
+the `:contract` DTOs (never `:core`), renders `taskkling export` JSON, and
+mutates exclusively by invoking the CLI — structurally incapable of becoming a
+second writer. Do the same: drive the CLI, don't write task files directly.
+
+**Machine conventions.**
+
+- `taskkling export` is always JSON (stored + computed fields); other commands
+  take `--json` where applicable.
+- Any mutation accepts `--export-on-success` for a transactional
+  read-after-write.
+- Global flags: `--root <path>`, `--quiet`, `--no-color`.
+- Exit codes: `0` ok · `2` usage · `3` validation · `4` lock timeout.
+- Writes are lock-guarded and atomic; concurrent writers contend on the lock
+  rather than corrupting files.
+- The passive update check never fires in pipes, scripts, CI, or `--json`
+  output — machine surfaces are fully offline.
+
+**Repo layout.**
 
 | Module | Targets | Responsibility |
 |---|---|---|
@@ -240,17 +187,12 @@ The debug CLI lands at `cli/build/bin/<target>/debugExecutable/taskkling[.exe]`
 | `:cli` | native | the `taskkling` binary; thin command layer over `:core` |
 | `:ui` | JVM (Compose Desktop) | desktop app; renders `export`, mutates via the CLI |
 
-The UI links **only `:contract`** (the DTOs), never `:core` — so it is *physically
-incapable* of writing task files, structurally guaranteeing the single-write-path design.
+**Docs to read first:** [PRD.md](PRD.md) (full spec, command surface in §10),
+[docs/DESIGN.md](docs/DESIGN.md), [docs/DOMAIN_LANGUAGE.md](docs/DOMAIN_LANGUAGE.md),
+[docs/adr/](docs/adr/) (immutable decision records), [docs/RELEASING.md](docs/RELEASING.md).
 
-### This repo dogfoods itself
-
-taskkling's own development backlog is tracked **in taskkling**. A fresh clone does
-**not** include `tasks/` or `CLAUDE.md` — both are git-ignored, local-only dev state.
-After cloning, run `taskkling init`; the dogfooded dev backlog lives under
-`.taskkling/tasks` (also git-ignored). CI (`.github/workflows/ci.yml`) builds JVM plus
-a native matrix (linux/macOS/Windows) on every push and PR.
-
-## License
-
-See repository for license details.
+**Dev-state note.** A fresh clone contains no `tasks/` or `CLAUDE.md` — the
+project's own dogfooded backlog lives in git-ignored local state
+(`.taskkling/tasks`). Run `taskkling init` after cloning. `version=` in
+`gradle.properties` is the canonical tool version; release tags are cut by a
+human, never automation.
