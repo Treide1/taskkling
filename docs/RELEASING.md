@@ -1,38 +1,36 @@
 # Releasing
 
-How a `vX.Y.Z` release is cut and verified. The pipeline itself is wire-only
-(`.github/workflows/release.yml`): a human pushes the tag; CI builds the four binaries,
-generates `SHA256SUMS`, and publishes them with both install scripts. This runbook is the
-checklist around that wire — every step is deterministic; none are optional.
+How a `vX.Y.Z` release is cut and verified. The pipeline is wire-only
+(`.github/workflows/release.yml`): pushing a version tag runs the test suites, builds the
+four native binaries, checksums them, and publishes them with both install scripts to the
+project's public GitHub Releases. Tagging is human-owned — no tag is cut by automation.
 
 ## Pre-cut
 
-Run these **before** bumping/tagging. They catch state the backlog and CI cannot see.
+Run before tagging; each catches state the pipeline's own guard cannot:
 
-1. **Every live feature branch is fully merged.** For each branch not yet deleted:
-   `git log main..<branch>` must be **empty**. A non-empty range means commits are stranded
-   (a partial PR merge left v0.3.0 nearly missing its headline features — task status alone
-   does not prove code reached main).
-2. **Local main matches the remote.** `git fetch && git status` — working tree clean, no
-   ahead/behind against `origin/main`.
-3. **Version matches the intended tag.** `version=` in `gradle.properties` must equal the
-   `X.Y.Z` of the tag you are about to push. The workflow's tag/version guard fails the run
-   otherwise — catch it before burning a tag name.
+1. **Feature branches are merged** — `git log main..<branch>` is empty for every branch.
+   A non-empty range strands commits, so the release silently omits them.
+2. **`main` matches the remote** — clean tree, not behind `origin/main` (ahead is expected;
+   those are the commits shipping).
+3. **`version=` in `gradle.properties` equals the tag's `X.Y.Z`** — the publish job asserts
+   this and fails the run on a mismatch, after the tag name is already spent.
 
-Then: push the bump commit, tag `vX.Y.Z`, push the tag. Tagging is human-owned.
+Then bump `gradle.properties`, commit, push `main`, and push the tag `vX.Y.Z`. The tag runs
+`test → build → publish`; a failing suite blocks the publish, so a tag can never ship an
+untested commit.
 
 ## Post-publish
 
-Verify **anonymously** — no `gh`, no auth. An authenticated client sees a private repo's
-release perfectly while the world gets 404 (this happened on v0.2.0: the release "succeeded"
-yet was uninstallable for everyone).
+Confirm the release actually landed and is downloadable — fetch the published URLs
+directly, not any local build output.
 
 For `BASE = https://github.com/Treide1/taskkling/releases/latest/download`:
 
-1. **HEAD 200 on all 7 assets:** `taskkling-linux-x64`, `taskkling-macos-arm64`,
-   `taskkling-macos-x64`, `taskkling-windows-x64.exe`, `SHA256SUMS`, `install.sh`,
-   `install.ps1`. A 200 on `latest/download/...` also proves `latest` advanced to the new tag.
-2. **`SHA256SUMS` is well-formed:** fetch it anonymously; assert 4 entries, one per binary.
-3. **The install path works end-to-end:** anonymously fetch and run one install script
-   (`curl -fsSL $BASE/install.sh | sh` on a scratch HOME, or the ps1 equivalent) and check
-   `taskkling --version` reports the new version.
+1. **HEAD 200 on all 7 assets** — the four binaries (`taskkling-linux-x64`,
+   `taskkling-macos-arm64`, `taskkling-macos-x64`, `taskkling-windows-x64.exe`) plus
+   `SHA256SUMS`, `install.sh`, `install.ps1`. A 200 on `latest/download/…` also proves
+   `latest` advanced to the new tag.
+2. **`SHA256SUMS` is well-formed** — exactly four entries, one per binary.
+3. **The install path works end-to-end** — fetch and run one install script from the
+   published URL on a scratch `HOME` and confirm `taskkling --version` reports the new version.

@@ -40,12 +40,16 @@ jobs:
         include:
           - os: ubuntu-latest
             target: LinuxX64
+            test: linuxX64Test
           - os: macos-latest
             target: MacosArm64
+            test: macosArm64Test
           - os: macos-latest
             target: MacosX64
+            test: macosX64Test
           - os: windows-latest
             target: MingwX64
+            test: mingwX64Test
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -62,5 +66,9 @@ jobs:
       - run: chmod +x ./gradlew
       - if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
-      - name: Link ${{ matrix.target }} executable
-        run: ./gradlew :cli:linkDebugExecutable${{ matrix.target }} --no-daemon --stacktrace
+      - name: Build & test ${{ matrix.target }} CLI
+        # The :cli <target>Test task depends on linkDebugExecutable<Target> (wired in
+        # cli/build.gradle.kts), so this links the product binary AND runs the black-box
+        # subprocess golden tests (t-hfwt) + the pure-helper unit seam (t-oxaa) against that
+        # freshly-linked binary — CI is the cross-platform verifier for the single read+write path.
+        run: ./gradlew :cli:${{ matrix.test }} --no-daemon --stacktrace
