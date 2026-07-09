@@ -1,9 +1,11 @@
 package io.taskkling.core
 
+import kotlinx.datetime.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 /** Computed attributes / ready-set semantics (PRD §8.2, §11, §17). */
 class ComputeTest {
@@ -82,6 +84,50 @@ class ComputeTest {
     fun waitingWithElapsedDeferResurfaces() {
         val c = computeAll(listOf(task("t-w", status = Status.WAITING, defer = past))).getValue("t-w")
         assertTrue(c.resurfaced)
+    }
+
+    // --- Time-boundary edges, pinned with an injected clock (t-7ce4).
+    // `now` is fixed so the boundary comparisons (defer `>`, due `<`, resurface
+    // `<=`) are exercised at exactly `now` rather than at a live wall clock.
+
+    private val now = Instant.parse("2026-07-09T12:00:00Z")
+
+    @Test
+    fun deferExactlyAtNowDoesNotSuppressReadiness() {
+        // deferActive uses strict `>`, so defer == now is NOT active.
+        val at = computeAll(listOf(task("t-d", defer = now.toString())), now = now).getValue("t-d")
+        assertFalse(at.deferred)
+        assertTrue(at.ready)
+        // One second later is still in the future → deferred.
+        val after = computeAll(listOf(task("t-d", defer = (now + 1.seconds).toString())), now = now).getValue("t-d")
+        assertTrue(after.deferred)
+        assertFalse(after.ready)
+    }
+
+    @Test
+    fun dueExactlyAtNowIsNotOverdue() {
+        // overdue uses strict `<`, so due == now is NOT yet overdue.
+        val at = computeAll(listOf(task("t-o", due = now.toString())), now = now).getValue("t-o")
+        assertFalse(at.overdue)
+        // One second earlier has already passed → overdue.
+        val before = computeAll(listOf(task("t-o", due = (now - 1.seconds).toString())), now = now).getValue("t-o")
+        assertTrue(before.overdue)
+    }
+
+    @Test
+    fun waitingDeferExactlyAtNowResurfaces() {
+        // resurface uses `<=`, so a waiting task whose defer == now resurfaces.
+        val at = computeAll(
+            listOf(task("t-w", status = Status.WAITING, defer = now.toString())),
+            now = now,
+        ).getValue("t-w")
+        assertTrue(at.resurfaced)
+        // A defer one second in the future has not elapsed yet → no resurface.
+        val after = computeAll(
+            listOf(task("t-w", status = Status.WAITING, defer = (now + 1.seconds).toString())),
+            now = now,
+        ).getValue("t-w")
+        assertFalse(after.resurfaced)
     }
 
     @Test
