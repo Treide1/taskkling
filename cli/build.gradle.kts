@@ -34,6 +34,13 @@ kotlin {
             implementation(libs.kotlinx.cli)
             implementation(libs.kotlinx.serialization.json)
         }
+        // Test seam for the pure CLI helpers (CliHelpers.kt) — argv parsing + table/field
+        // rendering. `:cli` is native-only, so these compile into a per-target native test
+        // binary and run via the host `<target>Test` task (e.g. mingwX64Test on Windows);
+        // mirrors the `:ui` layout-math seam (t-qkqo) with the kotlin-test runner used by :core.
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
     }
 }
 
