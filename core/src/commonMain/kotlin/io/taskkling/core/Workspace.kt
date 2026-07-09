@@ -145,16 +145,32 @@ public class Workspace(
                 if (!fs.exists(root / ".taskkling")) {
                     throw TkError(ExitCode.USAGE, "no taskkling workspace at --root $root")
                 }
-                return Workspace(root, Config.load(fs, root / ".taskkling" / "config.toml"))
+                return openAt(fs, root)
             }
-            var dir: Path? = fs.canonicalize(".".toPath())
+            val root = findWorkspaceRoot(fs, fs.canonicalize(".".toPath()))
+                ?: throw TkError(ExitCode.USAGE, "not inside a taskkling workspace (run 'taskkling init')")
+            return openAt(fs, root)
+        }
+
+        /** Build the [Workspace] rooted at [root], loading its `.taskkling/config.toml`. */
+        private fun openAt(fs: FileSystem, root: Path): Workspace =
+            Workspace(root, Config.load(fs, root / ".taskkling" / "config.toml"))
+
+        /**
+         * Walk up from [start] to the nearest ancestor directory that holds a
+         * `.taskkling/` (git-style discovery, PRD §9), or null if none is found
+         * before the filesystem root. Extracted from [discover] so the walk-up is
+         * unit-testable without mutating the process working directory (the JVM
+         * has no portable `chdir`, and okio's `canonicalize(".")` reads a cached
+         * cwd, so a nested cwd cannot be simulated at runtime).
+         */
+        internal fun findWorkspaceRoot(fs: FileSystem, start: Path): Path? {
+            var dir: Path? = start
             while (dir != null) {
-                if (fs.exists(dir / ".taskkling")) {
-                    return Workspace(dir, Config.load(fs, dir / ".taskkling" / "config.toml"))
-                }
+                if (fs.exists(dir / ".taskkling")) return dir
                 dir = dir.parent
             }
-            throw TkError(ExitCode.USAGE, "not inside a taskkling workspace (run 'taskkling init')")
+            return null
         }
     }
 }
