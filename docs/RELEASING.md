@@ -34,3 +34,11 @@ For `BASE = https://github.com/Treide1/taskkling/releases/latest/download`:
 2. **`SHA256SUMS` is well-formed** — exactly four entries, one per binary.
 3. **The install path works end-to-end** — fetch and run one install script from the
    published URL on a scratch `HOME` and confirm `taskkling --version` reports the new version.
+
+   > **Windows hazard:** overriding `HOME`/env vars does **not** isolate `install.ps1`'s
+   > PATH step — it writes the **real** `HKCU\Environment\Path` regardless (and that rewrite
+   > carries the t-359h empty-segment normalization). Running it naively pollutes the real
+   > user registry. Snapshot `HKCU\Environment\Path` before and byte-exact-restore it after,
+   > or verify the artifact directly (download + extract + `--version`) without invoking the
+   > PATH registration. See `dx` task for an `install.ps1` `-NoPath`/isolation flag that
+   > would make this safe by construction.
