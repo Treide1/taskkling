@@ -1,3 +1,6 @@
+import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
+import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest
 import org.jetbrains.kotlin.konan.target.HostManager
 
 plugins {
@@ -40,7 +43,32 @@ kotlin {
         // mirrors the `:ui` layout-math seam (t-qkqo) with the kotlin-test runner used by :core.
         commonTest.dependencies {
             implementation(kotlin("test"))
+            // Subprocess golden tests (t-hfwt) read captured stdout/stderr files with okio and
+            // parse `export` JSON with serialization; both are :cli's own transitive deps but
+            // must be declared for the test source set to compile against them directly.
+            implementation(libs.okio)
+            implementation(libs.kotlinx.serialization.json)
         }
+    }
+}
+
+// Wire the black-box subprocess tests (t-hfwt) to the real binary. Each `<target>Test` task
+// must (a) run only AFTER the matching debug executable is linked, and (b) know where that
+// executable is — injected via TASKKLING_TEST_BIN, which the native test harness reads. KGP
+// registers all four `<target>Test` tasks on every host, but each CI matrix leg invokes only
+// its own host-native one (mingwX64Test on Windows, linuxX64Test on Linux, macos*Test on macOS).
+kotlin.targets.withType(KotlinNativeTarget::class.java).configureEach {
+    val exe = binaries.getExecutable(NativeBuildType.DEBUG)
+    val userHome = layout.buildDirectory.dir("test-userhome/$name").get().asFile
+    tasks.matching { it.name == "${name}Test" }.configureEach {
+        dependsOn(exe.linkTaskName)
+        (this as KotlinNativeTest).environment("TASKKLING_TEST_BIN", exe.outputFile.absolutePath)
+        // Sandbox the user-level config/cache home (UserPaths.kt) into the build dir so the
+        // `config init` test — which writes the user-level config.toml, not a workspace file —
+        // never touches the real developer's home dir. Cleaned by `clean`; fresh on CI.
+        environment("XDG_CONFIG_HOME", userHome.resolve("config").absolutePath)
+        environment("XDG_CACHE_HOME", userHome.resolve("cache").absolutePath)
+        environment("LOCALAPPDATA", userHome.resolve("localappdata").absolutePath)
     }
 }
 
