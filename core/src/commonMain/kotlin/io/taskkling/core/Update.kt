@@ -74,20 +74,9 @@ public fun parseWindowsArch(processorArchitecture: String): HostArch? = when (pr
  * Windows. Throws [IllegalArgumentException] for an unsupported combination.
  */
 public fun resolveAssetName(os: HostOs, arch: HostArch): String {
-    val osPart = when (os) {
-        HostOs.LINUX -> "linux"
-        HostOs.MACOS -> "macos"
-        HostOs.WINDOWS -> "windows"
-    }
-    val archPart = when (arch) {
-        HostArch.X64 -> "x64"
-        HostArch.ARM64 -> "arm64"
-    }
-    val name = "taskkling-$osPart-$archPart"
-    val supported = setOf("taskkling-linux-x64", "taskkling-macos-arm64", "taskkling-macos-x64", "taskkling-windows-x64")
-    require(name in supported) {
-        "no prebuilt taskkling binary for $osPart-$archPart (supported: linux-x64, macos-arm64, macos-x64, windows-x64)"
-    }
+    // The `<os>-<arch>` vocabulary (and its exhaustive support check) lives in
+    // releaseTarget (UiAssets.kt) since ADR-011 made UI assets reuse it verbatim.
+    val name = "taskkling-${releaseTarget(os, arch)}"
     return if (os == HostOs.WINDOWS) "$name.exe" else name
 }
 
