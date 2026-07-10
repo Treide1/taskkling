@@ -30,10 +30,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
@@ -237,15 +234,7 @@ private fun Header(export: ExportDto?) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Image(painterResource("icons/taskkling.svg"), contentDescription = null, modifier = Modifier.size(18.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Brand lockup (DESIGN §Brand): the double-k of the name set in accent.
-                Text(
-                    buildAnnotatedString {
-                        append("task")
-                        withStyle(SpanStyle(color = Tk.accent)) { append("kk") }
-                        append("ling")
-                    },
-                    fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, color = Tk.txt,
-                )
+                Text("taskkling", fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, color = Tk.txt)
                 Text(" · graph", fontSize = 14.sp, color = Tk.faint)
             }
         }

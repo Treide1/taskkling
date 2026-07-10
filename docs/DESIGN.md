@@ -310,8 +310,9 @@ gives the tool its creature ("task-**ling**").
 - **Tile**: rounded square, `rx` 28/128, fill `bg`, 2px `line` border. The mark
   uses only §3 tokens: `done` deps, `accent` edges, `ready` node, `bg` eyes.
 - **Wordmark**: JetBrains Mono Bold, outlined to paths from the bundled font;
-  the double-k is always set in `accent` (`task`·`kk`·`ling`). The in-app
-  header reproduces this lockup in live text.
+  in the SVG lockup the double-k is set in `accent` (`tas`·`kk`·`ling`). The
+  in-app header sets the name as plain `txt`-colored text — no accent split;
+  brand presence in the header comes from the 18dp glyph.
 - **Eyes are optional detail**: below ~32px they blur away and the mark must
   still read as deps→`>`→node. Never scale the eyes up to compensate.
 - **Icon containers**: `ui/icons/taskkling.{ico,icns,png}` wired into
