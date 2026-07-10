@@ -211,11 +211,11 @@ reboot; on Unix the binary is removed right away.
 
 ## Development
 
-`java`/`gradle` are not assumed on `PATH`. Set `JAVA_HOME` to a **JDK 21 (Temurin)** first:
+Any JDK findable on `PATH` or `JAVA_HOME` boots Gradle; the build then
+auto-provisions the JDK 21 it actually compiles with (foojay toolchain
+resolver) — no manual Temurin install, no `JAVA_HOME` ritual.
 
 ```sh
-export JAVA_HOME=/path/to/temurin-21          # Windows: setx / $env:JAVA_HOME
-
 ./gradlew :cli:linkDebugExecutableMingwX64    # native CLI (host target: Mingw/Linux/Macos)
 ./gradlew :cli:linkReleaseExecutableMingwX64  # optimized release binary
 ./gradlew :contract:jvmTest :core:jvmTest     # fast JVM unit/golden tests

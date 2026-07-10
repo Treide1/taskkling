@@ -10,6 +10,13 @@ pluginManagement {
     }
 }
 
+// Auto-provisions the JDK 21 compile toolchain (foojay/Adoptium discovery) when
+// no matching local JDK exists — contributors only need *some* JDK to boot the
+// Gradle launcher (t-zbvo). In CI this is a no-op: setup-java pre-satisfies it.
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "0.8.0"
+}
+
 dependencyResolutionManagement {
     repositories {
         mavenCentral()

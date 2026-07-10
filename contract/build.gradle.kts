@@ -4,6 +4,10 @@ plugins {
 }
 
 kotlin {
+    // Compile toolchain: JDK 21, vendor unpinned, foojay-provisioned — keep in
+    // lockstep with CI's setup-java `java-version` (full note in :core).
+    jvmToolchain(21)
+
     jvm()
 
     // Native targets per PRD §6.1 / §15. mingwX64 is the host (Windows).

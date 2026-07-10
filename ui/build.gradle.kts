@@ -6,6 +6,12 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
 }
 
+kotlin {
+    // Compile toolchain: JDK 21, vendor unpinned, foojay-provisioned — keep in
+    // lockstep with CI's setup-java `java-version` (full note in :core).
+    jvmToolchain(21)
+}
+
 dependencies {
     // UI links ONLY :contract (the DTOs) — never :core. This structurally
     // guarantees the single-write-path principle (PRD §6.1). The UI is a pure

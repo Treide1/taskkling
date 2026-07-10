@@ -37,6 +37,11 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask<*>>().con
 }
 
 kotlin {
+    // Compile toolchain: JDK 21, vendor deliberately unpinned; the foojay resolver
+    // (settings.gradle.kts) auto-provisions it when absent. CI workflows' setup-java
+    // `java-version` must move in lockstep if this number ever bumps.
+    jvmToolchain(21)
+
     jvm()
 
     mingwX64()
