@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect x="1" y="1" width="126" height="126" rx="28" fill="#0E1116" stroke="#2A3340" stroke-width="2"/>
+  <!-- markdown checkbox brackets -->
+  <g fill="none" stroke="#8B97A7" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M46 26 H30 V102 H46"/>
+    <path d="M82 26 H98 V102 H82"/>
+  </g>
+  <!-- the ready node inside -->
+  <rect x="50" y="50" width="28" height="28" rx="7" fill="#3FB950"/>
+</svg>

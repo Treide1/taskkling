@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect x="1" y="1" width="126" height="126" rx="28" fill="#0E1116" stroke="#2A3340" stroke-width="2"/>
+  <!-- kk drawn as graph edges -->
+  <g fill="none" stroke="#D6DEE8" stroke-width="11" stroke-linecap="round">
+    <path d="M34 26 V102"/>
+    <path d="M34 74 L60 48"/>
+    <path d="M34 74 L60 100"/>
+    <path d="M74 26 V102"/>
+    <path d="M74 74 L100 48"/>
+    <path d="M74 74 L100 100"/>
+  </g>
+  <!-- node dots at the edge tips -->
+  <g>
+    <circle cx="60" cy="48" r="9" fill="#4DA3FF"/>
+    <circle cx="60" cy="100" r="9" fill="#4DA3FF"/>
+    <circle cx="100" cy="48" r="9" fill="#3FB950"/>
+    <circle cx="100" cy="100" r="9" fill="#4DA3FF"/>
+  </g>
+</svg>
