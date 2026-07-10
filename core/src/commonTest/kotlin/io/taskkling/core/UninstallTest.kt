@@ -1,5 +1,11 @@
 package io.taskkling.core
 
+import okio.FileSystem
+import okio.ForwardingFileSystem
+import okio.IOException
+import okio.Path
+import okio.Path.Companion.toPath
+import okio.fakefilesystem.FakeFileSystem
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -120,4 +126,77 @@ class UninstallTest {
     // (FileSystem-backed but pure in the same sense installLocalBin/restampLocalBinVersionIfPresent are —
     // no platform primitive involved; exercised here against a bare in-memory-style temp check is out of
     // scope for commonTest without a JVM temp dir, so this stays a jvmTest-only concern if ever added.)
+
+    // --- cache-home scope (ADR-011) ---------------------------------------------------------------------------------
+
+    @Test
+    fun globalUninstallScopeCoversTheCacheHome() {
+        assertTrue(uninstallScopeCoversCacheHome(InstallTier.GLOBAL))
+    }
+
+    @Test
+    fun localUninstallScopeNeverTouchesTheCacheHome() {
+        // A surviving global install may still be using the user-level cache (ADR-011's tier guard).
+        assertFalse(uninstallScopeCoversCacheHome(InstallTier.LOCAL))
+    }
+
+    // --- deleteCacheHomeBestEffort (ADR-011) ------------------------------------------------------------------------
+
+    private val cacheHome = "/home/me/.cache/taskkling".toPath()
+
+    /** A populated ADR-010-shaped cache: versioned UI jars + a runtime image + update-check state. */
+    private fun populatedCacheFs(): FakeFileSystem = FakeFileSystem().apply {
+        createDirectories(cacheHome / "ui" / "app" / "0.6.0")
+        write(cacheHome / "ui" / "app" / "0.6.0" / "taskkling-ui.jar") { writeUtf8("jar") }
+        createDirectories(cacheHome / "ui" / "runtime" / "jdk21" / "bin")
+        write(cacheHome / "ui" / "runtime" / "jdk21" / "bin" / "java") { writeUtf8("elf") }
+        write(cacheHome / "update-check.toml") { writeUtf8("checked_at = 0") }
+    }
+
+    @Test
+    fun deletesTheWholeCacheHomeAndReportsNothing() {
+        val fs = populatedCacheFs()
+        assertEquals(emptyList(), deleteCacheHomeBestEffort(cacheHome, fs))
+        assertFalse(fs.exists(cacheHome))
+    }
+
+    @Test
+    fun isANoOpWithNoLeftoversWhenTheCacheHomeDoesNotExist() {
+        // Fresh install that never ran `taskkling ui`: nothing to delete, nothing to report.
+        assertEquals(emptyList(), deleteCacheHomeBestEffort(cacheHome, FakeFileSystem()))
+    }
+
+    /** Wraps [delegate] so deleting exactly [locked] throws — a running UI's file lock, deterministically. */
+    private class LockedFileFs(delegate: FileSystem, private val locked: Path) : ForwardingFileSystem(delegate) {
+        override fun delete(path: Path, mustExist: Boolean) {
+            if (path == locked) throw IOException("locked: $path")
+            super.delete(path, mustExist)
+        }
+    }
+
+    @Test
+    fun lockedFileIsSkippedReportedByPathAndEverythingElseStillGoes() {
+        val lockedJava = cacheHome / "ui" / "runtime" / "jdk21" / "bin" / "java"
+        val fs = LockedFileFs(populatedCacheFs(), lockedJava)
+
+        val leftovers = deleteCacheHomeBestEffort(cacheHome, fs)
+
+        // The locked file is the ONLY reported leftover — its still-standing ancestor dirs are
+        // implied by it, not listed; every sibling subtree is gone despite the failure.
+        assertEquals(listOf(lockedJava), leftovers)
+        assertTrue(fs.exists(lockedJava))
+        assertFalse(fs.exists(cacheHome / "ui" / "app"))
+        assertFalse(fs.exists(cacheHome / "update-check.toml"))
+    }
+
+    @Test
+    fun leftoverKeepsOnlyItsOwnAncestorChainStanding() {
+        val lockedJar = cacheHome / "ui" / "app" / "0.6.0" / "taskkling-ui.jar"
+        val fs = LockedFileFs(populatedCacheFs(), lockedJar)
+
+        deleteCacheHomeBestEffort(cacheHome, fs)
+
+        assertTrue(fs.exists(cacheHome / "ui" / "app" / "0.6.0")) // ancestor of the locked file: must survive
+        assertFalse(fs.exists(cacheHome / "ui" / "runtime"))      // unrelated subtree: fully collected
+    }
 }

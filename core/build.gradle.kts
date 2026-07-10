@@ -89,6 +89,10 @@ kotlin {
         // inherit the same kotlin-test runner.
         commonTest.dependencies {
             implementation(kotlin("test"))
+            // In-memory FileSystem for the cache-home best-effort-delete tests
+            // (UninstallTest) — locked-file behavior is simulated by a forwarding
+            // wrapper that throws on delete, deterministic on every target.
+            implementation(libs.okio.fakefilesystem)
         }
     }
 }

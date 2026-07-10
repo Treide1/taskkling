@@ -17,6 +17,7 @@ import io.taskkling.core.appendBody
 import io.taskkling.core.buildExport
 import io.taskkling.core.cleanup
 import io.taskkling.core.computeAll
+import io.taskkling.core.deleteCacheHomeBestEffort
 import io.taskkling.core.deleteTask
 import io.taskkling.core.initWorkspace
 import io.taskkling.core.installLocalBin
@@ -59,6 +60,8 @@ import io.taskkling.core.sweepStaleOldExecutableForRunningBinary
 import io.taskkling.core.toDto
 import io.taskkling.core.uninstallOtherBinary
 import io.taskkling.core.uninstallRunningBinary
+import io.taskkling.core.uninstallScopeCoversCacheHome
+import io.taskkling.core.userCacheDirPath
 import io.taskkling.core.unlinkDepends
 import io.taskkling.core.updateNotifierLine
 import io.taskkling.core.UpdateCheckCache
@@ -572,8 +575,11 @@ private class UpdateCmd : TkCommand("update", "Self-update the running binary; -
 
 /**
  * `uninstall [--global|--local] [--purge] [-y]` — the symmetric inverse of
- * install (ADR-004): removes the tier-resolved binary and the `PATH` entry
- * install(.sh/.ps1) added; NEVER the workspace's data — `.taskkling/` plus the
+ * install (ADR-004): removes the tier-resolved binary, the `PATH` entry
+ * install(.sh/.ps1) added, and — GLOBAL tier only (ADR-011) — the user-level
+ * cache home (UI jars, runtime images, update-check state: machine-replaceable
+ * tool bytes, best-effort, locked leftovers reported by path); NEVER the
+ * workspace's data — `.taskkling/` plus the
  * resolved tasks dir ([Workspace.purgePlan], t-qoyn) — unless `--purge` says so
  * explicitly, on the command line, in every
  * mode. Interactive by default (states consequences, then asks); `-y` runs
@@ -581,7 +587,7 @@ private class UpdateCmd : TkCommand("update", "Self-update the running binary; -
  * only non-interactive way to also destroy data, and interactive `--purge`
  * still confirms that wipe on its own, separately.
  */
-private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary + PATH entry; --purge also deletes .taskkling/") {
+private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary, PATH entry + user cache; --purge also deletes .taskkling/") {
     val global by option(ArgType.Boolean, "global", description = "Target the global-tier binary explicitly").default(false)
     val local by option(ArgType.Boolean, "local", description = "Target the per-project local-bin binary explicitly").default(false)
     val purge by option(
@@ -646,6 +652,11 @@ private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary
 
         val pathEntryDir = if (target.tier == InstallTier.GLOBAL) target.path.parent?.toString() else null
         val pathEntryPresent = pathEntryDir?.let { windowsPathHasEntry(it) } ?: false
+        // Cache home (ADR-011): part of the GLOBAL safe scope — machine-replaceable tool bytes
+        // (UI jars, runtime images, update-check state), nothing authored. A LOCAL uninstall
+        // never touches it: a surviving global install may still be using it.
+        val cacheHome = userCacheDirPath()
+        val cacheHomeInScope = uninstallScopeCoversCacheHome(target.tier) && fs.exists(cacheHome)
         val taskCount = workspace?.allKnownIds()?.size ?: 0
         // What --purge would erase (t-qoyn): the meta dir PLUS the default layout's
         // root-level tasks dir. coversTasks=false flags a tasks_dir the plan refuses
@@ -657,6 +668,7 @@ private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary
             println("taskkling uninstall (${target.tier.name.lowercase()} tier):")
             println("  binary:  ${target.path}")
             if (pathEntryPresent) println("  PATH:    remove '$pathEntryDir' from your user PATH")
+            if (cacheHomeInScope) println("  cache:   $cacheHome — cached UI/runtime artifacts and update-check state (re-downloadable)")
             if (workspace != null && purgePlan != null) {
                 if (purge) {
                     val what = purgePlan.targets.joinToString(" + ")
@@ -694,6 +706,10 @@ private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary
         // PATH de-entry (global tier only; a true no-op on POSIX and whenever the entry was already absent).
         val pathChanged = pathEntryDir?.let { removeFromWindowsUserPath(it) } ?: false
 
+        // Cache home (ADR-011, global safe scope): best-effort — locked files (a running UI)
+        // are skipped and reported below, never an error; no reboot scheduling.
+        val cacheLeftovers = if (cacheHomeInScope) deleteCacheHomeBestEffort(cacheHome) else emptyList()
+
         // Purge — the ONLY path that touches the task graph, and only ever behind the explicit flag.
         val purgedTargets = if (purge && purgePlan != null) purgePlan.targets else emptyList()
         purgedTargets.forEach { fs.deleteRecursively(it, mustExist = false) }
@@ -704,6 +720,14 @@ private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary
                 println("taskkling: off PATH now; the locked file will clear on your next reboot")
             }
             if (pathChanged) println("taskkling: removed '$pathEntryDir' from your user PATH")
+            if (cacheHomeInScope) {
+                if (cacheLeftovers.isEmpty()) {
+                    println("taskkling: removed cache home $cacheHome")
+                } else {
+                    println("taskkling: cache home $cacheHome partially removed; still present (in use by a running UI?) — delete manually:")
+                    cacheLeftovers.forEach { println("  $it") }
+                }
+            }
             if (purgedTargets.isNotEmpty()) println("taskkling: purged ${purgedTargets.joinToString(" + ")}")
         }
     }

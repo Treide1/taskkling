@@ -154,6 +154,59 @@ public fun uninstallRunningBinary(exePath: Path) {
     }
 }
 
+// --- Cache-home removal (ADR-011: global uninstall's safe scope) ------------------------------------------------
+
+/**
+ * Whether uninstalling [tier] may delete the user-level cache home (ADR-011).
+ * Only GLOBAL: the cache is user-level state (UI jars, runtime images,
+ * update-check cache — all machine-replaceable tool bytes, nothing authored),
+ * so removing a per-project `.taskkling/bin` copy must leave it intact for a
+ * surviving global install. Config home and workspace data stay
+ * `--purge`-only regardless (ADR-004's posture, unchanged).
+ */
+public fun uninstallScopeCoversCacheHome(tier: InstallTier): Boolean = tier == InstallTier.GLOBAL
+
+/**
+ * Best-effort recursive delete of [root] (the cache home, ADR-011): every
+ * entry that cannot be deleted (locked — e.g. a running UI's jar or its
+ * runtime's `java.exe`) is skipped, never an error, and returned so the
+ * uninstall summary can report it with its path. A directory whose descendant
+ * already failed is left silently (the descendant's path is report enough).
+ * Unlike the binary's own Windows self-delete, no reboot scheduling: a
+ * lingering cache file has no `PATH` presence — it is inert bytes the summary
+ * tells the user how to remove. Empty list = [root] absent or fully removed.
+ */
+public fun deleteCacheHomeBestEffort(root: Path, fs: FileSystem = FileSystem.SYSTEM): List<Path> {
+    if (fs.metadataOrNull(root) == null) return emptyList()
+    val leftovers = mutableListOf<Path>()
+    deleteTreeBestEffort(fs, root, leftovers)
+    return leftovers
+}
+
+/** Depth-first best-effort delete; returns whether [path] is fully gone, appending failures to [leftovers]. */
+private fun deleteTreeBestEffort(fs: FileSystem, path: Path, leftovers: MutableList<Path>): Boolean {
+    if (fs.metadataOrNull(path)?.isDirectory == true) {
+        val children = try {
+            fs.list(path)
+        } catch (_: Exception) {
+            leftovers += path
+            return false
+        }
+        var childrenGone = true
+        for (child in children) {
+            if (!deleteTreeBestEffort(fs, child, leftovers)) childrenGone = false
+        }
+        if (!childrenGone) return false // non-empty dir can't go; its failing descendants are already reported
+    }
+    return try {
+        fs.delete(path, mustExist = false)
+        true
+    } catch (_: Exception) {
+        leftovers += path
+        false
+    }
+}
+
 /**
  * Remove a binary that is NOT the currently running process — a plain,
  * unlocked delete on both OSes (the running-image lock only bites the
