@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect x="1" y="1" width="126" height="126" rx="28" fill="#0E1116" stroke="#2A3340" stroke-width="2"/>
+  <!-- two k's as two little marching koblets -->
+  <g fill="none" stroke="#D6DEE8" stroke-width="12" stroke-linecap="round">
+    <path d="M34 30 V100"/>
+    <path d="M34 72 L58 48"/>
+    <path d="M34 72 L58 100"/>
+    <path d="M76 30 V100"/>
+    <path d="M76 72 L100 48"/>
+    <path d="M76 72 L100 100"/>
+  </g>
+  <!-- eyes -->
+  <circle cx="34" cy="42" r="7" fill="#3FB950"/>
+  <circle cx="76" cy="42" r="7" fill="#3FB950"/>
+</svg>

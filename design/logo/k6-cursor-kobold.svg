@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect x="1" y="1" width="126" height="126" rx="28" fill="#0E1116" stroke="#2A3340" stroke-width="2"/>
+  <!-- the prompt -->
+  <path d="M28 40 L52 64 L28 88" fill="none" stroke="#4DA3FF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- the block cursor, awake -->
+  <rect x="66" y="36" width="40" height="56" rx="8" fill="#3FB950"/>
+  <rect x="76" y="50" width="7" height="14" rx="3.5" fill="#0E1116"/>
+  <rect x="90" y="50" width="7" height="14" rx="3.5" fill="#0E1116"/>
+</svg>

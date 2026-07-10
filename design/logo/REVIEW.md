@@ -1,5 +1,26 @@
 # taskkling logo — candidate review
 
+> **Round 2 (current).** After the round-1 review the direction pivoted to the
+> *kobold* seed: branch out from "double-k with eyes", some variants leaning
+> DAG, some face, some unconventional. Six drafts (`k1`–`k6`, sheets:
+> `review/tiles-k.png`) were judged down to three finalists
+> (`review/context-k.png`):
+>
+> - **`k2-dag-kobold`** — the creature's body *is* a graph: ready-green head
+>   node with eyes, accent-blue edge limbs down to done-gray nodes. Cute AND
+>   literal DAG. Reads at every size.
+> - **`k3-ready-kobold`** — round-1's ready-DAG (c1b) with the ready node
+>   *awake*: done deps converge through the `>` chevron into a green node with
+>   eyes. Most on-message; eyes degrade gracefully at 16px.
+> - **`k6-cursor-kobold`** — `> ▮`: terminal prompt + block-cursor creature
+>   with eyes. Boldest silhouette, best 16px of the field, purest hacker read.
+>
+> Cut in round 2: `k1-kk-koblets` (cyclops-antenna dots, weak face),
+> `k5-sprite-kk-ears` (busier than the original c3 sprite, ears didn't pay
+> off), `k4-bracket-face` (`>_<` reads as frustration — wrong vibe).
+>
+> Round 1 below is kept for the record.
+
 Three refined candidates for the app identity. All use only DESIGN §3 tokens
 (`bg #0E1116`, `line #2A3340`, `accent #4DA3FF`, `ready #3FB950`, `done #6E7681`,
 `muted #8B97A7`, `txt #D6DEE8`) on the standard dark app tile, and every lockup
