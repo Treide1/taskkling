@@ -35,6 +35,13 @@ mutation flow, discovery), see PRD §6.3 and §13.
    a pure presentation choice.
 7. **Redundant encoding.** State is never carried by color alone: every card also shows a
    textual state pill, dropped titles are struck through, done/dropped titles are de-emphasized.
+8. **CLI-editable is UI-editable.** Every stored, CLI-editable attribute value is editable in
+   the UI, through the same CLI verbs — the UI renders and forwards, it never grows its own
+   write path (PRD §13). Graph-shaped interactions are explicitly excluded: `link`/`unlink`
+   (the `depends` edges) stay CLI-only; the UI never edits the graph. Stamps (`created`,
+   `closed`), `id`, and `computed.*` are not editable anywhere. The concrete field↔verb
+   mapping lives in §9 — the one place to update when the CLI attribute surface changes
+   (e.g. the task-store-v2 overhaul).
 
 ## 2. Primary state & precedence
 
@@ -220,10 +227,36 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
     + "→" — floats at the panel's top-right (`panel2` fill, `line` border, shadow). Clicking
     it re-selects the pinned task and pans its card back into view (the same navigate as
     reference links).
-  - Mutation actions (done / drop / reopen) live here; style them as quiet outline buttons
-    (`panel2` fill, `line` border, `txt` label) — utilitarian, not primary-colored. While a
-    mutation is in flight they render disabled (0.4 alpha, no hand cursor); the UI never
-    blocks on the CLI subprocess and refreshes from its returned export.
+  - **Direct field editing** (principle 8): stored fields are edited in place on the panel;
+    there are no separate mutation buttons (the former done/drop/reopen row is retired).
+    - **Enum fields** open a value dropdown on click: the closed state renders like a plain
+      field value with a hover affordance (hand cursor, subtle chevron); the open menu is a
+      quiet outline surface (`panel2` fill, `line` border) with one `txt` item per value and
+      the current value marked. Picking the current value is a no-op (no subprocess).
+    - **Free-text fields**: clicking the value (or the faint "—" placeholder) swaps in an
+      inline editor prefilled with the current value, with a row-trailing quiet **Save**
+      outline button. Save runs the mapped verb; Escape cancels; changing the selection
+      discards an open editor. Datetime validation is the CLI's — a rejected value surfaces
+      the CLI error and keeps the editor open. An emptied clearable field clears the value.
+    - Field↔verb mapping (the UI invents no verbs; this table is the update point when the
+      CLI attribute surface changes):
+
+      | field | edit | CLI |
+      |----------------------|--------------------------------------|-----------------------------------------|
+      | status | dropdown open/done/dropped/waiting | `reopen` / `done` / `drop` / `wait` |
+      | priority | dropdown low/normal/high | `set -p <value>` |
+      | title | text; cannot be emptied | `set --title <text>` |
+      | thread, due, defer | text; empty clears | `set --thread/--due/--defer` (`--clear`) |
+      | external requirement | text | `wait <id> --on <text>` — sets `status=waiting` (the CLI's own coupling); cleared only by status transitions |
+      | depends ("blocked by") | **not editable** (principle 8) | `link`/`unlink` stay CLI-only |
+      | id, created, closed, computed | not editable | — |
+
+    - While a mutation is in flight every editing affordance renders disabled (0.4 alpha, no
+      hand cursor); the UI never blocks on the CLI subprocess and refreshes from its returned
+      export.
+  - **Selectable text**: panel text is selectable and copyable. Interactive islands (dropdowns,
+    inline editors, and the reference links' click-to-navigate) opt out of selection where the
+    two gestures fight.
 - **Legend** (bottom, `panel`, 1px `line` top border, padding 8×16): one 12px rounded swatch +
   `muted` label per state, plus the reading hint "→ blocker points to blocked task" pushed
   right.
