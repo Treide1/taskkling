@@ -297,16 +297,19 @@ No entrance animations, no layout animation, nothing longer than 200ms.
 
 ## 14. Brand
 
-The app identity is the **ready-kobold**: two `done`-colored upstream nodes whose
-accent-colored edges converge — forming a terminal `>` prompt — into one
-`ready`-colored node with eyes. It draws §2's core derivation literally (*a task
-is ready when all its deps are done*) in the §3 state palette, and the awake node
-gives the tool its creature ("task-**ling**").
+The creature in the mark is **the taskkling** — the app's namesake and mascot:
+two `done`-colored upstream nodes whose accent-colored edges converge — forming
+a terminal `>` prompt — into one `ready`-colored node, awake with eyes. That
+awake node *is* the taskkling. It draws §2's core derivation literally (*a task
+is ready when all its deps are done*) in the §3 state palette. Branding leads
+with this name: it is "the taskkling", never a codename.
 
 - **Canonical sources**: `docs/assets/logo.svg` (128×128 tile) and
   `docs/assets/lockup.svg` (tile + wordmark). Everything else (ICO/ICNS/PNG,
-  social preview) is generated from these — see `design/logo/` for the
-  exploration record, review sheets, and the resvg/fontTools pipeline.
+  social preview) is generated from these with the pipeline in `design/logo/`
+  (resvg-js renderer + fontTools wordmark outliner). The candidate exploration
+  and its review record live in git history (`cb174a8..8e0cafa`), not the
+  working tree.
 - **Tile**: rounded square, `rx` 28/128, fill `bg`, 2px `line` border. The mark
   uses only §3 tokens: `done` deps, `accent` edges, `ready` node, `bg` eyes.
 - **Wordmark**: JetBrains Mono Bold, outlined to paths from the bundled font;

@@ -35,7 +35,7 @@ compose.desktop {
             // matches the tool's own version (:core Taskkling.VERSION). Compose ≥1.11
             // lifted the macOS 0.x-major restriction, so no per-OS override is needed.
             packageVersion = project.version.toString()
-            // App identity (DESIGN §Brand): the ready-kobold mark. Containers are
+            // App identity (DESIGN §14): the taskkling mark. Containers are
             // generated from docs/assets/logo.svg via design/logo/ tooling.
             windows { iconFile.set(project.file("icons/taskkling.ico")) }
             macOS { iconFile.set(project.file("icons/taskkling.icns")) }

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" width="112" alt="taskkling — the ready-kobold: two done deps converge into a ready task"/>
+  <img src="docs/assets/logo.svg" width="112" alt="the taskkling — two done deps converge into a ready task"/>
 </p>
 
 # taskkling
