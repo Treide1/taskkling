@@ -213,6 +213,11 @@ longer alive is reclaimable, so a crashed process cannot wedge the repo.
 - Same-task writes are **serialized** (global lock); throughput is irrelevant at solo scale.
 - A genuine concurrent edit of the *same task* on two machines surfaces as a **git merge** for the
   human to resolve; conflict markers fail validation rather than corrupt silently.
+- The scan cost model is **measured, linear in file count** (dependency density is noise: 80k
+  edges cost ~25% over 2k at equal file count). Benchmarks, the git-merge conflict matrix per
+  dependency-storage scheme, and reproduction scripts live in `design/bench/RESULTS.md`;
+  prior-art survey in `docs/research/task-store-prior-art.md`. Store-v2 consequences are decided
+  in ADR-012..015 and specified in `docs/TASK_STORE_V2.md`.
 
 ---
 

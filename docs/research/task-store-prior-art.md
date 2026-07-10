@@ -19,6 +19,12 @@ For each system, four axes are captured:
 All claims are cited to primary sources (official docs, specs, source code).
 Researched 2026-07-10.
 
+Companion evidence: the empirical leg of the same design run (CLI benchmarks at
+1k-10k tasks, git-merge conflict matrix per storage scheme, live bug repros, and
+the scripts to reproduce all of it) is `design/bench/RESULTS.md`. The decisions
+both documents feed are ADR-012..015 (`docs/adr/`), consolidated in
+`docs/TASK_STORE_V2.md`.
+
 ---
 
 ## 1. Taskwarrior (2.x flat files -> 3.x TaskChampion SQLite)

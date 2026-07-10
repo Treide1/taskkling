@@ -1,8 +1,13 @@
 # Task-structure redesign — empirical results
 
-Evidence gathered 2026-07-10 for the v2 task-structure design (ADR-012..015).
-Reproduce with the scripts in this directory: `gen_store.py` (synthetic stores),
-`bench.py` (CLI timings), `merge_lab.py` (git-merge behavior per storage scheme).
+Evidence gathered 2026-07-10 for the v2 task-structure design — decided in
+ADR-012..015 (`docs/adr/`), specified in `docs/TASK_STORE_V2.md`, with the
+prior-art companion in `docs/research/task-store-prior-art.md`; the perf cost
+model is anchored from PRD §7.6. Reproduce with the scripts in this directory:
+`gen_store.py` (synthetic stores), `bench.py` (CLI timings), `merge_lab.py`
+(git-merge behavior per storage scheme). Re-run `bench.py` after any change to
+the read/validation paths and record before/after here (the store-v2 perf gate,
+task t-bvby, depends on it).
 
 Binary under test: installed `taskkling 0.5.1` (mingwX64 release, 2026-07-09) on
 Windows 11, NTFS, warm cache. The storage layer is unchanged through 0.5.2, so the
