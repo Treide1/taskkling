@@ -258,8 +258,7 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
     inline editors, and the reference links' click-to-navigate) opt out of selection where the
     two gestures fight.
 - **Legend** (bottom, `panel`, 1px `line` top border, padding 8×16): one 12px rounded swatch +
-  `muted` label per state, plus the reading hint "→ blocker points to blocked task" pushed
-  right.
+  `muted` label per state.
 
 ## 10. Layout metrics (graph)
 

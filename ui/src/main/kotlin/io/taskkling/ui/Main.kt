@@ -267,7 +267,7 @@ private val LEGEND_ITEMS: List<Pair<Color, String>> = listOf(
     Tk.open to "open",
 )
 
-/** Legend (DESIGN §9): a swatch + label per state, with the reading hint pushed right. */
+/** Legend (DESIGN §9): a swatch + label per state. */
 @Composable
 private fun Legend() {
     Row(
@@ -288,7 +288,5 @@ private fun Legend() {
                 Text(label, fontSize = 11.sp, color = Tk.muted)
             }
         }
-        Spacer(Modifier.weight(1f))
-        Text("→ blocker points to blocked task", fontSize = 11.sp, color = Tk.muted)
     }
 }
