@@ -294,3 +294,26 @@ No entrance animations, no layout animation, nothing longer than 200ms.
 - Zoom gestures, edge routing around cards, crossing minimisation — layout refinements
   tracked as tasks, not design debt. (Drag-to-pan shipped in §5.)
 - Any UI-side derivation beyond §2 precedence.
+
+## 14. Brand
+
+The app identity is the **ready-kobold**: two `done`-colored upstream nodes whose
+accent-colored edges converge — forming a terminal `>` prompt — into one
+`ready`-colored node with eyes. It draws §2's core derivation literally (*a task
+is ready when all its deps are done*) in the §3 state palette, and the awake node
+gives the tool its creature ("task-**ling**").
+
+- **Canonical sources**: `docs/assets/logo.svg` (128×128 tile) and
+  `docs/assets/lockup.svg` (tile + wordmark). Everything else (ICO/ICNS/PNG,
+  social preview) is generated from these — see `design/logo/` for the
+  exploration record, review sheets, and the resvg/fontTools pipeline.
+- **Tile**: rounded square, `rx` 28/128, fill `bg`, 2px `line` border. The mark
+  uses only §3 tokens: `done` deps, `accent` edges, `ready` node, `bg` eyes.
+- **Wordmark**: JetBrains Mono Bold, outlined to paths from the bundled font;
+  the double-k is always set in `accent` (`task`·`kk`·`ling`). The in-app
+  header reproduces this lockup in live text.
+- **Eyes are optional detail**: below ~32px they blur away and the mark must
+  still read as deps→`>`→node. Never scale the eyes up to compensate.
+- **Icon containers**: `ui/icons/taskkling.{ico,icns,png}` wired into
+  `nativeDistributions`; `ui/src/main/resources/icons/` carries the window
+  icon (PNG 256) and the header glyph (SVG).

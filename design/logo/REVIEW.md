@@ -1,6 +1,11 @@
 # taskkling logo — candidate review
 
-> **Round 2 (current).** After the round-1 review the direction pivoted to the
+> **DECIDED 2026-07-10: `k3-ready-kobold` is the taskkling identity** (user pick,
+> round 2). Canonical assets live in `docs/assets/` (`logo.svg`, `lockup.svg`);
+> icon containers in `ui/icons/`; brand rules in `docs/DESIGN.md` §14. This
+> directory remains the exploration record.
+
+> **Round 2.** After the round-1 review the direction pivoted to the
 > *kobold* seed: branch out from "double-k with eyes", some variants leaning
 > DAG, some face, some unconventional. Six drafts (`k1`–`k6`, sheets:
 > `review/tiles-k.png`) were judged down to three finalists

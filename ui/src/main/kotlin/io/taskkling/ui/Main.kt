@@ -1,6 +1,7 @@
 package io.taskkling.ui
 
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,7 +29,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
@@ -71,7 +76,11 @@ fun main() {
     }
 
     application {
-        Window(onCloseRequest = ::exitApplication, title = "taskkling") {
+        Window(
+            onCloseRequest = ::exitApplication,
+            title = "taskkling",
+            icon = painterResource("icons/taskkling.png"),
+        ) {
             TaskklingTheme {
                 Box(Modifier.fillMaxSize().background(Tk.bg)) {
                     if (binary == null) {
@@ -225,9 +234,20 @@ private fun Header(export: ExportDto?) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("taskkling", fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, color = Tk.txt)
-            Text(" · graph", fontSize = 14.sp, color = Tk.faint)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Image(painterResource("icons/taskkling.svg"), contentDescription = null, modifier = Modifier.size(18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Brand lockup (DESIGN §Brand): the double-k of the name set in accent.
+                Text(
+                    buildAnnotatedString {
+                        append("task")
+                        withStyle(SpanStyle(color = Tk.accent)) { append("kk") }
+                        append("ling")
+                    },
+                    fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, color = Tk.txt,
+                )
+                Text(" · graph", fontSize = 14.sp, color = Tk.faint)
+            }
         }
         if (export != null) {
             Text("generated ${fmtDateTime(export.generatedAt)}", fontSize = 11.sp, color = Tk.muted)
