@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -30,7 +31,9 @@ import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,14 +43,24 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.taskkling.contract.TaskDto
@@ -134,43 +147,86 @@ private fun TaskDetails(
     onMutate: (args: List<String>) -> Unit,
     onNavigate: (String) -> Unit,
 ) {
+    // key(task.id): switching the selection discards any open inline editor
+    // (DESIGN §9) instead of leaking its draft into the next task's fields.
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         if (error != null) {
             Text("error: $error", color = Tk.blocked, fontSize = 12.sp)
             Spacer(Modifier.height(8.dp))
         }
-        Text(task.title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Tk.txt)
-        Spacer(Modifier.height(2.dp))
-        Text(task.id, fontSize = 11.sp, color = Tk.faint)
-        Spacer(Modifier.height(14.dp))
+        key(task.id) {
+            EditableField(
+                label = null,
+                value = task.title,
+                enabled = !busy,
+                textSize = 14.sp,
+                bold = true,
+                saveArgs = { listOf("set", task.id, "--title", it) },
+                onMutate = onMutate,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(task.id, fontSize = 11.sp, color = Tk.faint)
+            Spacer(Modifier.height(14.dp))
 
-        EnumField("status", task.status, listOf("open", "done", "dropped", "waiting"), enabled = !busy) {
-            onMutate(statusArgs(task.id, it))
-        }
-        Field("thread", task.thread)
-        EnumField("priority", task.priority, listOf("low", "normal", "high"), enabled = !busy) {
-            onMutate(listOf("set", task.id, "-p", it))
-        }
-        Field("external requirement", task.waitingOn)
-        Field("due", task.due?.let(::fmtDateTime))
-        Field("defer", task.defer?.let(::fmtDateTime))
-        Field("created", fmtDateTime(task.created))
-        Field("closed", task.closed?.let(::fmtDateTime))
+            EnumField("status", task.status, listOf("open", "done", "dropped", "waiting"), enabled = !busy) {
+                onMutate(statusArgs(task.id, it))
+            }
+            EditableField(
+                label = "thread",
+                value = task.thread,
+                enabled = !busy,
+                saveArgs = { listOf("set", task.id, "--thread", it) },
+                clearArgs = listOf("set", task.id, "--clear", "thread"),
+                onMutate = onMutate,
+            )
+            EnumField("priority", task.priority, listOf("low", "normal", "high"), enabled = !busy) {
+                onMutate(listOf("set", task.id, "-p", it))
+            }
+            EditableField(
+                label = "external requirement",
+                value = task.waitingOn,
+                enabled = !busy,
+                // The CLI's own coupling: --on flips status to waiting; clearing
+                // happens only through status transitions (DESIGN §9 table).
+                saveArgs = { listOf("wait", task.id, "--on", it) },
+                onMutate = onMutate,
+            )
+            EditableField(
+                label = "due",
+                value = task.due,
+                display = task.due?.let(::fmtDateTime),
+                enabled = !busy,
+                saveArgs = { listOf("set", task.id, "--due", it) },
+                clearArgs = listOf("set", task.id, "--clear", "due"),
+                onMutate = onMutate,
+            )
+            EditableField(
+                label = "defer",
+                value = task.defer,
+                display = task.defer?.let(::fmtDateTime),
+                enabled = !busy,
+                saveArgs = { listOf("set", task.id, "--defer", it) },
+                clearArgs = listOf("set", task.id, "--clear", "defer"),
+                onMutate = onMutate,
+            )
+            Field("created", fmtDateTime(task.created))
+            Field("closed", task.closed?.let(::fmtDateTime))
 
-        val c = task.computed
-        FieldLabel("computed")
-        Spacer(Modifier.height(4.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            FlagChip("ready", c.ready, Tk.ready)
-            FlagChip("blocked", c.blocked, Tk.blocked)
-            FlagChip("deferred", c.deferred, Tk.deferred)
-            FlagChip("overdue", c.overdue, Tk.waiting)
-            FlagChip("resurfaced", c.resurfaced, Tk.waiting)
-        }
-        Spacer(Modifier.height(9.dp))
+            val c = task.computed
+            FieldLabel("computed")
+            Spacer(Modifier.height(4.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                FlagChip("ready", c.ready, Tk.ready)
+                FlagChip("blocked", c.blocked, Tk.blocked)
+                FlagChip("deferred", c.deferred, Tk.deferred)
+                FlagChip("overdue", c.overdue, Tk.waiting)
+                FlagChip("resurfaced", c.resurfaced, Tk.waiting)
+            }
+            Spacer(Modifier.height(9.dp))
 
-        RefField("blocked by", task.depends, onNavigate, resolved = task.depends.toSet() - c.blockers.toSet())
-        RefField("blocker of", c.dependents, onNavigate)
+            RefField("blocked by", task.depends, onNavigate, resolved = task.depends.toSet() - c.blockers.toSet())
+            RefField("blocker of", c.dependents, onNavigate)
+        }
     }
 }
 
@@ -225,6 +281,107 @@ private fun EnumField(
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A free-text field edited in place (DESIGN §9, principle 8). Read mode renders
+ * like [Field] — faint "—" when blank, [display] formatting if it differs from
+ * the stored [value] — but is clickable: hand cursor, underline on hover, and a
+ * click swaps in an inline editor prefilled with the raw stored value plus a
+ * row-trailing quiet save button. Enter/save commits through [onMutate];
+ * Escape cancels. The editor closes when the refreshed export changes [value]
+ * (a successful round-trip); a CLI rejection leaves it open with the error on
+ * the panel's error line. Saving an unchanged value — or an emptied one when
+ * [clearArgs] is null (not clearable) — is a local no-op close.
+ */
+@Composable
+private fun EditableField(
+    label: String?,
+    value: String?,
+    enabled: Boolean,
+    saveArgs: (String) -> List<String>,
+    onMutate: (List<String>) -> Unit,
+    clearArgs: List<String>? = null,
+    display: String? = value,
+    textSize: TextUnit = 13.sp,
+    bold: Boolean = false,
+) {
+    var editing by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
+    // A changed stored value means the save round-tripped: close the editor.
+    LaunchedEffect(value) { editing = false }
+
+    fun commit() {
+        val text = draft.trim()
+        when {
+            text == (value ?: "") -> editing = false
+            text.isEmpty() -> if (clearArgs == null) editing = false else onMutate(clearArgs)
+            else -> onMutate(saveArgs(text))
+        }
+    }
+
+    Column(Modifier.padding(bottom = if (label == null) 0.dp else 9.dp)) {
+        if (label != null) {
+            FieldLabel(label)
+            Spacer(Modifier.height(2.dp))
+        }
+        if (!editing) {
+            val interactions = remember { MutableInteractionSource() }
+            val hovered by interactions.collectIsHoveredAsState()
+            val shown = display?.takeIf { it.isNotEmpty() }
+            Text(
+                shown ?: "—",
+                fontSize = textSize,
+                fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                color = if (shown == null) Tk.faint else Tk.txt,
+                textDecoration = if (hovered && enabled) TextDecoration.Underline else null,
+                modifier = Modifier
+                    .alpha(if (enabled) 1f else 0.4f)
+                    .hoverable(interactions)
+                    .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
+                    .clickable(enabled = enabled) {
+                        draft = value ?: ""
+                        editing = true
+                    },
+            )
+        } else {
+            DisableSelection {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val focus = remember { FocusRequester() }
+                    BasicTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        singleLine = true,
+                        enabled = enabled,
+                        textStyle = TextStyle(
+                            fontFamily = Mono,
+                            fontSize = textSize,
+                            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                            color = Tk.txt,
+                        ),
+                        cursorBrush = SolidColor(Tk.accent),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Tk.panel2)
+                            .border(1.dp, Tk.line, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                            .focusRequester(focus)
+                            .onPreviewKeyEvent { ev ->
+                                when {
+                                    ev.type != KeyEventType.KeyDown -> false
+                                    ev.key == Key.Escape -> { editing = false; true }
+                                    ev.key == Key.Enter -> { commit(); true }
+                                    else -> false
+                                }
+                            },
+                    )
+                    OutlineButton("save", enabled = enabled) { commit() }
+                    LaunchedEffect(Unit) { focus.requestFocus() }
                 }
             }
         }
