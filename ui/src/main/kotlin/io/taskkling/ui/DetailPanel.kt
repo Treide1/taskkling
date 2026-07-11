@@ -487,19 +487,3 @@ private fun PinReturnFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
     }
 }
 
-/** Utilitarian outline button (DESIGN §9): `panel2` fill, `line` border, `txt` label — not primary. */
-@Composable
-private fun OutlineButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .alpha(if (enabled) 1f else 0.4f)
-            .clip(RoundedCornerShape(6.dp))
-            .background(Tk.panel2)
-            .border(1.dp, Tk.line, RoundedCornerShape(6.dp))
-            .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
-            .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Text(text, fontSize = 13.sp, color = Tk.txt)
-    }
-}

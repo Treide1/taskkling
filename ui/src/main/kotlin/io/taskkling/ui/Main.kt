@@ -3,11 +3,6 @@ package io.taskkling.ui
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,13 +25,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.PointerIcon
-import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -190,7 +181,8 @@ private fun App(client: CliClient) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        Header(export, busy = busy, onRefresh = ::reload)
+        // Settings actions arrive as null until their dialogs land (t-y0pr, t-w3oh).
+        Header(export, busy = busy, onRefresh = ::reload, onArchive = null, onPrune = null)
         Row(Modifier.weight(1f).fillMaxWidth()) {
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 val current = export
@@ -244,10 +236,17 @@ private fun App(client: CliClient) {
 
 /**
  * Header (DESIGN §9): app title + faint suffix, a muted generated-note with the
- * refresh button beside it, count chips pushed right.
+ * refresh button beside it, count chips pushed right with the settings cogwheel
+ * appended at the row's end.
  */
 @Composable
-private fun Header(export: ExportDto?, busy: Boolean, onRefresh: () -> Unit) {
+private fun Header(
+    export: ExportDto?,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+    onArchive: (() -> Unit)?,
+    onPrune: (() -> Unit)?,
+) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -270,51 +269,20 @@ private fun Header(export: ExportDto?, busy: Boolean, onRefresh: () -> Unit) {
         if (export != null) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("generated ${fmtDateTime(export.generatedAt)}", fontSize = 11.sp, color = Tk.muted)
-                RefreshButton(enabled = !busy, onClick = onRefresh)
+                // Re-runs export through the busy gate (DESIGN §9 refresh button).
+                QuietIconButton(UiIcons.Refresh, "refresh", enabled = !busy, onClick = onRefresh)
             }
         }
         Spacer(Modifier.weight(1f))
         if (export != null) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CountChip(Tk.ready, export.counts.ready, "ready")
                 CountChip(Tk.blocked, export.counts.blocked, "blocked")
                 CountChip(Tk.waiting, export.counts.waiting, "waiting")
                 CountChip(Tk.done, export.counts.done, "done")
+                SettingsMenu(enabled = !busy, onArchive = onArchive, onPrune = onPrune)
             }
         }
-    }
-}
-
-/**
- * The header refresh button (DESIGN §9): a small rounded-rect beside the
- * generated-note, muted at rest, quietly lifting on hover (`panel2` fill +
- * `line` border + `txt` tint). Click re-runs `export` through the busy gate;
- * disabled (0.4 alpha) while a CLI call is in flight.
- */
-@Composable
-private fun RefreshButton(enabled: Boolean, onClick: () -> Unit) {
-    val interactions = remember { MutableInteractionSource() }
-    val hovered by interactions.collectIsHoveredAsState()
-    val shape = RoundedCornerShape(6.dp)
-    val lifted = hovered && enabled
-    Box(
-        Modifier
-            .alpha(if (enabled) 1f else 0.4f)
-            .clip(shape)
-            .background(if (lifted) Tk.panel2 else Color.Transparent)
-            .border(1.dp, if (lifted) Tk.line else Color.Transparent, shape)
-            .hoverable(interactions)
-            .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
-            .clickable(enabled = enabled) { onClick() }
-            .padding(3.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = UiIcons.Refresh,
-            contentDescription = "refresh",
-            tint = if (lifted) Tk.txt else Tk.muted,
-            modifier = Modifier.size(12.dp),
-        )
     }
 }
 

@@ -214,6 +214,11 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
     lifts (`panel2` fill, 1px `line` border, `txt` tint, hand cursor). Click re-runs `export`
     through the same busy gate as mutations (never concurrently with one); while a CLI call
     is in flight it renders disabled (0.4 alpha).
+  - **Settings cogwheel**: the same quiet icon-button chrome, appended at the end of the
+    count-chip row (the header's right edge). Click opens a quiet dropdown (`panel2`
+    surface) of workspace actions — "Archive tasks…" and "Prune tasks…", each opening its
+    dialog. Every settings action runs a CLI verb through the mutation path and the app
+    refreshes from the returned export; the menu persists nothing.
 - **Detail panel** (right, **320 wide**, `panel`, 1px `line` left border, padding 16):
   - Empty state: centered `muted` hint ("Select a task to inspect…").
   - Selected: title → id → labeled fields (status, thread, priority, external requirement, due,
