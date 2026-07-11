@@ -104,10 +104,14 @@ Run `taskkling …` from anywhere inside a project tree. The CLI walks up the di
 tree until it finds a `.taskkling/` directory, so you don't need to be at the root.
 
 **2. Per-project wrapper scripts**
-A tracked `./taskkling` (Unix) and `./taskkling.cmd` (Windows) at the repo root exec
-the project-pinned binary in `.taskkling/bin`. Contributors can run `./taskkling …`
-without a global install — useful in team repos where you can't assume everyone has
-`taskkling` on their `PATH`.
+A tracked `./taskkling` (Unix) and `./taskkling.cmd` (Windows) at the repo root
+resolve a binary by a fixed chain, first hit wins: the project's own pin in
+`.taskkling/bin`, then `TASKKLING_BINARY`, then the main checkout's pin (so the
+wrappers work from a fresh git worktree, where the git-ignored `.taskkling/` is
+absent), then `PATH`. Contributors can run `./taskkling …` without a global
+install — useful in team repos where you can't assume everyone has `taskkling`
+on their `PATH`, and the guaranteed entry point for worktree-creation hooks
+(e.g. `./taskkling init --demo-mode`).
 
 **3. `taskkling init --local-bin`**
 Scaffolds the workspace AND copies the running binary into `.taskkling/bin`, then drops
