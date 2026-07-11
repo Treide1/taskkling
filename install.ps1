@@ -100,7 +100,12 @@ try {
         # %USERPROFILE%\AppData\Local\Microsoft\WindowsApps) into a literal path. Read
         # raw (DoNotExpandEnvironmentNames) and write back as ExpandString. Same approach
         # as the bun and cargo-dist installers.
-        $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        # Test seam (t-dywy): the shell-level regression harness (scripts/tests/install-ps1-path.tests.ps1)
+        # points this at a disposable HKCU scratch subkey instead of the real user Environment key, so it
+        # can exercise the append/idempotence/REG_EXPAND_SZ logic without ever touching HKCU\Environment.
+        # Defaults to 'Environment' — unset (and therefore a no-op) on every real install.
+        $envSubKeyName = if ($env:TASKKLING_TEST_ENV_SUBKEY) { $env:TASKKLING_TEST_ENV_SUBKEY } else { 'Environment' }
+        $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($envSubKeyName, $true)
         try {
             $rawPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
             # Match on the filtered split (a `;;`/trailing-`;` is never a real entry), but rebuild
