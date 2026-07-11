@@ -34,7 +34,3 @@ Thumbs.db
 .claude/
 /CLAUDE.md
 /tasks/
-
-# The original look-and-feel spike — untracked 2026-07-05; docs/DESIGN.md is the
-# canonical visual language. Kept on disk locally as a quick reference.
-spike/

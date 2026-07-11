@@ -143,9 +143,7 @@ Compose). It is a **pure CLI client (Option A)**:
   model.
 - Locates the binary via `PATH`, overridable by config.
 
-An early, throwaway **`index.html` spike** (read-only: render an `export` JSON dump, no callbacks)
-was the first visible milestone, built while only the CLI existed. Its look was later codified
-as **`docs/DESIGN.md`** — the canonical visual language — and the spike itself is untracked.
+The UI's look is codified in **`docs/DESIGN.md`** — the canonical visual language.
 
 ### 6.4 Data flow
 
@@ -466,9 +464,8 @@ drift.
   visually; a detail panel lazy-loads a task's body via `get --body`.
 - **All mutations** go through `taskkling <verb> … --export-on-success`; the UI refreshes from the
   returned export and may diff old-vs-new **client-side** for incremental updates.
-- **Read-only `index.html` spike** first (render an `export` dump; no callbacks) as the early
-  visible result while only the CLI existed — since untracked; its visual language lives on
-  as `docs/DESIGN.md`.
+- Visual language: `docs/DESIGN.md` is the canonical contract for the UI's look and
+  interaction design.
 - Graph layout: a layered DAG layout (Sugiyama-style); threads shown as visual clusters/colour.
   *(Layout-library choice is an implementation detail, tracked under §17/§18.)*
 - Binary discovery: `PATH`, overridable via config.
@@ -545,7 +542,7 @@ respects it outside any workspace; a workspace's value overrides it) — see §1
 
 | # | Milestone | Definition of done |
 |---|---|---|
-| **M0** | **CLI spike + read-only `index.html`** | `init`, `add`, `list`, `export` on K/N; an HTML page renders an `export` dump. First visible graph. |
+| **M0** | **First CLI + read-only `index.html`** | `init`, `add`, `list`, `export` on K/N; an HTML page renders an `export` dump. First visible graph. |
 | **M1** | **Core CLI** | Full read surface; lifecycle (`done/drop/reopen/wait`); `link/unlink`; concurrency protocol + stale-lock; write-path validation; `--export-on-success`. |
 | **M2** | **Content, delete/restore, maintenance** | `set/get`, `write/append/read`; `delete`→trash + cascade prune; `restore`; `cleanup` (+`--delete-before`); `doctor`/`export --ics` as stubs. |
 | **M3** | **Compose Desktop UI** | DAG render from `export`; detail panel; mutation via CLI with refresh; binary discovery; packaging. |

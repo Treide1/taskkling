@@ -3,8 +3,7 @@
 This document is the canonical description of taskkling's visual language: a dark,
 terminal-adjacent graph view. The Compose Desktop app (`:ui`) implements it natively; when
 the app and this document disagree, this document is the contract — fix the app, or amend
-the contract deliberately. (Origin: extracted from the throwaway `spike/index.html`
-reference implementation, since untracked.)
+the contract deliberately.
 
 Scope: visual + interaction design of the graph UI. For *what* the UI does (pure CLI client,
 mutation flow, discovery), see PRD §6.3 and §13.
