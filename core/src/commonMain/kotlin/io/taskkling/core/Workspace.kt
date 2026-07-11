@@ -105,7 +105,7 @@ public class Workspace(
         return fs.list(dir).firstOrNull { it.name.endsWith(".md") && idOfFileName(it.name) == id }
     }
 
-    /** Ids of the active set (top-level `tasks/`), the only valid `depends` targets. */
+    /** Ids of the active set (top-level `tasks/`). Valid `depends` targets are these plus [archiveDir] ids (ADR-014 graph-neutral archive). */
     public fun activeIds(): Set<String> = idsInDir(tasksDir)
 
     /** Every id the tool has issued (active + archive + trash), for collision-free generation. */

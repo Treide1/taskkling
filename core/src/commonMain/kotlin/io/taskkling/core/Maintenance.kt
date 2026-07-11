@@ -79,8 +79,12 @@ public fun Workspace.restoreTask(id: String, exportAfter: Boolean = false): Rest
     RestoreResult(restored, drop, if (exportAfter) buildExport(includeBody = false, includeArchived = false) else null)
 }
 
-/** Outcome of [cleanup]: how many tasks were swept to archive and purged. */
-public data class CleanupResult(val archived: Int, val purged: Int, val export: ExportDto?)
+/**
+ * Outcome of [cleanup]: how many tasks were swept to archive, purged, and — under
+ * `--include-archive` — [retained] because an active task still depends on them
+ * (purging them would strand the dependent with a dangling edge; see [cleanup]).
+ */
+public data class CleanupResult(val archived: Int, val purged: Int, val retained: Int, val export: ExportDto?)
 
 /**
  * `cleanup [--delete-before <dt>] [--include-archive]` (PRD §9.5, §10.7).
@@ -88,6 +92,19 @@ public data class CleanupResult(val archived: Int, val purged: Int, val export: 
  * With [deleteBefore], permanently purges `trash/` entries whose `closed < dt`
  * (and, with [includeArchive], `archive/` entries too). ISO-8601 UTC stamps
  * compare lexicographically, so the string `<` is a chronological one.
+ *
+ * **Edge safety (t-5z3y):** ADR-014 sanctions long-lived `depends` edges pointing
+ * *into* `archive/` (an archived `done` task satisfies its dependents), so a naive
+ * archive purge would reproduce the very spurious-blocking bug ADR-014 killed:
+ * delete an archived file still referenced by an active task and that dependent
+ * flips to blocked-forever with an invisible blocker. So archive purging **skips**
+ * (retains, counting them in [CleanupResult.retained]) any file whose id is still
+ * in some active task's `depends`. `trash/` needs no such guard: `delete`
+ * cascade-prunes before trashing, and no valid edge can target a trashed id.
+ * Skipping (rather than cascade-pruning at purge time) preserves authored `depends`
+ * lists, consistent with ADR-014 rejecting prune-at-sweep as semantically
+ * destructive — a still-referenced archive entry is simply kept until the
+ * dependent is itself deleted or unlinked.
  */
 public fun Workspace.cleanup(
     deleteBefore: String?,
@@ -110,21 +127,31 @@ public fun Workspace.cleanup(
     }
 
     var purged = 0
+    var retained = 0
     if (deleteBefore != null) {
         val cutoff = normalizeDateTime(deleteBefore)
+        // Ids some active task still depends on — purging any of these from
+        // archive/ would strand its dependent with a dangling edge (ADR-014).
+        // Computed after the sweep so freshly-archived deps are already accounted for.
+        val referencedByActive: Set<String> =
+            if (includeArchive) loadTasks().flatMapTo(HashSet()) { it.depends } else emptySet()
         val dirs = buildList { add(trashDir); if (includeArchive) add(archiveDir) }
         for (dir in dirs) {
             if (!fs.exists(dir)) continue
+            val guardEdges = dir == archiveDir
             for (p in fs.list(dir)) {
                 if (!p.name.endsWith(".md")) continue
                 val t = parseTask(p.name, fs.read(p) { readUtf8() })
-                if (t.closed != null && t.closed < cutoff) {
-                    fs.delete(p, mustExist = false)
-                    purged++
+                if (t.closed == null || t.closed >= cutoff) continue
+                if (guardEdges && t.id in referencedByActive) {
+                    retained++
+                    continue
                 }
+                fs.delete(p, mustExist = false)
+                purged++
             }
         }
     }
 
-    CleanupResult(archived, purged, if (exportAfter) buildExport(includeBody = false, includeArchived = false) else null)
+    CleanupResult(archived, purged, retained, if (exportAfter) buildExport(includeBody = false, includeArchived = false) else null)
 }

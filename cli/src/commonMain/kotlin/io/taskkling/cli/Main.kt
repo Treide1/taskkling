@@ -427,7 +427,10 @@ private class CleanupCmd : MutationCommand("cleanup", "Sweep closed tasks to arc
         val export = result.export
         when {
             export != null -> println(json.encodeToString(ExportDto.serializer(), export))
-            !quiet -> println("archived ${result.archived}, purged ${result.purged}")
+            !quiet -> {
+                val retained = if (result.retained > 0) ", retained ${result.retained} (still-referenced archive)" else ""
+                println("archived ${result.archived}, purged ${result.purged}$retained")
+            }
         }
     }
 }
