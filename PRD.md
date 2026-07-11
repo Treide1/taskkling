@@ -199,7 +199,8 @@ longer alive is reclaimable, so a crashed process cannot wedge the repo.
 
 ### 7.5 Two-tier integrity
 - **Preventive — write-path validation** (every mutation; cheap; always on): rejects enum
-  violations, dangling `depends`, **dependency cycles**, and the `waiting_on ⇒ status=waiting`
+  violations, dangling `depends` (valid targets: active **and archived** tasks — ADR-014),
+  **dependency cycles**, and the `waiting_on ⇒ status=waiting`
   invariant. The single exception is `delete` (§9.5), which is validation-free by design.
 - **Curative — `doctor`** *(verb denoted; internals deferred post-PRD)*: a full scan for **file
   integrity** (parse/schema corruption, orphaned temp files, git conflict markers) and **logical
@@ -259,6 +260,11 @@ surfaced through `set --<field>` / `get --<field>` without breaking existing fil
 | `resurfaced` | `status=waiting` ∧ `defer` set ∧ `defer ≤ now` (tickler is due for a decision) |
 | `blockers` | the subset of this task's `depends` that are not yet `done` — the tasks blocking it right now |
 | `dependents` | ids of tasks whose `depends` contains this task (downstream) |
+
+Resolution is **graph-neutral across the archive** (ADR-014): a `depends` id absent from the
+active set is looked up in `archive/`, and an archived `done` task satisfies the edge exactly as
+an active one would — `cleanup` never changes what the graph means. An archived `dropped` task,
+like a dangling id, counts as unmet.
 
 ### 8.3 On-disk example
 

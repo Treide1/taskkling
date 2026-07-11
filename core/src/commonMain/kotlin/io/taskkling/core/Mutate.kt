@@ -53,22 +53,30 @@ public fun Workspace.updateTask(
 /**
  * Preventive write-path validation (PRD §7.5): the `waiting_on ⇒ waiting`
  * invariant, no self/dangling `depends`, and no dependency cycles. Run on every
- * mutation except `delete` (M2).
+ * mutation except `delete` (M2). Valid `depends` targets are the active set
+ * *plus* `archive/` — the archive stays a graph node source (graph-neutral
+ * archive, ADR-014), so sweeping a done dependency never invalidates its
+ * dependents. `trash/` ids stay invalid (deletion cascade-pruned the edges).
  */
 public fun Workspace.validateInvariants(t: Task) {
     if (t.waitingOn != null && t.status != Status.WAITING) {
         throw TkError(ExitCode.VALIDATION, "waiting_on may be set only when status=waiting")
     }
-    val active = activeIds()
+    val known = activeIds() + idsInDir(archiveDir)
     for (d in t.depends) {
         if (d == t.id) throw TkError(ExitCode.VALIDATION, "task cannot depend on itself ($d)")
-        if (d !in active) throw TkError(ExitCode.VALIDATION, "depends references unknown id '$d'")
+        if (d !in known) throw TkError(ExitCode.VALIDATION, "depends references unknown id '$d'")
     }
     detectCycle(t)
 }
 
-/** Cycle check over the `depends` graph with [updated]'s edges substituted in. */
-private fun Workspace.detectCycle(updated: Task) {
+/**
+ * Cycle check over the `depends` graph with [updated]'s edges substituted in.
+ * Archived nodes are terminals (their edges are not loaded): a cycle cannot
+ * *close* through the archive while its member stays there, and [restoreTask]
+ * re-runs this check before a closed-over node re-enters the active set.
+ */
+internal fun Workspace.detectCycle(updated: Task) {
     val deps = loadTasks().associate { it.id to it.depends }.toMutableMap()
     deps[updated.id] = updated.depends
 

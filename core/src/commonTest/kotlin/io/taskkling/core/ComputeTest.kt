@@ -53,6 +53,17 @@ class ComputeTest {
     }
 
     @Test
+    fun alsoDoneSatisfiesADependencyMissingFromTheSet() {
+        // The graph-neutral archive supplement (ADR-014): an id absent from the
+        // set but known done elsewhere is not a blocker.
+        val c = computeAll(listOf(task("t-b", depends = listOf("t-arch"))), alsoDone = setOf("t-arch"))
+            .getValue("t-b")
+        assertTrue(c.ready)
+        assertFalse(c.blocked)
+        assertTrue(c.blockers.isEmpty())
+    }
+
+    @Test
     fun futureDeferSuppressesReadiness() {
         val c = computeAll(listOf(task("t-d", defer = future))).getValue("t-d")
         assertFalse(c.ready)

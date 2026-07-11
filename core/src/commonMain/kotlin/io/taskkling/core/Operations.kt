@@ -63,7 +63,7 @@ public data class AddArgs(
 
 /**
  * Create a task (PRD §10.4). Runs under the write lock: title, priority,
- * datetimes and `depends` (dangling check vs. the active set) are validated, a
+ * datetimes and `depends` (dangling check vs. active + archive, ADR-014) are validated, a
  * collision-free id is minted, and the file is written via the temp→rename path.
  * A brand-new task has no dependents, so no cycle is possible. With [exportAfter]
  * the full export is computed before the lock releases (PRD §7.3).
@@ -78,9 +78,9 @@ public fun Workspace.addTask(args: AddArgs, exportAfter: Boolean = false): Mutat
     val defer = args.defer?.let { normalizeDateTime(it) }
     val depends = args.depends.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
-    val active = activeIds()
+    val known = activeIds() + idsInDir(archiveDir)
     for (d in depends) {
-        if (d !in active) throw TkError(ExitCode.VALIDATION, "depends references unknown id '$d'")
+        if (d !in known) throw TkError(ExitCode.VALIDATION, "depends references unknown id '$d'")
     }
 
     val id = newId(allKnownIds())

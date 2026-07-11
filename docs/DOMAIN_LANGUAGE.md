@@ -60,8 +60,9 @@ The dependency relation has a stored side and a spoken side:
 - **dependents** (contract field, computed) — ids of tasks whose `depends` contains this
   task; the downstream inverse edge. UI: **"blocker of"**.
 - **blockers** (contract field, computed) — the *unmet* subset of `depends`: the tasks
-  blocking this one **right now** (a `done` upstream task no longer blocks). A dangling
-  reference counts as unmet.
+  blocking this one **right now** (a `done` upstream task no longer blocks, whether it is
+  still active or already swept to the archive — graph-neutral archive, ADR-014). A
+  dangling reference counts as unmet.
 - **upstream / downstream** — direction words: from blocker toward dependent. Edges point
   upstream → downstream (left → right in the graph).
 
@@ -104,8 +105,8 @@ Graph-math vocabulary, internal only (§1 ladder):
 
 - **node / edge** — vertex; directed edge from blocker to dependent (upstream → downstream).
 - **acyclicity** — the graph is a DAG; `add`/`link` are cycle-checked.
-- **dangling reference** — a `depends` id with no task file behind it; counts as unmet
-  (blocks) until resolved.
+- **dangling reference** — a `depends` id with no active *or archived* task file behind it
+  (ADR-014); counts as unmet (blocks) until resolved, and is rejected on the write path.
 - **layer / column** — layout depth of a node (longest upstream chain); rendered as a column.
 - **ready set** — see §4; the set the whole tool exists to compute.
 

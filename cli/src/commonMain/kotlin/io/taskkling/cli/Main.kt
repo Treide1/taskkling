@@ -289,7 +289,7 @@ private class GetCmd : TkCommand("get", "Print a task verbatim (.md); --body / -
         // The parsed-field projections (--json / --info / -f) need the computed graph.
         if (asJson || info || fields.isNotEmpty()) {
             val all = ws.loadTasks()
-            val computed = computeAll(all)
+            val computed = ws.computeAll(all)
             val task = all.firstOrNull { it.id == id } ?: throw TkError(ExitCode.USAGE, "unknown id '$id'")
             val c = computed.getValue(id)
             when {
@@ -1030,7 +1030,7 @@ private class ListCmd : TkCommand("list", "List tasks (ls -la style); filters fo
     override fun run() {
         val ws = Workspace.discover(root)
         val all = ws.loadTasks(includeArchived = archived)
-        val computed = computeAll(all)
+        val computed = ws.computeAll(all)
         val byId = all.associateBy { it.id }
 
         val statusFilter = status?.let { Status.from(it) }

@@ -34,8 +34,8 @@ public fun Workspace.deleteTask(id: String, exportAfter: Boolean = false): Mutat
 
 /**
  * Outcome of [restoreTask]: the restored [task], the `depends` edges that could
- * **not** be re-wired (their targets are no longer active, so they were dropped),
- * and the optional post-mutation [export].
+ * **not** be re-wired (their targets are neither active nor archived, so they
+ * were dropped), and the optional post-mutation [export].
  */
 public data class RestoreResult(
     val task: Task,
@@ -49,8 +49,11 @@ public data class RestoreResult(
  * `done`/`dropped` returns as `open` (so it is actionable again and `cleanup`
  * won't immediately re-sweep it), which also clears `waiting_on`. Severed
  * inbound edges are **not** re-added (git history is the only full undo); and any
- * of the task's own `depends` whose target is no longer active is dropped and
- * reported, keeping the active set free of dangling edges.
+ * of the task's own `depends` whose target is neither active nor archived
+ * (graph-neutral archive, ADR-014) is dropped and reported, keeping the active
+ * set free of dangling edges. Re-runs the cycle check before writing: edges may
+ * point *into* the archive, so reopening an archived node could otherwise close
+ * a cycle its `done` status had kept dormant.
  */
 public fun Workspace.restoreTask(id: String, exportAfter: Boolean = false): RestoreResult = withLock {
     val fs = FileSystem.SYSTEM
@@ -59,8 +62,8 @@ public fun Workspace.restoreTask(id: String, exportAfter: Boolean = false): Rest
         ?: throw TkError(ExitCode.USAGE, "no trashed or archived task '$id'")
 
     val task = parseTask(src.name, fs.read(src) { readUtf8() })
-    val active = activeIds()
-    val (keep, drop) = task.depends.partition { it in active }
+    val known = activeIds() + idsInDir(archiveDir)
+    val (keep, drop) = task.depends.partition { it in known && it != id }
     val reopen = task.status == Status.DONE || task.status == Status.DROPPED
     val restored = task.copy(
         status = if (reopen) Status.OPEN else task.status,
@@ -68,6 +71,7 @@ public fun Workspace.restoreTask(id: String, exportAfter: Boolean = false): Rest
         closed = null,
         depends = keep,
     )
+    detectCycle(restored)
 
     writeFileAtomic(tasksDir / restored.fileName(), restored.toMarkdown())
     fs.delete(src, mustExist = false)
