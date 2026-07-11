@@ -99,6 +99,16 @@ internal fun runCli(vararg args: String, stdin: String? = null): CliResult {
     return result
 }
 
+/** A fresh scratch directory that is NOT a workspace (for negative --root tests). */
+internal fun newScratchDir(): String = uniqueDir("scratch").toString()
+
+/** Whether these tests run on the linux leg (for tests keyed to linux-only CLI behavior). */
+internal val hostIsLinux: Boolean = Platform.osFamily == OsFamily.LINUX
+
+/** True when neither DISPLAY nor WAYLAND_DISPLAY is set here — the child inherits this environment. */
+internal fun displayEnvIsEmpty(): Boolean =
+    getenv("DISPLAY")?.toKString().isNullOrBlank() && getenv("WAYLAND_DISPLAY")?.toKString().isNullOrBlank()
+
 /**
  * Create a fresh workspace (its own `--root`) and return the root path to pass to later calls.
  * The directory is intentionally retained for the test's lifetime — a single test issues several

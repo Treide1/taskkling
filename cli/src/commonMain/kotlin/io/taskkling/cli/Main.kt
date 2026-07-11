@@ -17,8 +17,13 @@ import io.taskkling.core.appendBody
 import io.taskkling.core.buildExport
 import io.taskkling.core.cleanup
 import io.taskkling.core.computeAll
+import io.taskkling.core.currentHostTarget
 import io.taskkling.core.deleteCacheHomeBestEffort
 import io.taskkling.core.deleteTask
+import io.taskkling.core.extractArchiveWithSystemTar
+import io.taskkling.core.headlessRefusalMessage
+import io.taskkling.core.HostArch
+import io.taskkling.core.HostOs
 import io.taskkling.core.initWorkspace
 import io.taskkling.core.installLocalBin
 import io.taskkling.core.installNewExecutable
@@ -42,6 +47,9 @@ import io.taskkling.core.markDropped
 import io.taskkling.core.materializeUserConfig
 import io.taskkling.core.normalizeVersionTag
 import io.taskkling.core.parseLatestTagName
+import io.taskkling.core.planAfterLaunchFailure
+import io.taskkling.core.planUiCachePrune
+import io.taskkling.core.planUiRun
 import io.taskkling.core.rawFile
 import io.taskkling.core.readBody
 import io.taskkling.core.releaseDownloadBaseUrl
@@ -56,8 +64,24 @@ import io.taskkling.core.saveUpdateCheckCache
 import io.taskkling.core.setFields
 import io.taskkling.core.SetArgs
 import io.taskkling.core.Sha256
+import io.taskkling.core.spawnDetachedProcess
 import io.taskkling.core.sweepStaleOldExecutableForRunningBinary
 import io.taskkling.core.toDto
+import io.taskkling.core.uiAppCacheRoot
+import io.taskkling.core.uiAppDir
+import io.taskkling.core.uiExtractTempDir
+import io.taskkling.core.UiFailureCause
+import io.taskkling.core.uiFailureMessage
+import io.taskkling.core.uiFetchTempPath
+import io.taskkling.core.uiJarAssetName
+import io.taskkling.core.uiJarPath
+import io.taskkling.core.uiJavaLauncherPath
+import io.taskkling.core.uiLaunchEnvironment
+import io.taskkling.core.uiLogFilePath
+import io.taskkling.core.UiRunPlan
+import io.taskkling.core.uiRuntimeAssetName
+import io.taskkling.core.uiRuntimeCacheRoot
+import io.taskkling.core.uiRuntimeDir
 import io.taskkling.core.uninstallOtherBinary
 import io.taskkling.core.uninstallRunningBinary
 import io.taskkling.core.uninstallScopeCoversCacheHome
@@ -574,6 +598,178 @@ private class UpdateCmd : TkCommand("update", "Self-update the running binary; -
 }
 
 /**
+ * `taskkling ui [--fetch-only]` — launch the desktop UI (ADR-010). Lazy fetch
+ * pinned to THIS binary's version tag: on first use (or after an update) it
+ * downloads its platform's uberjar + jlink runtime from the CLI's own release,
+ * verifies both against `SHA256SUMS`, installs them atomically (temp → verify
+ * → rename) into the version-keyed cache (ADR-005 home, layout per
+ * [uiAppDir]/[uiRuntimeDir]), then spawns `<runtime>/bin/java -jar <jar>
+ * <resolved-root>` DETACHED — one confirmation line and the prompt returns;
+ * UI stdout/stderr go to the cache log. The verb owns its whole error
+ * surface: headless sessions are refused pre-spawn (naming `--fetch-only`,
+ * which works headless), a corrupt cache self-heals with ONE silent re-fetch,
+ * and terminal failures emit exactly one actionable message naming the cause
+ * and log path ([uiFailureMessage]). After a successful launch, stale cache
+ * entries are pruned best-effort (locked dirs skipped, retried next launch —
+ * ADR-011). `--fetch-only` is the ONLY flag: pinning makes `--version` /
+ * `--check` meaningless here, and `update` stays CLI-only.
+ */
+private class UiCmd : TkCommand("ui", "Launch the desktop UI (fetched on first use, pinned to this CLI's version)") {
+    val fetchOnly by option(
+        ArgType.Boolean, "fetch-only",
+        description = "Download and verify the UI without launching (works headless; prefetch before going offline)",
+    ).default(false)
+
+    private val fs = FileSystem.SYSTEM
+    private val version = Taskkling.VERSION
+    private val userAgent = "taskkling/$version"
+
+    override fun run() {
+        val (os, arch) = currentHostTarget()
+        val cacheHome = userCacheDirPath()
+        val jarPath = uiJarPath(cacheHome, version, os, arch)
+        val runtimeDir = uiRuntimeDir(cacheHome)
+        val launcher = uiJavaLauncherPath(runtimeDir, os)
+        val logPath = uiLogFilePath(cacheHome)
+
+        if (fetchOnly) {
+            // No workspace, no display needed: this is the headless/offline-prep path (ADR-010 decision 5).
+            when (planUiRun(fs.exists(jarPath), fs.exists(launcher))) {
+                is UiRunPlan.Launch -> if (!quiet) println("taskkling: UI v$version already fetched and verified")
+                else -> {
+                    fetchUiAssets(os, arch, jarPath, runtimeDir, launcher, logPath)
+                    if (!quiet) println("taskkling: UI v$version fetched and verified — 'taskkling ui' will launch it")
+                }
+            }
+            return
+        }
+
+        // Workspace resolution FIRST (cheap, local, fails before any network — mirrors
+        // update's ordering): the UI never re-runs discovery, it receives the
+        // CLI-resolved root as its launch argument (ADR-010 decision 4).
+        val ws = Workspace.discover(root)
+
+        // Refuse headless BEFORE fetching or spawning (ADR-010 decision 6).
+        headlessRefusalMessage(os, uiLaunchEnvironment())?.let { throw TkError(ExitCode.VALIDATION, it) }
+
+        var refetched = false
+        while (true) {
+            when (planUiRun(fs.exists(jarPath), fs.exists(launcher))) {
+                is UiRunPlan.FetchThenLaunch -> fetchUiAssets(os, arch, jarPath, runtimeDir, launcher, logPath)
+                is UiRunPlan.Launch -> {
+                    logPath.parent?.let { fs.createDirectories(it) }
+                    val argv = buildList {
+                        add(launcher.toString())
+                        // macOS: name the plain-java process in the Dock (ADR-009's accepted identity
+                        // mitigation). -Xdock:icon is skipped: no .icns exists at runtime — the
+                        // in-window icon comes from the jar's own resources.
+                        if (os == HostOs.MACOS) add("-Xdock:name=taskkling")
+                        add("-jar")
+                        add(jarPath.toString())
+                        add(ws.root.toString())
+                    }
+                    if (spawnDetachedProcess(argv, logPath)) {
+                        pruneUiCache(cacheHome)
+                        if (!quiet) println("taskkling: UI v$version launched (log: $logPath)")
+                        return
+                    }
+                    when (val heal = planAfterLaunchFailure(refetched)) {
+                        is UiRunPlan.RefetchOnce -> {
+                            // Corrupt cache: drop both artifacts SILENTLY and loop into the one re-fetch.
+                            deleteCacheHomeBestEffort(uiAppDir(cacheHome, version), fs)
+                            deleteCacheHomeBestEffort(runtimeDir, fs)
+                            refetched = true
+                        }
+                        is UiRunPlan.Fail -> throw TkError(ExitCode.VALIDATION, uiFailureMessage(heal.cause, logPath))
+                        else -> error("unreachable self-heal plan: $heal")
+                    }
+                }
+                else -> error("unreachable entry plan")
+            }
+        }
+    }
+
+    /** Download + SHA256SUMS-verify + atomically install whichever of the two artifacts is missing (ADR-010 decision 6). */
+    private fun fetchUiAssets(os: HostOs, arch: HostArch, jarPath: Path, runtimeDir: Path, launcher: Path, logPath: Path) {
+        val logForMsg = if (fs.exists(logPath)) logPath else null
+        fun fail(cause: UiFailureCause): Nothing = throw TkError(ExitCode.VALIDATION, uiFailureMessage(cause, logForMsg))
+
+        val base = releaseDownloadBaseUrl(version) // pinning: the CLI's OWN tag, never "latest" (ADR-010 decision 2)
+        val (sumsStatus, sumsText) = try {
+            httpGetTextBlocking("$base/SHA256SUMS", userAgent)
+        } catch (_: Exception) {
+            fail(UiFailureCause.OFFLINE)
+        }
+        if (sumsStatus !in 200..299) fail(UiFailureCause.GITHUB_UNREACHABLE)
+
+        fun fetchVerified(assetName: String): ByteArray {
+            val expected = findSha256(sumsText, assetName) ?: throw TkError(
+                ExitCode.VALIDATION,
+                "release v$version publishes no UI asset '$assetName' — releases before v0.6.0 carry no UI; run 'taskkling update' and retry",
+            )
+            if (!quiet) println("Downloading $assetName (v$version) ...")
+            val (status, bytes) = try {
+                httpGetBytesBlocking("$base/$assetName", userAgent)
+            } catch (_: Exception) {
+                fail(UiFailureCause.OFFLINE)
+            }
+            if (status !in 200..299) fail(UiFailureCause.GITHUB_UNREACHABLE)
+            if (!Sha256.hashHex(bytes).equals(expected, ignoreCase = true)) fail(UiFailureCause.CHECKSUM_MISMATCH)
+            return bytes
+        }
+
+        if (!fs.exists(jarPath)) {
+            val bytes = fetchVerified(uiJarAssetName(os, arch))
+            jarPath.parent?.let { fs.createDirectories(it) }
+            val tmp = uiFetchTempPath(jarPath)
+            fs.delete(tmp, mustExist = false)
+            fs.write(tmp) { write(bytes) }
+            fs.atomicMove(tmp, jarPath) // presence of the final path is the only "exists" ever trusted
+        }
+
+        if (!fs.exists(launcher)) {
+            val assetName = uiRuntimeAssetName(os, arch)
+            val bytes = fetchVerified(assetName)
+            val runtimeRoot = runtimeDir.parent ?: error("runtime dir has no parent: $runtimeDir")
+            fs.createDirectories(runtimeRoot)
+            val archiveTmp = uiFetchTempPath(runtimeRoot / assetName)
+            val extractTmp = uiExtractTempDir(runtimeDir)
+            fs.delete(archiveTmp, mustExist = false)
+            fs.deleteRecursively(extractTmp, mustExist = false)
+            fs.write(archiveTmp) { write(bytes) }
+            fs.createDirectories(extractTmp)
+            // The CLI extracts the archive ITSELF — that's what keeps macOS quarantine off
+            // the runtime tree (ADR-009). Extraction is the non-atomic part, so it happens
+            // entirely under the temp name; the rename below is the atomic "install".
+            val extracted = extractArchiveWithSystemTar(archiveTmp, extractTmp)
+            fs.delete(archiveTmp, mustExist = false)
+            if (!extracted) throw TkError(ExitCode.VALIDATION, "could not extract $assetName — is 'tar' available on this system?")
+            // Release archives carry the image contents (bin/, lib/) at top level (t-6q6a's
+            // contract); tolerate one wrapping directory defensively.
+            val imageRoot = when {
+                fs.exists(extractTmp / "bin") -> extractTmp
+                else -> fs.list(extractTmp).singleOrNull()?.takeIf { fs.exists(it / "bin") }
+                    ?: throw TkError(ExitCode.VALIDATION, "unexpected runtime archive layout in $assetName (no bin/ directory)")
+            }
+            fs.deleteRecursively(runtimeDir, mustExist = false) // stale half-state only; the launcher was missing
+            fs.atomicMove(imageRoot, runtimeDir)
+            fs.deleteRecursively(extractTmp, mustExist = false)
+        }
+    }
+
+    /** After a successful launch: collect every stale cache entry, best-effort and SILENT (ADR-011 decision 2). */
+    private fun pruneUiCache(cacheHome: Path) {
+        try {
+            fun listOrEmpty(dir: Path): List<Path> = try { fs.list(dir) } catch (_: Exception) { emptyList() }
+            planUiCachePrune(version, listOrEmpty(uiAppCacheRoot(cacheHome)), listOrEmpty(uiRuntimeCacheRoot(cacheHome)))
+                .forEach { deleteCacheHomeBestEffort(it, fs) } // locked dirs abandoned; the next launch re-collects them
+        } catch (_: Exception) {
+            // Cleanup must never break a launch that already succeeded.
+        }
+    }
+}
+
+/**
  * `uninstall [--global|--local] [--purge] [-y]` — the symmetric inverse of
  * install (ADR-004): removes the tier-resolved binary, the `PATH` entry
  * install(.sh/.ps1) added, and — GLOBAL tier only (ADR-011) — the user-level
@@ -891,7 +1087,7 @@ public fun main(args: Array<String>) {
         DoneCmd(), DropCmd(), ReopenCmd(), WaitCmd(),
         LinkCmd(), UnlinkCmd(),
         SetCmd(), WriteCmd(), AppendCmd(),
-        DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(), UpdateCmd(), UninstallCmd(),
+        DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(), UpdateCmd(), UiCmd(), UninstallCmd(),
         ConfigCmd(),
     )
     parser.parse(rest)

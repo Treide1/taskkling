@@ -167,6 +167,33 @@ class CliSubprocessTest {
         assertEquals("", r.stderr.trim(), "no diagnostics on the version fast path")
     }
 
+    // --- `ui` verb: the pre-network guard rail (t-k7ee; success path is manual QA) ----------
+
+    @Test
+    fun uiOutsideAWorkspaceFailsLocallyBeforeAnyNetwork() {
+        // Workspace discovery runs FIRST in the launch path (mirrors update's cheap-local-first
+        // ordering), so a bad --root fails identically on every platform, network or not.
+        val notAWorkspace = newScratchDir()
+        val r = runCli("--root", notAWorkspace, "ui")
+        assertEquals(2, r.exit, "a bad --root maps to ExitCode.USAGE(2), same as every verb; stderr=${r.stderr}")
+        assertTrue(r.stderr.contains("workspace"), "diagnostic names the workspace problem: ${r.stderr}")
+    }
+
+    @Test
+    fun uiRefusesHeadlessLinuxNamingFetchOnly() {
+        // Linux-only by design: the display rule (DISPLAY/WAYLAND_DISPLAY both unset) is the one
+        // reliable headless marker (ADR-010), and CI's linux leg genuinely has no display. On a
+        // developer box WITH a display this leg is skipped rather than faked — runCli cannot
+        // scrub the child's environment.
+        if (!hostIsLinux) return
+        if (!displayEnvIsEmpty()) return
+        val ws = newWorkspace()
+        val r = runCli("--root", ws, "ui")
+        assertEquals(3, r.exit, "headless refusal maps to ExitCode.VALIDATION(3); stderr=${r.stderr}")
+        assertTrue(r.stderr.contains("--fetch-only"), "refusal names the operation that works headless: ${r.stderr}")
+        assertTrue(r.stderr.contains("display", ignoreCase = true), "refusal names the missing display: ${r.stderr}")
+    }
+
     // --- helpers ---------------------------------------------------------------------------
 
     /** Add a task and return its minted id (fails the test if add didn't succeed). */

@@ -59,14 +59,18 @@ internal const val PAD = 28
  * exercises the export→layout data path and exits, for verification without a
  * display.
  */
-fun main() {
+fun main(args: Array<String>) {
+    // ADR-010: when launched via `taskkling ui`, the CLI passes its resolved
+    // workspace root as the single argument — the UI never re-runs discovery.
+    // A bare `:ui:run` (no args) keeps the old cwd behavior for development.
+    val workRoot = args.firstOrNull()?.let(::File) ?: File(System.getProperty("user.dir"))
     val binary = CliDiscovery.locate()
     if (System.getenv("TASKKLING_SMOKE") == "1") {
         if (binary == null) {
             System.err.println("smoke: taskkling binary not found (PATH / TASKKLING_BINARY / config)")
             kotlin.system.exitProcess(3)
         }
-        val export = CliClient(binary).export()
+        val export = CliClient(binary, workRoot).export()
         val gl = layout(export.tasks)
         println("smoke ok: binary=$binary nodes=${export.tasks.size} layers=${gl.layerCount} edges=${gl.edges.size}")
         return
@@ -89,7 +93,7 @@ fun main() {
                             )
                         }
                     } else {
-                        App(CliClient(binary, File(System.getProperty("user.dir"))))
+                        App(CliClient(binary, workRoot))
                     }
                 }
             }
