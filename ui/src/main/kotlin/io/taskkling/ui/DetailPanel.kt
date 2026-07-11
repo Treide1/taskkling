@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.DisableSelection
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Icon
 import androidx.compose.material.Text
@@ -70,23 +72,27 @@ internal fun DetailPane(
                 drawLine(Tk.line, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.dp.toPx())
             },
     ) {
-        if (task == null) {
-            Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (error != null) {
-                        Text("error: $error", color = Tk.blocked, fontSize = 12.sp, textAlign = TextAlign.Center)
-                        Spacer(Modifier.height(8.dp))
+        // Panel text is selectable/copyable (DESIGN §9); interactive islands
+        // inside opt out via DisableSelection where the two gestures fight.
+        SelectionContainer {
+            if (task == null) {
+                Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (error != null) {
+                            Text("error: $error", color = Tk.blocked, fontSize = 12.sp, textAlign = TextAlign.Center)
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        Text(
+                            "Select a task to inspect.\nEdges point from a blocker → the task it blocks.",
+                            color = Tk.muted,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center,
+                        )
                     }
-                    Text(
-                        "Select a task to inspect.\nEdges point from a blocker → the task it blocks.",
-                        color = Tk.muted,
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center,
-                    )
                 }
+            } else {
+                TaskDetails(task, error, busy, onAction, onNavigate)
             }
-        } else {
-            TaskDetails(task, error, busy, onAction, onNavigate)
         }
         if (pinnedId != null && pinnedId != task?.id) {
             PinReturnFab(
@@ -142,10 +148,12 @@ private fun TaskDetails(
         RefField("blocker of", c.dependents, onNavigate)
 
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlineButton("done", enabled = !busy) { onAction("done", task.id) }
-            OutlineButton("drop", enabled = !busy) { onAction("drop", task.id) }
-            OutlineButton("reopen", enabled = !busy) { onAction("reopen", task.id) }
+        DisableSelection {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlineButton("done", enabled = !busy) { onAction("done", task.id) }
+                OutlineButton("drop", enabled = !busy) { onAction("drop", task.id) }
+                OutlineButton("reopen", enabled = !busy) { onAction("reopen", task.id) }
+            }
         }
     }
 }
