@@ -90,12 +90,117 @@ jobs:
           path: ${{ matrix.artifact }}
           if-no-files-found: error
 
-  # 2) Fan in: gather the four binaries, checksum them, and publish the Release
-  #    with the binaries + SHA256SUMS + both install scripts. A tag/version guard
-  #    asserts the pushed `vX.Y.Z` matches the declared gradle.properties version.
+  # 1b) UI assets (ADR-016): ONE ubuntu leg, parallel to the native matrix, builds
+  #     all 8 UI assets — four per-target uberjars (Gradle tasks from ADR-016/t-tw0q)
+  #     and four jlink runtime images cross-linked from PINNED Temurin jmods. The pin
+  #     (exact build + per-target SHA256s below) makes releases byte-reproducible per
+  #     tag and turns a shifted upstream archive into a loud failure; bumping it is a
+  #     deliberate one-commit act (see RELEASING.md).
+  build-ui:
+    name: UI assets (uberjars + runtimes)
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      # Temurin pin (ADR-016 decision 3). Quarterly CPU updates land here by hand;
+      # a JDK MAJOR bump also touches the curated module list (ui/build.gradle.kts),
+      # asset names (ADR-011: jdk<major>) and cache keys (ADR-010) in one change.
+      TEMURIN_TAG: jdk-21.0.8+9
+      TEMURIN_VERSION: 21.0.8_9
+      SHA256_LINUX_X64: f2dc5418092c43003db8f9005c4a286e1c0104fea96ccdd49e8ebd037cac9219
+      SHA256_MACOS_X64: 0ceaf7060b2c9dbbe8ecc4fb9351c6b4cf24e4350d58772c9656589933a4fdeb
+      SHA256_MACOS_ARM64: 59422c2292ae4e76b87e00d8808dbe49cffa39af731e08bb0292ddb0af4e0261
+      SHA256_WINDOWS_X64: 5dbb74a4edda94c2aae97a1e30f448db0ad9023a9466fe31a8c68377d9dfbac4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x ./gradlew
+      - name: Build the four per-target uberjars + packaging audits
+        # checkUiPackaging re-runs the jdeps-subset tripwire and the Skiko-native audit
+        # (ADR-016 decision 5 b+c) against the exact jars this release will ship.
+        run: ./gradlew :ui:packageAllUberJars :ui:checkUiPackaging --no-daemon --stacktrace
+      - name: Download + verify pinned Temurin jmods
+        run: |
+          set -euo pipefail
+          base="https://github.com/adoptium/temurin21-binaries/releases/download/${TEMURIN_TAG/+/%2B}"
+          declare -A archives=(
+            [linux-x64]="OpenJDK21U-jdk_x64_linux_hotspot_${TEMURIN_VERSION}.tar.gz"
+            [macos-x64]="OpenJDK21U-jdk_x64_mac_hotspot_${TEMURIN_VERSION}.tar.gz"
+            [macos-arm64]="OpenJDK21U-jdk_aarch64_mac_hotspot_${TEMURIN_VERSION}.tar.gz"
+            [windows-x64]="OpenJDK21U-jdk_x64_windows_hotspot_${TEMURIN_VERSION}.zip"
+          )
+          declare -A sha256s=(
+            [linux-x64]="$SHA256_LINUX_X64"
+            [macos-x64]="$SHA256_MACOS_X64"
+            [macos-arm64]="$SHA256_MACOS_ARM64"
+            [windows-x64]="$SHA256_WINDOWS_X64"
+          )
+          for target in linux-x64 macos-x64 macos-arm64 windows-x64; do
+            archive="${archives[$target]}"
+            echo "fetching $archive"
+            curl -fsSL -o "$archive" "$base/$archive"
+            echo "${sha256s[$target]}  $archive" | sha256sum -c -
+            mkdir "jdk-$target"
+            case "$archive" in
+              *.zip) unzip -q "$archive" -d "jdk-$target" ;;
+              *) tar -xzf "$archive" -C "jdk-$target" ;;
+            esac
+            rm "$archive"
+          done
+      - name: Cross-jlink the four runtime images
+        # jlink links against the TARGET's jmods, so one linux leg produces all four
+        # images (ADR-009's single-runner rule). The module set is the curated list
+        # single-sourced in ui/build.gradle.kts (ADR-016 decision 4).
+        run: |
+          set -euo pipefail
+          modules="$(./gradlew -q :ui:printUiRuntimeModules --no-daemon | tail -1)"
+          echo "curated module list: $modules"
+          for target in linux-x64 macos-x64 macos-arm64 windows-x64; do
+            jmods="$(find "jdk-$target" -type d -name jmods | head -1)"
+            test -n "$jmods" || { echo "::error::no jmods dir found for $target"; exit 1; }
+            jlink --module-path "$jmods" --add-modules "$modules" \
+              --strip-debug --no-header-files --no-man-pages --compress zip-6 \
+              --output "runtime-$target"
+          done
+      - name: Smoke-check the runtime images
+        # ADR-016 decision 5 (a): the host-runnable linux image must actually execute;
+        # the three cross-linked images get a structural launcher-presence check.
+        run: |
+          set -euo pipefail
+          ./runtime-linux-x64/bin/java -version
+          test -x runtime-macos-x64/bin/java
+          test -x runtime-macos-arm64/bin/java
+          test -f runtime-windows-x64/bin/java.exe
+      - name: Package the 8 UI assets
+        # Runtime archives carry the image CONTENTS at top level (bin/, lib/ — the
+        # verb's extraction contract, t-k7ee); tar.gz built on linux so the executable
+        # bit survives for the unix targets, zip for windows (ADR-011 decision 1).
+        run: |
+          set -euo pipefail
+          mkdir ui-out
+          for target in linux-x64 macos-x64 macos-arm64; do
+            tar -czf "ui-out/taskkling-ui-runtime-jdk21-$target.tar.gz" -C "runtime-$target" .
+          done
+          (cd runtime-windows-x64 && zip -qr "../ui-out/taskkling-ui-runtime-jdk21-windows-x64.zip" .)
+          cp ui/build/uberjars/taskkling-ui-*.jar ui-out/
+          ls -l ui-out
+      - name: Upload UI assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: taskkling-ui-assets
+          path: ui-out/*
+          if-no-files-found: error
+
+  # 2) Fan in: gather the 12 payload assets (4 CLI binaries + 8 UI assets), assert
+  #    the count, checksum them into ONE SHA256SUMS, and publish the Release with
+  #    the payload + SHA256SUMS + both install scripts. A tag/version guard asserts
+  #    the pushed `vX.Y.Z` matches the declared gradle.properties version.
   release:
     name: Publish release
-    needs: build
+    needs: [build, build-ui]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,7 +219,24 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Assert the full asset set is present
+        # ADR-016 decision 6: ONE numeric invariant instead of two hand-maintained
+        # 13-entry lists. 12 payload files = 4 CLI binaries + 4 UI uberjars + 4 UI
+        # runtime archives; a half-succeeded upload fails HERE, not in users' hands.
+        # This count moves in lockstep with any future asset-set change (ADR-011).
+        working-directory: dist
+        run: |
+          count=$(ls taskkling-* | wc -l)
+          echo "payload files in dist/: $count"
+          ls -l taskkling-*
+          if [ "$count" -ne 12 ]; then
+            echo "::error::expected exactly 12 payload assets in dist/, found $count"
+            exit 1
+          fi
       - name: Generate SHA256SUMS
+        # The glob covers every payload asset, so the single SHA256SUMS spans the
+        # full set (ADR-011: no separate UI sums file) — guaranteed by the count
+        # assertion above.
         working-directory: dist
         run: |
           sha256sum taskkling-* > SHA256SUMS
@@ -124,10 +246,7 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            dist/taskkling-linux-x64
-            dist/taskkling-macos-arm64
-            dist/taskkling-macos-x64
-            dist/taskkling-windows-x64.exe
+            dist/taskkling-*
             dist/SHA256SUMS
             install.sh
             install.ps1
