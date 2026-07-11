@@ -169,6 +169,30 @@ private fun App(client: CliClient) {
         }
     }
 
+    // Prune runs one `delete` per selected task — the CLI has no batch delete
+    // (t-m0zn decision) — serialized off the UI thread behind the same busy
+    // flag. The graph refreshes from the last successful export; the first
+    // failure stops the loop and surfaces on the panel error line.
+    fun mutateAll(argsList: List<List<String>>) {
+        if (busy || argsList.isEmpty()) return
+        busy = true
+        scope.launch {
+            var last: ExportDto? = null
+            var failure: String? = null
+            withContext(Dispatchers.IO) {
+                for (args in argsList) {
+                    runCatching { client.mutate(args) }
+                        .onSuccess { last = it }
+                        .onFailure { failure = "${args.firstOrNull() ?: "cli"}: ${it.message ?: it}" }
+                    if (failure != null) break
+                }
+            }
+            last?.let { refresh(it) }
+            failure?.let { error = it } // after refresh: refresh() clears the error line
+            busy = false
+        }
+    }
+
     // The header refresh button: a plain re-export through the same busy gate as
     // mutations, so a refresh can't race a mutation's read-after-write.
     fun reload() {
@@ -184,13 +208,12 @@ private fun App(client: CliClient) {
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            // The prune action arrives null until its dialog lands (t-w3oh).
             Header(
                 export,
                 busy = busy,
                 onRefresh = ::reload,
                 onArchive = { dialog = SettingsDialog.ARCHIVE },
-                onPrune = null,
+                onPrune = { dialog = SettingsDialog.PRUNE },
             )
             Row(Modifier.weight(1f).fillMaxWidth()) {
                 Box(Modifier.weight(1f).fillMaxHeight()) {
@@ -261,6 +284,22 @@ private fun App(client: CliClient) {
                             }
                         },
                     )
+                },
+                onDismiss = { dialog = null },
+            )
+        }
+        if (current != null && dialog == SettingsDialog.PRUNE) {
+            PruneDialog(
+                doneCount = current.tasks.count { it.status == "done" },
+                droppedCount = current.tasks.count { it.status == "dropped" },
+                busy = busy,
+                onConfirm = { done, dropped ->
+                    dialog = null
+                    val statuses = buildSet {
+                        if (done) add("done")
+                        if (dropped) add("dropped")
+                    }
+                    mutateAll(current.tasks.filter { it.status in statuses }.map { listOf("delete", it.id) })
                 },
                 onDismiss = { dialog = null },
             )

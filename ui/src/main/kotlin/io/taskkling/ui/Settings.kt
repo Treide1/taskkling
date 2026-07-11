@@ -112,6 +112,33 @@ internal fun ArchiveDialog(
 }
 
 /**
+ * The prune dialog (DESIGN §9, settings dialogs): the archive dialog's options
+ * with the high-alert `blocked` red — this one is destructive. Confirm hands
+ * the selection to [onConfirm], which runs the `delete` verb per matching task
+ * (trash + cascade-prune from dependents' depends).
+ */
+@Composable
+internal fun PruneDialog(
+    doneCount: Int,
+    droppedCount: Int,
+    busy: Boolean,
+    onConfirm: (done: Boolean, dropped: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    SweepDialog(
+        title = "Prune tasks",
+        copy = "Delete closed tasks: each moves to trash and is pruned from every dependent's blocked-by list. Restorable (taskkling restore) only until the trash is purged.",
+        accent = Tk.blocked,
+        confirmLabel = "prune",
+        doneCount = doneCount,
+        droppedCount = droppedCount,
+        busy = busy,
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
+}
+
+/**
  * The shared sweep-dialog scaffold: a scrim, a centred `panel` card with an
  * [accent]-colored border/title/confirm, one checkbox row per closed type with
  * its live count, and quiet cancel/confirm buttons. Confirm is disabled while a
