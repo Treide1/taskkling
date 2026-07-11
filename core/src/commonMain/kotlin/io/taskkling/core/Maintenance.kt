@@ -87,11 +87,14 @@ public fun Workspace.restoreTask(id: String, exportAfter: Boolean = false): Rest
 public data class CleanupResult(val archived: Int, val purged: Int, val retained: Int, val export: ExportDto?)
 
 /**
- * `cleanup [--delete-before <dt>] [--include-archive]` (PRD §9.5, §10.7).
- * Always sweeps closed (`done`/`dropped`) active tasks from `tasks/` → `archive/`.
- * With [deleteBefore], permanently purges `trash/` entries whose `closed < dt`
- * (and, with [includeArchive], `archive/` entries too). ISO-8601 UTC stamps
- * compare lexicographically, so the string `<` is a chronological one.
+ * `cleanup [--only <status>…] [--delete-before <dt>] [--include-archive]`
+ * (PRD §9.5, §10.7). Sweeps closed (`done`/`dropped`) active tasks from
+ * `tasks/` → `archive/`; [only] narrows the sweep to a subset of the closed
+ * statuses (null = both, the historical behavior — the UI archive dialog is
+ * the selective caller). With [deleteBefore], permanently purges `trash/`
+ * entries whose `closed < dt` (and, with [includeArchive], `archive/` entries
+ * too); the purge ignores [only]. ISO-8601 UTC stamps compare
+ * lexicographically, so the string `<` is a chronological one.
  *
  * **Edge safety (t-5z3y):** ADR-014 sanctions long-lived `depends` edges pointing
  * *into* `archive/` (an archived `done` task satisfies its dependents), so a naive
@@ -110,6 +113,7 @@ public fun Workspace.cleanup(
     deleteBefore: String?,
     includeArchive: Boolean,
     exportAfter: Boolean = false,
+    only: Set<Status>? = null,
 ): CleanupResult = withLock {
     val fs = FileSystem.SYSTEM
 
@@ -118,7 +122,7 @@ public fun Workspace.cleanup(
         for (p in fs.list(tasksDir)) {
             if (!p.name.endsWith(".md")) continue
             val t = parseTask(p.name, fs.read(p) { readUtf8() })
-            if (t.status == Status.DONE || t.status == Status.DROPPED) {
+            if ((t.status == Status.DONE || t.status == Status.DROPPED) && (only == null || t.status in only)) {
                 writeFileAtomic(archiveDir / t.fileName(), t.toMarkdown())
                 fs.delete(p, mustExist = false)
                 archived++

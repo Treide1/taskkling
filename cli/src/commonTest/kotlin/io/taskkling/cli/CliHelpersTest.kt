@@ -1,11 +1,14 @@
 package io.taskkling.cli
 
 import io.taskkling.core.Computed
+import io.taskkling.core.ExitCode
 import io.taskkling.core.Priority
 import io.taskkling.core.Status
 import io.taskkling.core.Task
+import io.taskkling.core.TkError
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -73,6 +76,29 @@ class CliHelpersTest {
     @Test
     fun flattenDependsOnEmptyInputIsEmpty() {
         assertEquals(emptyList(), flattenDepends(emptyList()))
+    }
+
+    // --- parseOnlyStatuses (cleanup --only, t-m0zn) --------------------------------------
+
+    @Test
+    fun parseOnlyStatusesAbsentFlagMeansNoFilter() {
+        assertEquals(null, parseOnlyStatuses(emptyList()))
+    }
+
+    @Test
+    fun parseOnlyStatusesAcceptsRepeatedAndCommaForms() {
+        // `--only done --only dropped` == `--only done,dropped`
+        assertEquals(setOf(Status.DONE, Status.DROPPED), parseOnlyStatuses(listOf("done", "dropped")))
+        assertEquals(setOf(Status.DONE, Status.DROPPED), parseOnlyStatuses(listOf("done,dropped")))
+        assertEquals(setOf(Status.DONE), parseOnlyStatuses(listOf("done")))
+    }
+
+    @Test
+    fun parseOnlyStatusesRejectsNonClosedStatuses() {
+        val err = assertFailsWith<TkError> { parseOnlyStatuses(listOf("open")) }
+        assertEquals(ExitCode.USAGE, err.exit)
+        assertFailsWith<TkError> { parseOnlyStatuses(listOf("done", "waiting")) }
+        assertFailsWith<TkError> { parseOnlyStatuses(listOf("bogus")) }
     }
 
     // --- parseLeadingGlobals (PRD §10.1) ------------------------------------------------
