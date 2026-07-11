@@ -1,8 +1,12 @@
 package io.taskkling.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,9 +25,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.DropdownMenu
+import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -32,6 +42,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
@@ -44,9 +55,11 @@ import io.taskkling.contract.TaskDto
 /**
  * The detail panel (DESIGN §9): a fixed 320dp column with a `line` left border.
  * Empty state is a centred hint; a selection shows styled fields (absent values
- * as a faint "—"), computed-flag chips, clickable reference ids, and the quiet
- * outline mutation buttons wired through [onAction]. While a mutation is in
- * flight ([busy]) the buttons render disabled so actions can't stack.
+ * as a faint "—"), computed-flag chips, and clickable reference ids. Stored
+ * fields are edited in place (DESIGN principle 8): enum values through
+ * dropdowns, each edit forwarded as raw CLI args through [onMutate]. While a
+ * mutation is in flight ([busy]) every editing affordance renders disabled so
+ * actions can't stack.
  *
  * Whenever a pin exists but [task] isn't the pinned one — another selection or
  * the empty state — the pinned-card return FAB floats top-right; clicking it
@@ -59,7 +72,7 @@ internal fun DetailPane(
     pinnedId: String?,
     error: String?,
     busy: Boolean,
-    onAction: (verb: String, id: String) -> Unit,
+    onMutate: (args: List<String>) -> Unit,
     onNavigate: (String) -> Unit,
 ) {
     Box(
@@ -91,7 +104,7 @@ internal fun DetailPane(
                     }
                 }
             } else {
-                TaskDetails(task, error, busy, onAction, onNavigate)
+                TaskDetails(task, error, busy, onMutate, onNavigate)
             }
         }
         if (pinnedId != null && pinnedId != task?.id) {
@@ -103,6 +116,14 @@ internal fun DetailPane(
     }
 }
 
+/** `status` dropdown values → their lifecycle verbs (DESIGN §9 mapping table). */
+private fun statusArgs(id: String, status: String): List<String> = when (status) {
+    "open" -> listOf("reopen", id)
+    "done" -> listOf("done", id)
+    "dropped" -> listOf("drop", id)
+    else -> listOf("wait", id)
+}
+
 /** The selected task's scrolling field list — the panel body of DESIGN §9. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -110,7 +131,7 @@ private fun TaskDetails(
     task: TaskDto,
     error: String?,
     busy: Boolean,
-    onAction: (verb: String, id: String) -> Unit,
+    onMutate: (args: List<String>) -> Unit,
     onNavigate: (String) -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
@@ -123,9 +144,13 @@ private fun TaskDetails(
         Text(task.id, fontSize = 11.sp, color = Tk.faint)
         Spacer(Modifier.height(14.dp))
 
-        Field("status", task.status)
+        EnumField("status", task.status, listOf("open", "done", "dropped", "waiting"), enabled = !busy) {
+            onMutate(statusArgs(task.id, it))
+        }
         Field("thread", task.thread)
-        Field("priority", task.priority)
+        EnumField("priority", task.priority, listOf("low", "normal", "high"), enabled = !busy) {
+            onMutate(listOf("set", task.id, "-p", it))
+        }
         Field("external requirement", task.waitingOn)
         Field("due", task.due?.let(::fmtDateTime))
         Field("defer", task.defer?.let(::fmtDateTime))
@@ -146,15 +171,77 @@ private fun TaskDetails(
 
         RefField("blocked by", task.depends, onNavigate, resolved = task.depends.toSet() - c.blockers.toSet())
         RefField("blocker of", c.dependents, onNavigate)
+    }
+}
 
-        Spacer(Modifier.height(8.dp))
+/**
+ * An enum-valued field edited in place (DESIGN §9, principle 8): the value reads
+ * like a plain field, with a drawn chevron affordance that sharpens on hover;
+ * clicking opens a quiet value dropdown. Picking the current value is a no-op
+ * (no subprocess); anything else hands the raw option to [onSelect].
+ */
+@Composable
+private fun EnumField(
+    label: String,
+    value: String,
+    options: List<String>,
+    enabled: Boolean,
+    onSelect: (String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.padding(bottom = 9.dp)) {
+        FieldLabel(label)
+        Spacer(Modifier.height(2.dp))
         DisableSelection {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlineButton("done", enabled = !busy) { onAction("done", task.id) }
-                OutlineButton("drop", enabled = !busy) { onAction("drop", task.id) }
-                OutlineButton("reopen", enabled = !busy) { onAction("reopen", task.id) }
+            Box {
+                val interactions = remember { MutableInteractionSource() }
+                val hovered by interactions.collectIsHoveredAsState()
+                Row(
+                    Modifier
+                        .alpha(if (enabled) 1f else 0.4f)
+                        .hoverable(interactions)
+                        .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
+                        .clickable(enabled = enabled) { open = true },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Text(value, fontSize = 13.sp, color = Tk.txt)
+                    Chevron(if (hovered && enabled) Tk.txt else Tk.muted)
+                }
+                DropdownMenu(
+                    expanded = open,
+                    onDismissRequest = { open = false },
+                    modifier = Modifier.background(Tk.panel2),
+                ) {
+                    for (option in options) {
+                        DropdownMenuItem(onClick = {
+                            open = false
+                            if (option != value) onSelect(option)
+                        }) {
+                            Text(
+                                option,
+                                fontSize = 13.sp,
+                                color = if (option == value) Tk.accent else Tk.txt,
+                            )
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+/** The dropdown affordance: a small drawn triangle (no icon dependency, no font-fallback risk). */
+@Composable
+private fun Chevron(color: Color) {
+    Canvas(Modifier.size(7.dp, 4.dp)) {
+        val p = Path().apply {
+            moveTo(0f, 0f)
+            lineTo(size.width, 0f)
+            lineTo(size.width / 2f, size.height)
+            close()
+        }
+        drawPath(p, color)
     }
 }
 
