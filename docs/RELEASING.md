@@ -73,14 +73,28 @@ untested commit.
 Confirm the release actually landed and is downloadable — fetch the published URLs
 directly, not any local build output.
 
+**`release.yml`'s `smoke-anonymous` job (`needs: release`) automates the core of this
+already — check it green in the Actions tab first.** It exists because v0.2.0 once
+"succeeded" while the then-private repo 404'd every anonymous download: authenticated
+`gh` saw a perfect release, users got nothing. So the job uses plain, unauthenticated
+`curl` (never `gh`, no token — `permissions: {}` and an empty `env` on the job make that
+structural, not just convention) to fetch `install.sh`, `install.ps1`, and the linux
+binary from `releases/latest/download/` — retrying for up to ~2 minutes to absorb
+`latest` propagation lag — verifies the binary against the published `SHA256SUMS`, runs
+it with `--version`, and asserts the output matches the tag that triggered the release.
+
+What it does **not** cover — still do these by hand:
+
 For `BASE = https://github.com/Treide1/taskkling/releases/latest/download`:
 
-1. **HEAD 200 on all 15 files** — the 12 payload assets (see inventory above) plus
-   `SHA256SUMS`, `install.sh`, `install.ps1`. A 200 on `latest/download/…` also proves
-   `latest` advanced to the new tag.
-2. **`SHA256SUMS` is well-formed** — exactly twelve entries, one per payload asset.
-3. **The install path works end-to-end** — fetch and run one install script from the
-   published URL on a scratch `HOME` and confirm `taskkling --version` reports the new version.
+1. **HEAD 200 on the other 11 payload assets** — the job only fetches
+   `install.sh`/`install.ps1`/`taskkling-linux-x64`/`SHA256SUMS`; the remaining 3 CLI
+   binaries and all 8 UI assets (see inventory above) aren't touched.
+2. **`SHA256SUMS` has exactly twelve entries** — the job only checks the one line it
+   needs (the linux binary's); it doesn't assert the full count or verify every asset.
+3. **`install.sh`/`install.ps1` actually run end-to-end** — the job only proves they
+   *download* (HTTP success); it never executes either. Run one from the published URL
+   on a scratch `HOME` and confirm `taskkling --version` reports the new version.
    On Windows, run `install.ps1 -NoPath -InstallDir <scratch dir>` — `-NoPath` skips the
    `HKCU\Environment\Path` write entirely and `-InstallDir` keeps the binary out of the real
    `%LOCALAPPDATA%`, so the check touches nothing outside `<scratch dir>` (see the script's
