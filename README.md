@@ -219,9 +219,14 @@ resolver) — no manual Temurin install, no `JAVA_HOME` ritual.
 ./gradlew :cli:linkDebugExecutableMingwX64    # native CLI (host target: Mingw/Linux/Macos)
 ./gradlew :cli:linkReleaseExecutableMingwX64  # optimized release binary
 ./gradlew :contract:jvmTest :core:jvmTest     # fast JVM unit/golden tests
-./gradlew :ui:run                             # launch the Compose Desktop UI
+./gradlew :ui:run                             # launch the Compose Desktop UI from source
 ./gradlew :ui:createDistributable             # assemble the packaged app image
 ```
+
+> **Using the UI day-to-day?** Since v0.6.0 you don't build it: `taskkling ui`
+> fetches and launches the desktop UI matching your installed CLI (first run
+> downloads ~80–100 MB, cached from then on). `:ui:run` remains the from-source
+> path for working ON the UI.
 
 The debug CLI lands at `cli/build/bin/<target>/debugExecutable/taskkling[.exe]`
 (`<target>` = `mingwX64` on Windows, `linuxX64` / `macosArm64` elsewhere).
