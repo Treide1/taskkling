@@ -207,8 +207,13 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
 ## 9. Framing: header, detail panel, legend
 
 - **Header** (top, `panel`, 1px `line` bottom border, padding 10×16): app title (`taskkling`
-  + faint context suffix), a `muted` "generated …" timestamp from the export, and count chips
-  for ready / blocked / waiting / done pushed to the right.
+  + faint context suffix), a `muted` "generated …" timestamp from the export with a **refresh
+  button** beside it, and count chips for ready / blocked / waiting / done pushed to the right.
+  - **Refresh button**: a small rounded-rect (radius 6) sized to the 11px note row, overall
+    muted — `muted`-tinted circular-arrow glyph, transparent at rest; on hover it quietly
+    lifts (`panel2` fill, 1px `line` border, `txt` tint, hand cursor). Click re-runs `export`
+    through the same busy gate as mutations (never concurrently with one); while a CLI call
+    is in flight it renders disabled (0.4 alpha).
 - **Detail panel** (right, **320 wide**, `panel`, 1px `line` left border, padding 16):
   - Empty state: centered `muted` hint ("Select a task to inspect…").
   - Selected: title → id → labeled fields (status, thread, priority, external requirement, due,
