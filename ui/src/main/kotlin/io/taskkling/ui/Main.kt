@@ -234,7 +234,7 @@ private fun App(client: CliClient) {
                 pinnedId = pinnedId,
                 error = error,
                 busy = busy,
-                onAction = { verb, id -> mutate(listOf(verb, id)) },
+                onMutate = ::mutate,
                 onNavigate = ::navigateTo,
             )
         }
