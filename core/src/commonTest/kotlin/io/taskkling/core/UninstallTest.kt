@@ -13,11 +13,11 @@ import kotlin.test.assertTrue
 
 /**
  * Pure `uninstall` logic (ADR-004): the Windows `PATH` de-entry
- * string-munging — the exact inverse of install.ps1's add
- * (`$rawPath.Split(';') | Where-Object { $_ -ne '' }`, then
- * append-if-absent). Registry IO, self-delete, and the interactive prompt
- * flow are platform primitives / impure IO — QA-gated, not unit-tested here
- * (mirrors [UpdateTest]'s split for the self-replace primitive).
+ * string-munging — the exact inverse of install.ps1's add (check presence on
+ * the empty-filtered split, then append to the raw value, preserving existing
+ * segments verbatim; t-359h). Registry IO, self-delete, and the interactive
+ * prompt flow are platform primitives / impure IO — QA-gated, not unit-tested
+ * here (mirrors [UpdateTest]'s split for the self-replace primitive).
  */
 class UninstallTest {
 
@@ -66,12 +66,12 @@ class UninstallTest {
     }
 
     @Test
-    fun collapsesEmptySegmentsFromTrailingSemicolons() {
-        // A trailing (or leading, or doubled) `;` produces empty split segments — install.ps1's
-        // own add normalizes these away (`Where-Object { $_ -ne '' }`); de-entry must match, both
-        // when removing the target entry AND when leaving an unrelated PATH otherwise untouched.
+    fun preservesEmptySegmentsWhenRemovingTheEntry() {
+        // A trailing (or leading, or doubled) `;` produces empty split segments — ADR-004
+        // minimal-touch: de-entry removes ONLY the target and leaves the user's `;;`/trailing-`;`
+        // cosmetics verbatim, rather than silently normalizing them away (t-359h).
         val path = """C:\Windows;;$installDir;C:\Users\me\.cargo\bin;"""
-        assertEquals("""C:\Windows;C:\Users\me\.cargo\bin""", removePathEntry(path, installDir))
+        assertEquals("""C:\Windows;;C:\Users\me\.cargo\bin;""", removePathEntry(path, installDir))
     }
 
     @Test
@@ -84,15 +84,27 @@ class UninstallTest {
 
     @Test
     fun removePathEntryIsTheExactInverseOfInstallPs1sAdd() {
-        // Mirrors install.ps1's add: split, drop empties, append-if-absent.
+        // Mirrors install.ps1's add: check presence on the filtered split, but append to the RAW
+        // value verbatim so existing (incl. empty) segments survive — the exact pairing that lets
+        // remove undo add byte-for-byte (t-359h).
         fun addLikeInstallPs1(rawPath: String, dir: String): String {
-            val entries = rawPath.split(';').filter { it.isNotEmpty() }
-            return if (entries.contains(dir)) rawPath else (entries + dir).joinToString(";")
+            val present = rawPath.split(';').any { it.equals(dir, ignoreCase = true) }
+            return when {
+                present -> rawPath
+                rawPath.isEmpty() -> dir
+                else -> "$rawPath;$dir"
+            }
         }
-        val original = """C:\Windows\system32;C:\Windows;C:\Users\me\.cargo\bin"""
-        val added = addLikeInstallPs1(original, installDir)
-        assertTrue(installDir in added.split(';'))
-        assertEquals(original, removePathEntry(added, installDir))
+        for (original in listOf(
+            """C:\Windows\system32;C:\Windows;C:\Users\me\.cargo\bin""",
+            """C:\Windows\system32;C:\Windows;""",      // dev-machine trailing `;` (the t-359h case)
+            """;C:\Windows;;C:\Windows\system32""",      // leading + doubled empties
+            "",                                          // fresh/empty user PATH
+        )) {
+            val added = addLikeInstallPs1(original, installDir)
+            assertTrue(installDir in added.split(';'), "add should have inserted the entry into: $original")
+            assertEquals(original, removePathEntry(added, installDir), "remove should undo add for: $original")
+        }
     }
 
     // --- pathContainsEntry -----------------------------------------------------------------------------------------

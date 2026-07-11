@@ -24,13 +24,26 @@ kotlin {
             // registry write (RegOpenKeyExW/RegSetValueExW, advapi32) — windows.def's
             // default linkerOpts cover kernel32/user32 (already used by Lock/ExePath/
             // Update's mingw actuals) but not advapi32, so add it explicitly here.
+            // shell32 is CommandLineToArgvW's home (Argv.mingw.kt, t-jagq) — the lossless
+            // argv recovery for non-ASCII titles/text passed as literal CLI arguments.
             if (target.name == "mingwX64") {
                 linkerOpts += "-ladvapi32"
+                linkerOpts += "-lshell32"
             }
         }
     }
 
+    applyDefaultHierarchyTemplate()
+
     sourceSets {
+        // Shared no-op actual for platformArgv (Argv.kt, t-jagq): linux + macOS argv is
+        // already UTF-8, so only mingwX64 needs a real correction (Argv.mingw.kt).
+        // Mirrors :core's posixMain split (Lock.kt et al.).
+        val posixMain by creating { dependsOn(commonMain.get()) }
+        named("linuxX64Main") { dependsOn(posixMain) }
+        named("macosX64Main") { dependsOn(posixMain) }
+        named("macosArm64Main") { dependsOn(posixMain) }
+
         commonMain.dependencies {
             implementation(project(":core"))
             implementation(project(":contract"))

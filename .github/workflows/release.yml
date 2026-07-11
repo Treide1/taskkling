@@ -250,3 +250,58 @@ jobs:
             dist/SHA256SUMS
             install.sh
             install.ps1
+
+  # 3) Verify AS THE WORLD SEES IT: v0.2.0 once "succeeded" while the then-private
+  #    repo 404'd every anonymous download — authenticated `gh` saw a perfect
+  #    release, users got nothing. This job re-fetches the just-published release
+  #    with plain, unauthenticated `curl` (never `gh`, no token) and proves the
+  #    install path a real user hits actually works. `permissions: {}` plus no
+  #    env/secrets reference anywhere keep it token-less by construction; it never
+  #    checks out the repo, deriving owner/repo and the tag from workflow context.
+  smoke-anonymous:
+    name: Anonymous smoke test
+    needs: release
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Fetch install.sh, install.ps1, linux binary, SHA256SUMS anonymously
+        # releases/latest/download can lag right after publish (eventual
+        # consistency), so bound the retry to ~2 minutes instead of failing
+        # on the first miss.
+        run: |
+          set -euo pipefail
+          base="https://github.com/${{ github.repository }}/releases/latest/download"
+          deadline=$((SECONDS + 120))
+          attempt=0
+          until curl -fLsS -o install.sh "$base/install.sh" \
+             && curl -fLsS -o install.ps1 "$base/install.ps1" \
+             && curl -fLsS -o taskkling-linux-x64 "$base/taskkling-linux-x64" \
+             && curl -fLsS -o SHA256SUMS "$base/SHA256SUMS"
+          do
+            attempt=$((attempt + 1))
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::releases/latest/download did not serve this release within 2 minutes (attempt $attempt)"
+              exit 1
+            fi
+            echo "releases/latest not caught up yet (attempt $attempt) — retrying in 10s"
+            sleep 10
+          done
+          echo "fetched install.sh, install.ps1, taskkling-linux-x64, SHA256SUMS anonymously from $base"
+      - name: Verify the fetched linux binary against published SHA256SUMS
+        run: |
+          set -euo pipefail
+          grep -E '^[0-9a-f]+  taskkling-linux-x64$' SHA256SUMS > subset.sums
+          sha256sum -c subset.sums
+      - name: Run the binary and assert --version reports the released tag
+        run: |
+          set -euo pipefail
+          chmod +x taskkling-linux-x64
+          tag="${{ github.ref_name }}"
+          expected="taskkling ${tag#v}"
+          actual="$(./taskkling-linux-x64 --version)"
+          echo "binary reported: $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::expected '$expected', got '$actual'"
+            exit 1
+          fi
+          echo "anonymous smoke OK — $expected fetched, checksummed, and run with no auth"

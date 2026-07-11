@@ -7,6 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * [cleanup] (PRD §9.5, §10.7) is the only core operation that PERMANENTLY deletes
@@ -192,6 +193,80 @@ class MaintenanceCleanupTest {
         assertEquals(1, result.purged, "the stale trash entry was purged")
         assertNotNull(ws.taskInDir(ws.archiveDir, done), "swept task now in archive")
         assertNull(ws.fileFor(ws.trashDir, "t-stale"), "stale trash entry gone")
+    }
+
+    // --- edge safety: archive purge must not strand active dependents (t-5z3y) --
+
+    @Test
+    fun purgeRetainsAnArchivedDepStillReferencedByAnActiveTask() {
+        val ws = tempWorkspace()
+        // The exact repro from t-5z3y: dep -> archived done; gate depends on it.
+        val dep = ws.addReturningId(AddArgs(title = "groundwork"))
+        val gate = ws.addReturningId(AddArgs(title = "gate", depends = listOf(dep)))
+        ws.markDone(dep)
+        ws.cleanup(deleteBefore = null, includeArchive = false) // sweep dep -> archive/
+
+        // A far-future cutoff would purge the archived dep — but the gate still needs it.
+        val result = ws.cleanup(deleteBefore = "2999-01-01T00:00:00Z", includeArchive = true)
+
+        assertEquals(0, result.purged, "the still-referenced archive entry is not purged")
+        assertEquals(1, result.retained, "it is retained and reported")
+        assertNotNull(ws.fileFor(ws.archiveDir, dep), "archived dep survives the purge")
+        // And the point of the fix: the gate is not stranded — it computes ready and closes.
+        val c = ws.computeAll(ws.loadTasks()).getValue(gate)
+        assertTrue(c.ready, "gate keeps its satisfied archived edge")
+        assertEquals(Status.DONE, ws.markDone(gate).task.status, "closing the gate still validates")
+    }
+
+    @Test
+    fun purgePurgesAnArchivedTaskOnceNoActiveTaskDependsOnIt() {
+        val ws = tempWorkspace()
+        val dep = ws.addReturningId(AddArgs(title = "groundwork"))
+        val gate = ws.addReturningId(AddArgs(title = "gate", depends = listOf(dep)))
+        ws.markDone(dep)
+        ws.cleanup(deleteBefore = null, includeArchive = false)
+        ws.deleteTask(gate) // the only dependent leaves the active set
+
+        val result = ws.cleanup(deleteBefore = "2999-01-01T00:00:00Z", includeArchive = true)
+
+        // Both the now-unreferenced archived dep and the trashed gate are old enough to go.
+        assertEquals(2, result.purged, "with no active dependent, the archived entry is purgeable")
+        assertEquals(0, result.retained)
+        assertNull(ws.fileFor(ws.archiveDir, dep), "unreferenced archive entry purged")
+    }
+
+    @Test
+    fun purgeRetainsOnlyTheReferencedArchiveEntriesInAMixedRun() {
+        val ws = tempWorkspace()
+        val kept = ws.addReturningId(AddArgs(title = "still needed"))
+        ws.addReturningId(AddArgs(title = "gate", depends = listOf(kept)))
+        val loose = ws.addReturningId(AddArgs(title = "nobody needs me"))
+        ws.markDone(kept)
+        ws.markDone(loose)
+        ws.cleanup(deleteBefore = null, includeArchive = false) // both -> archive/
+
+        val result = ws.cleanup(deleteBefore = "2999-01-01T00:00:00Z", includeArchive = true)
+
+        assertEquals(1, result.purged, "the unreferenced archived task goes")
+        assertEquals(1, result.retained, "the referenced archived task stays")
+        assertNotNull(ws.fileFor(ws.archiveDir, kept), "referenced entry retained")
+        assertNull(ws.fileFor(ws.archiveDir, loose), "unreferenced entry purged")
+    }
+
+    @Test
+    fun trashPurgeIsNeverGuardedByActiveDepends() {
+        val ws = tempWorkspace()
+        // A trash id can never be a valid edge target (delete cascade-prunes), but
+        // plant a same-named active edge anyway to prove the guard is archive-only.
+        val dep = ws.addReturningId(AddArgs(title = "dep"))
+        ws.addReturningId(AddArgs(title = "gate", depends = listOf(dep)))
+        ws.plant(ws.trashDir, closedTask(dep, "2026-01-01T00:00:00Z"))
+
+        val result = ws.cleanup(deleteBefore = "2999-01-01T00:00:00Z", includeArchive = true)
+
+        assertEquals(1, result.purged, "the trash entry purges despite the id being referenced")
+        assertEquals(0, result.retained, "trash is out of the edge guard's scope")
+        assertNull(ws.fileFor(ws.trashDir, dep))
     }
 
     // --- the load-bearing invariant: lexicographic == chronological -------------

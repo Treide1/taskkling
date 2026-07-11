@@ -427,7 +427,10 @@ private class CleanupCmd : MutationCommand("cleanup", "Sweep closed tasks to arc
         val export = result.export
         when {
             export != null -> println(json.encodeToString(ExportDto.serializer(), export))
-            !quiet -> println("archived ${result.archived}, purged ${result.purged}")
+            !quiet -> {
+                val retained = if (result.retained > 0) ", retained ${result.retained} (still-referenced archive)" else ""
+                println("archived ${result.archived}, purged ${result.purged}$retained")
+            }
         }
     }
 }
@@ -1067,7 +1070,13 @@ private class ListCmd : TkCommand("list", "List tasks (ls -la style); filters fo
 }
 
 /** Entry point for the native `taskkling` binary (PRD §6.2, §10). */
-public fun main(args: Array<String>) {
+public fun main(rawArgs: Array<String>) {
+    // Recover argv losslessly (t-jagq): on mingwX64, Kotlin/Native's own decode of
+    // rawArgs is ANSI-lossy (non-ASCII titles/text passed as literal CLI arguments
+    // arrive as `?`); platformArgv corrects that on mingw and passes through
+    // unchanged everywhere else. See Argv.kt.
+    val args = platformArgv(rawArgs)
+
     // Best-effort startup hook (ADR-002): sweep a stale `taskkling.exe.old`
     // sibling left by a prior Windows `update` run that couldn't delete it
     // immediately (still locked while that process was exiting). No-op on

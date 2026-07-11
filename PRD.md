@@ -326,7 +326,11 @@ not filename, so titles/slugs can change freely.
   git history is the only full undo. `restore` reports how many edges it could not re-wire.
 - `cleanup` moves closed tasks → `archive/` (mechanical). `cleanup --delete-before <dt>`
   permanently purges **trash** entries with `closed < dt`. Archive is kept indefinitely unless
-  `--include-archive` is also passed.
+  `--include-archive` is also passed. An archive entry an **active** task still `depends` on is
+  **retained** (never purged), even under `--include-archive`: because a `depends` edge may point
+  into `archive/` (ADR-014 graph-neutral archive), purging its target would strand the dependent
+  with a dangling edge. `cleanup` reports the retained count; such an entry becomes purgeable once
+  its dependent is deleted or unlinked.
 
 ---
 

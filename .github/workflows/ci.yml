@@ -78,3 +78,30 @@ jobs:
         # subprocess golden tests (t-hfwt) + the pure-helper unit seam (t-oxaa) against that
         # freshly-linked binary — CI is the cross-platform verifier for the single read+write path.
         run: ./gradlew :cli:${{ matrix.test }} --no-daemon --stacktrace
+
+  install-scripts:
+    name: Install script regression tests (${{ matrix.name }})
+    # Shell-level regression tests for install.ps1 / install.sh (t-dywy) — no Kotlin/Gradle
+    # involved, so this is its own fast, no-checkout-heavy job additive to jvm/native above.
+    # Each harness is fully offline (a local file:// fake release) and touches only scratch
+    # registry keys / scratch $HOME dirs, never the runner's real environment.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: install.ps1 (PATH registry logic)
+          - os: ubuntu-latest
+            name: install.sh (PATH hint selection)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # `shell:` takes no expression context, so the two harnesses are separate
+      # OS-gated steps with literal shells instead of one matrix-templated step.
+      - name: Run install.ps1 harness
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\scripts\tests\install-ps1-path.tests.ps1
+      - name: Run install.sh harness
+        if: runner.os == 'Linux'
+        run: bash scripts/tests/install-sh-path.tests.sh

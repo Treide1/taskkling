@@ -4,6 +4,10 @@ How a `vX.Y.Z` release is cut and verified. The pipeline is wire-only
 (`.github/workflows/release.yml`): pushing a version tag runs the test suites, builds the
 release assets, checksums them, and publishes them with both install scripts to the
 project's public GitHub Releases. Tagging is human-owned — no tag is cut by automation.
+An **explicit user instruction to an agent to cut a release counts as the human cut**; that
+one sentence is the single authority rule — gate-task bodies and agent memory notes restate
+it, they do not add to it. The executable procedure lives in `.claude/skills/cut-release`
+(invoked as `/cut-release`); this document is the rationale.
 
 ## Asset inventory (since v0.6.0, ADR-011/016)
 
@@ -69,26 +73,62 @@ untested commit.
 Confirm the release actually landed and is downloadable — fetch the published URLs
 directly, not any local build output.
 
+**`release.yml`'s `smoke-anonymous` job (`needs: release`) automates the core of this
+already — check it green in the Actions tab first.** It exists because v0.2.0 once
+"succeeded" while the then-private repo 404'd every anonymous download: authenticated
+`gh` saw a perfect release, users got nothing. So the job uses plain, unauthenticated
+`curl` (never `gh`, no token — `permissions: {}` and an empty `env` on the job make that
+structural, not just convention) to fetch `install.sh`, `install.ps1`, and the linux
+binary from `releases/latest/download/` — retrying for up to ~2 minutes to absorb
+`latest` propagation lag — verifies the binary against the published `SHA256SUMS`, runs
+it with `--version`, and asserts the output matches the tag that triggered the release.
+
+What it does **not** cover — still do these by hand:
+
 For `BASE = https://github.com/Treide1/taskkling/releases/latest/download`:
 
-1. **HEAD 200 on all 15 files** — the 12 payload assets (see inventory above) plus
-   `SHA256SUMS`, `install.sh`, `install.ps1`. A 200 on `latest/download/…` also proves
-   `latest` advanced to the new tag.
-2. **`SHA256SUMS` is well-formed** — exactly twelve entries, one per payload asset.
-3. **The install path works end-to-end** — fetch and run one install script from the
-   published URL on a scratch `HOME` and confirm `taskkling --version` reports the new version.
+1. **HEAD 200 on the other 11 payload assets** — the job only fetches
+   `install.sh`/`install.ps1`/`taskkling-linux-x64`/`SHA256SUMS`; the remaining 3 CLI
+   binaries and all 8 UI assets (see inventory above) aren't touched.
+2. **`SHA256SUMS` has exactly twelve entries** — the job only checks the one line it
+   needs (the linux binary's); it doesn't assert the full count or verify every asset.
+3. **`install.sh`/`install.ps1` actually run end-to-end** — the job only proves they
+   *download* (HTTP success); it never executes either. Run one from the published URL
+   on a scratch `HOME` and confirm `taskkling --version` reports the new version.
+   On Windows, run `install.ps1 -NoPath -InstallDir <scratch dir>` — `-NoPath` skips the
+   `HKCU\Environment\Path` write entirely and `-InstallDir` keeps the binary out of the real
+   `%LOCALAPPDATA%`, so the check touches nothing outside `<scratch dir>` (see the script's
+   header comment for the full flag list, including the `iex`-pipe invocation form).
+
+   > **Windows note:** don't run `install.ps1` without `-NoPath` for verification — plain
+   > `HOME`/env overrides do **not** isolate its PATH step; it writes the real
+   > `HKCU\Environment\Path` regardless. Always pass `-NoPath` (and `-InstallDir`) as above.
 4. **The UI path works end-to-end** — on a host with a display, run `taskkling ui` with the
    fresh binary: first launch fetches jar + runtime with progress, verifies, opens the
    window, and returns the prompt; `taskkling ui --fetch-only` on a second machine (or
    after clearing the cache home) exercises the headless prefetch path.
 
-   > **Windows hazard:** overriding `HOME`/env vars does **not** isolate `install.ps1`'s
-   > PATH step — it writes the **real** `HKCU\Environment\Path` regardless (and that rewrite
-   > carries the t-359h empty-segment normalization). Running it naively pollutes the real
-   > user registry. Snapshot `HKCU\Environment\Path` before and byte-exact-restore it after,
-   > or verify the artifact directly (download + extract + `--version`) without invoking the
-   > PATH registration. See `dx` task for an `install.ps1` `-NoPath`/isolation flag that
-   > would make this safe by construction.
+## Milestone head convention (interim until v0.7.0 first-class milestones)
+
+Every release milestone in the dogfood backlog is headed by the same three tasks — copy
+this shape verbatim instead of imitating the nearest older milestone (hand-imitated heads
+are how v0.6.1/v0.6.2 drifted apart and accrued dangling edges):
+
+- **bump** — `bump version to X.Y.Z`; depends on **the previous milestone's gate only**
+  (not the impl tasks — the gate already aggregates them).
+- **gate** — `taskkling vX.Y.Z (<name> gate)`; depends on the previous gate, the bump,
+  and **every impl task in the milestone**. The body carries the milestone spec/DoD and
+  any start conditions.
+- **cut** — `cut vX.Y.Z release (human)`; depends on the gate only.
+
+Shared thread label on all of them (e.g. `v0.6.1-stabilization`). Hard rule: **every id a
+head task references must exist in the active store** — ids that live only on an unmerged
+branch make the head un-mutable (referential integrity rejects any new edge on the node,
+which is what froze the v0.6.2 head). Create head tasks only from ids visible in
+`taskkling list`.
+
+This section retires when v0.7.0's first-class `milestone` attribute + derived gate lands
+(t-xgzw / t-6pfw).
 
 ## v0.6.0 release-notes stub (one-time; paste atop the generated notes)
 

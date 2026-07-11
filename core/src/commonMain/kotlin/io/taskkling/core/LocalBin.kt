@@ -109,16 +109,49 @@ internal val CMD_WRAPPER: String = listOf(
  *     binary by the documented chain (the freshly copied pin is their first hit).
  *
  * Idempotent: existing copies and wrappers are overwritten.
+ *
+ * Refuses the one self-destructive case: the running binary IS the resolved
+ * dest (`init --local-bin` invoked through the in-repo wrapper resolves to the
+ * PINNED copy, so it would try to reinstall itself). See the [source] overload.
  */
-public fun installLocalBin(root: Path): LocalBinResult {
+public fun installLocalBin(root: Path): LocalBinResult =
+    installLocalBin(root, currentExecutablePath().toPath())
+
+/**
+ * [installLocalBin] with the running executable to pin passed explicitly — the
+ * testable seam (a unit test can point [source] at the computed dest to exercise
+ * the self-overwrite guard without a locked Windows image).
+ *
+ * The guard (t-1g3t): if [source] canonicalizes to the same file as the dest,
+ * the copy below is both meaningless (copying a file onto itself) AND
+ * destructive — `fs.delete(dest)` would unlink the very binary we copy FROM
+ * (POSIX allows unlinking a running image), and on Windows the live `.exe` is
+ * locked and the raw copy surfaces a bare, unactionable "Permission denied".
+ * This is the stale-pinned-binary trap: a pinned copy can't reinstall itself,
+ * so we fail early with a message that names the file and the way out.
+ */
+internal fun installLocalBin(root: Path, source: Path): LocalBinResult {
     val fs = FileSystem.SYSTEM
-    val source = currentExecutablePath().toPath()
     val basename = source.name // taskkling.exe on Windows, taskkling elsewhere
 
     val binDir = root / ".taskkling" / "bin"
     fs.createDirectories(binDir)
 
     val dest = binDir / basename
+
+    // Same canonicalized-equality check `update` uses to tell self from other
+    // (Main.kt's isSelf), guarding a copy instead of a self-replace.
+    fun canon(p: Path): Path = try { fs.canonicalize(p) } catch (_: Exception) { p }
+    if (canon(source) == canon(dest)) {
+        throw TkError(
+            ExitCode.VALIDATION,
+            "cannot reinstall taskkling over its own running binary ($dest) — you're running the " +
+                "pinned copy itself, which can't overwrite its own image. Refresh it from another " +
+                "install: run the global binary by full path ('<taskkling> init --local-bin') or " +
+                "'taskkling update --local'.",
+        )
+    }
+
     fs.delete(dest, mustExist = false)
     fs.copy(source, dest)
     markExecutable(dest.toString())
