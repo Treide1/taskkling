@@ -200,16 +200,6 @@ taskkling update --version v0.3.0  # install a specific release tag
 
 When in doubt, rerun [Installation](#Installation) to override the global install in-place.
 
-> **Refreshing a stale per-project binary.** Inside a repo, bare `taskkling` /
-> `./taskkling` resolves to the *pinned* copy in `.taskkling/bin`, not the
-> global one — so a pinned copy so old it predates the `update` verb can't
-> refresh itself (`init --local-bin` through the wrapper would try to overwrite
-> its own running image and is refused). Refresh it from another install: the
-> global binary by full path (`"$HOME/.local/bin/taskkling" init --local-bin`,
-> or on Windows `& "$env:LOCALAPPDATA\Programs\taskkling\taskkling.exe" init --local-bin`),
-> or `taskkling update --local`. Once the pin is new enough to have `update`,
-> `taskkling update` self-refreshes it from then on.
-
 ## Uninstalling
 
 `taskkling uninstall` removes the binary and the `PATH` entry.
