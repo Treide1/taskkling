@@ -397,13 +397,14 @@ private class RestoreCmd : MutationCommand("restore", "Restore a task from trash
     }
 }
 
-/** `cleanup [--delete-before <dt>] [--include-archive]` — sweep closed → archive; purge trash (PRD §10.7). */
+/** `cleanup [--only <status>…] [--delete-before <dt>] [--include-archive]` — sweep closed → archive; purge trash (PRD §10.7). */
 private class CleanupCmd : MutationCommand("cleanup", "Sweep closed tasks to archive; optionally purge old trash") {
+    val only by option(ArgType.String, "only", description = "Sweep only these closed statuses: done|dropped (comma-separated and/or repeatable)").multiple()
     val deleteBefore by option(ArgType.String, "delete-before", description = "Purge trash entries closed before this datetime")
     val includeArchive by option(ArgType.Boolean, "include-archive", description = "Also purge archive entries with --delete-before").default(false)
 
     override fun run() {
-        val result = Workspace.discover(root).cleanup(deleteBefore, includeArchive, exportOnSuccess)
+        val result = Workspace.discover(root).cleanup(deleteBefore, includeArchive, exportOnSuccess, parseOnlyStatuses(only))
         val export = result.export
         when {
             export != null -> println(json.encodeToString(ExportDto.serializer(), export))

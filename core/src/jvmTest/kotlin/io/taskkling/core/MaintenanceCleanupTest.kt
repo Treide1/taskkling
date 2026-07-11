@@ -88,6 +88,73 @@ class MaintenanceCleanupTest {
         assertEquals(0, result.purged)
     }
 
+    // --- sweep narrowing: --only <status> (the UI archive dialog's selector) ----
+
+    @Test
+    fun onlyDoneSweepsDoneAndSparesDropped() {
+        val ws = tempWorkspace()
+        val done = ws.addReturningId(AddArgs(title = "finished"))
+        val dropped = ws.addReturningId(AddArgs(title = "abandoned"))
+        ws.markDone(done)
+        ws.markDropped(dropped)
+
+        val result = ws.cleanup(deleteBefore = null, includeArchive = false, only = setOf(Status.DONE))
+
+        assertEquals(1, result.archived, "only the done task swept")
+        assertNull(ws.findActiveFile(done), "done left tasks/")
+        assertNotNull(ws.findActiveFile(dropped), "dropped stays active under --only done")
+        assertNull(ws.fileFor(ws.archiveDir, dropped), "dropped not archived")
+    }
+
+    @Test
+    fun onlyDroppedSweepsDroppedAndSparesDone() {
+        val ws = tempWorkspace()
+        val done = ws.addReturningId(AddArgs(title = "finished"))
+        val dropped = ws.addReturningId(AddArgs(title = "abandoned"))
+        ws.markDone(done)
+        ws.markDropped(dropped)
+
+        val result = ws.cleanup(deleteBefore = null, includeArchive = false, only = setOf(Status.DROPPED))
+
+        assertEquals(1, result.archived, "only the dropped task swept")
+        assertNotNull(ws.findActiveFile(done), "done stays active under --only dropped")
+        assertNull(ws.findActiveFile(dropped), "dropped left tasks/")
+    }
+
+    @Test
+    fun onlyBothMatchesTheDefaultSweep() {
+        val ws = tempWorkspace()
+        val done = ws.addReturningId(AddArgs(title = "finished"))
+        val dropped = ws.addReturningId(AddArgs(title = "abandoned"))
+        ws.markDone(done)
+        ws.markDropped(dropped)
+
+        val result = ws.cleanup(
+            deleteBefore = null,
+            includeArchive = false,
+            only = setOf(Status.DONE, Status.DROPPED),
+        )
+
+        assertEquals(2, result.archived, "an explicit both-set equals the null default")
+    }
+
+    @Test
+    fun onlyNeverNarrowsThePurge() {
+        val ws = tempWorkspace()
+        // A dropped-status trash entry below the cutoff: --only done must not spare it —
+        // the filter is a sweep concern, the purge stays status-blind.
+        ws.plant(ws.trashDir, closedTask("t-stale", "2026-01-01T00:00:00Z", status = Status.DROPPED))
+
+        val result = ws.cleanup(
+            deleteBefore = "2026-07-01T00:00:00Z",
+            includeArchive = false,
+            only = setOf(Status.DONE),
+        )
+
+        assertEquals(1, result.purged, "purge ignores --only")
+        assertNull(ws.fileFor(ws.trashDir, "t-stale"))
+    }
+
     // --- purge: --delete-before against trash/ (and, opt-in, archive/) ----------
 
     @Test

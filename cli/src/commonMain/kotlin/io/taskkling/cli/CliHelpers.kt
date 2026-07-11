@@ -1,7 +1,10 @@
 package io.taskkling.cli
 
 import io.taskkling.core.Computed
+import io.taskkling.core.ExitCode
+import io.taskkling.core.Status
 import io.taskkling.core.Task
+import io.taskkling.core.TkError
 
 /**
  * Pure CLI helpers, extracted from Main.kt into a test seam (mirrors the `:ui`
@@ -34,6 +37,24 @@ internal fun bodyArg(text: String, readStdin: () -> String = ::readStdin): Strin
  */
 internal fun flattenDepends(raw: List<String>): List<String> =
     raw.flatMap { it.split(",") }.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+/**
+ * Normalize `cleanup --only` values (same repeatable/comma grammar as `-d`) into
+ * the closed-status subset the sweep is narrowed to, or null when the flag is
+ * absent (= sweep both, the historical behavior). Only the two closed statuses
+ * are nameable; anything else is a usage error.
+ */
+internal fun parseOnlyStatuses(raw: List<String>): Set<Status>? {
+    val values = raw.flatMap { it.split(",") }.map { it.trim() }.filter { it.isNotEmpty() }
+    if (values.isEmpty()) return null
+    return values.map {
+        when (it) {
+            "done" -> Status.DONE
+            "dropped" -> Status.DROPPED
+            else -> throw TkError(ExitCode.USAGE, "invalid --only value '$it' (allowed: done, dropped)")
+        }
+    }.toSet()
+}
 
 /**
  * The parsed leading globals (PRD §10.1): the recognised git-style flags that appear
