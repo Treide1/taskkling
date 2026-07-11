@@ -42,19 +42,21 @@ public data class WindowsPathValue(val raw: String, val type: WindowsPathValueTy
 
 /**
  * Remove [dirToRemove] from a `;`-delimited Windows `PATH`-style value,
- * preserving the order and content of every OTHER entry. The exact inverse of
- * install.ps1's add (`$rawPath.Split(';') | Where-Object { $_ -ne '' }`, then
- * append-if-absent): split on `;`, drop empty segments — a leading/trailing
- * `;` or a doubled `;;` collapses away on both add AND remove, matching the
- * installer's own normalization — drop entries matching [dirToRemove]
- * case-insensitively (Windows paths are case-insensitive), rejoin with `;`.
- * Returns [rawPath] unchanged if [dirToRemove] is not present as an entry —
- * a no-op uninstall must never rewrite a `PATH` it didn't touch.
+ * preserving every OTHER segment VERBATIM — including the empty segments a
+ * leading/trailing `;` or a doubled `;;` produces (t-359h; ADR-004
+ * minimal-touch: a rewrite owns only its own entry and leaves the user's
+ * `;;`/trailing-`;` cosmetics untouched, rather than silently normalizing them
+ * away on the first edit). The inverse of install.ps1's add, which likewise
+ * appends without re-writing existing segments: split on `;`, drop ONLY the
+ * segments matching [dirToRemove] case-insensitively (Windows paths are
+ * case-insensitive — and no real entry is empty, so the empties never match),
+ * rejoin with `;`. Returns [rawPath] unchanged if [dirToRemove] is not present
+ * as an entry — a no-op uninstall must never rewrite a `PATH` it didn't touch.
  */
 public fun removePathEntry(rawPath: String, dirToRemove: String): String {
-    val entries = rawPath.split(';').filter { it.isNotEmpty() }
-    if (entries.none { it.equals(dirToRemove, ignoreCase = true) }) return rawPath
-    return entries.filterNot { it.equals(dirToRemove, ignoreCase = true) }.joinToString(";")
+    val segments = rawPath.split(';')
+    if (segments.none { it.equals(dirToRemove, ignoreCase = true) }) return rawPath
+    return segments.filterNot { it.equals(dirToRemove, ignoreCase = true) }.joinToString(";")
 }
 
 /** Whether [dirToRemove] is present as a distinct entry in [rawPath] (pre-check before touching the registry). */

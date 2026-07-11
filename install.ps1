@@ -80,9 +80,13 @@ try {
     $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
     try {
         $rawPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        # Match on the filtered split (a `;;`/trailing-`;` is never a real entry), but rebuild
+        # from the RAW value so a pre-existing empty segment survives verbatim — ADR-004
+        # minimal-touch: the add owns only its own entry and must not silently normalize the
+        # user's PATH cosmetics away on the first rewrite (t-359h). '' -> just $installDir.
         $entries = @($rawPath.Split(';') | Where-Object { $_ -ne '' })
         if ($entries -notcontains $installDir) {
-            $newPath = (@($entries) + $installDir) -join ';'
+            $newPath = if ($rawPath -eq '') { $installDir } else { "$rawPath;$installDir" }
             # Keep PATH expandable when it carries %VAR% refs; else preserve the
             # existing kind; else default to ExpandString for a fresh value.
             $kind = if ($newPath.Contains('%')) {
