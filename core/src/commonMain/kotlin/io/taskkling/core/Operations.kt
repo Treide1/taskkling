@@ -13,9 +13,16 @@ public data class InitResult(val root: Path, val alreadyExisted: Boolean)
 /**
  * Scaffold a workspace in [rootOverride] (or the cwd): `.taskkling/`
  * (config.toml, tmp/) plus `tasks/` with `archive/` and `trash/` (PRD §9, §10.7).
- * Idempotent — re-running never clobbers an existing `config.toml`.
+ * Idempotent — re-running never clobbers an existing `config.toml`, and a
+ * pre-existing config's `tasks_dir` is honored (t-wqwt): scaffolding happens at
+ * the RESOLVED location, never at the default one beside it.
+ *
+ * With [demoLayout] (`init --demo-mode`, ADR-017) a *freshly written* config
+ * points `tasks_dir` inside the meta dir ([DEMO_TASKS_DIR]) so the whole sandbox
+ * lives — and dies — with `.taskkling/`, invisible to git. An existing config's
+ * layout always wins; the flag never rewrites it.
  */
-public fun initWorkspace(rootOverride: String?): InitResult {
+public fun initWorkspace(rootOverride: String?, demoLayout: Boolean = false): InitResult {
     val fs = FileSystem.SYSTEM
     val root = if (rootOverride != null) {
         fs.createDirectories(rootOverride.toPath())
@@ -25,7 +32,12 @@ public fun initWorkspace(rootOverride: String?): InitResult {
     }
     val meta = root / ".taskkling"
     val existed = fs.exists(meta)
-    val cfg = Config.DEFAULT
+    val configFile = meta / "config.toml"
+    val cfg = when {
+        fs.exists(configFile) -> Config.load(fs, configFile)
+        demoLayout -> Config.DEFAULT.copy(tasksDir = DEMO_TASKS_DIR)
+        else -> Config.DEFAULT
+    }
 
     fs.createDirectories(meta)
     fs.createDirectories(meta / "tmp")
@@ -33,8 +45,7 @@ public fun initWorkspace(rootOverride: String?): InitResult {
     fs.createDirectories(root / cfg.tasksDir / "archive")
     fs.createDirectories(root / cfg.tasksDir / "trash")
 
-    val configFile = meta / "config.toml"
-    if (!fs.exists(configFile)) fs.write(configFile) { writeUtf8(Config.defaultToml()) }
+    if (!fs.exists(configFile)) fs.write(configFile) { writeUtf8(Config.defaultToml(cfg.tasksDir)) }
 
     return InitResult(root, existed)
 }

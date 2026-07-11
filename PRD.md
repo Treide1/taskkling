@@ -408,7 +408,7 @@ so an agent can preview impact with the very function delete will run:
 
 | Command | Effect |
 |---|---|
-| `init` | Scaffold `.taskkling/` (config, lock, tmp) + `tasks_dir` in the cwd. |
+| `init [--demo-mode]` | Scaffold `.taskkling/` (config, lock, tmp) + `tasks_dir` in the cwd; a pre-existing config's `tasks_dir` is honored. `--demo-mode`/`-dm` additionally seeds a self-contained sandbox backlog kept under `.taskkling/tasks` — every state on display, freely mutable, gone with the meta dir; only a task-free workspace is ever seeded (ADR-017). |
 | `config init` | Write the user-level `config.toml` (write-if-absent — never clobbers your edits) and print its path. Surfaces the on-by-default `update_check` toggle so its OFF switch is discoverable (ADR-006); both installers run it. |
 | `validate [--json]` | Read-only report of all preventive checks across the set. |
 | `cleanup [--delete-before <dt>] [--include-archive]` | Sweep closed → `archive/`; with `--delete-before`, purge `trash` (and, with `--include-archive`, archive) entries by `closed`. |

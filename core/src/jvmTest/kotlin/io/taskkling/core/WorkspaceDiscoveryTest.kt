@@ -138,22 +138,21 @@ class WorkspaceDiscoveryTest {
     }
 
     /**
-     * Characterization test pinning the current [initWorkspace] contract: it
-     * scaffolds the DEFAULT `tasks/` layout using [Config.DEFAULT] and does NOT
-     * read a pre-existing config.toml, so a custom `tasks_dir` is honored only by
-     * [Workspace] path resolution (above), not by init-time scaffolding. If init
-     * is ever taught to honor a configured tasks_dir, update this test.
+     * init honors a pre-existing config's `tasks_dir` (t-wqwt): scaffolding
+     * happens at the RESOLVED location, and the default `tasks/` is not created
+     * beside it. (Replaces the characterization test that pinned the old
+     * ignore-the-config behavior.)
      */
     @Test
-    fun initScaffoldsDefaultLayoutRegardlessOfPreexistingCustomConfig() {
+    fun initScaffoldsAtThePreexistingConfigsTasksDir() {
         val root = tempDir()
         fs.createDirectories(root / ".taskkling")
         fs.write(root / ".taskkling" / "config.toml") { writeUtf8("tasks_dir = \"work\"\n") }
 
         initWorkspace(root.toString())
 
-        assertTrue(fs.exists(root / "tasks" / "archive"), "default tasks/ layout is scaffolded")
-        assertFalse(fs.exists(root / "work"), "a config-level custom tasks_dir is NOT scaffolded by init")
+        assertTrue(fs.exists(root / "work" / "archive"), "the configured tasks_dir is scaffolded")
+        assertFalse(fs.exists(root / "tasks"), "the default tasks/ is NOT scaffolded beside it")
         assertEquals(
             "tasks_dir = \"work\"\n",
             fs.read(root / ".taskkling" / "config.toml") { readUtf8() },
