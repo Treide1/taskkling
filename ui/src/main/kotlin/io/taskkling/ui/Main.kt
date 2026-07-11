@@ -112,6 +112,8 @@ private fun App(client: CliClient) {
     // True while a CLI call is in flight; the panel's mutation buttons render disabled
     // off it, so a double-click can't queue a second subprocess (t-t36o).
     var busy by remember { mutableStateOf(false) }
+    // The open settings dialog (archive/prune), session-only like the pin.
+    var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
     val scope = rememberCoroutineScope()
 
     // The canvas scroll state lives here, above GraphPane, so wheel scrolling, drag
@@ -180,57 +182,89 @@ private fun App(client: CliClient) {
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        // Settings actions arrive as null until their dialogs land (t-y0pr, t-w3oh).
-        Header(export, busy = busy, onRefresh = ::reload, onArchive = null, onPrune = null)
-        Row(Modifier.weight(1f).fillMaxWidth()) {
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                val current = export
-                when {
-                    error != null && current == null ->
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("error: $error", color = Tk.blocked, fontSize = 13.sp)
-                        }
-                    current == null ->
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("loading…", color = Tk.muted, fontSize = 13.sp)
-                        }
-                    else -> GraphPane(
-                        export = current,
-                        selectedId = selectedId,
-                        // Highlight source: the pin wins; without one, selection highlights.
-                        highlightedId = pinnedId ?: selectedId,
-                        pinnedId = pinnedId,
-                        onSelect = { selectedId = it },
-                        // Pinning selects too (one click = full focus); a second click on
-                        // the pinned card's pin unpins and leaves selection untouched.
-                        onPinToggle = { id ->
-                            if (pinnedId == id) {
-                                pinnedId = null
-                            } else {
-                                pinnedId = id
-                                selectedId = id
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            // The prune action arrives null until its dialog lands (t-w3oh).
+            Header(
+                export,
+                busy = busy,
+                onRefresh = ::reload,
+                onArchive = { dialog = SettingsDialog.ARCHIVE },
+                onPrune = null,
+            )
+            Row(Modifier.weight(1f).fillMaxWidth()) {
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    val current = export
+                    when {
+                        error != null && current == null ->
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("error: $error", color = Tk.blocked, fontSize = 13.sp)
+                            }
+                        current == null ->
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("loading…", color = Tk.muted, fontSize = 13.sp)
+                            }
+                        else -> GraphPane(
+                            export = current,
+                            selectedId = selectedId,
+                            // Highlight source: the pin wins; without one, selection highlights.
+                            highlightedId = pinnedId ?: selectedId,
+                            pinnedId = pinnedId,
+                            onSelect = { selectedId = it },
+                            // Pinning selects too (one click = full focus); a second click on
+                            // the pinned card's pin unpins and leaves selection untouched.
+                            onPinToggle = { id ->
+                                if (pinnedId == id) {
+                                    pinnedId = null
+                                } else {
+                                    pinnedId = id
+                                    selectedId = id
+                                }
+                            },
+                            // Background click clears the selection, never the pin (§5).
+                            onClearSelection = { selectedId = null },
+                            hScroll = hScroll,
+                            vScroll = vScroll,
+                            cardRects = cardRects,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+                DetailPane(
+                    task = export?.tasks?.firstOrNull { it.id == selectedId },
+                    pinnedId = pinnedId,
+                    error = error,
+                    busy = busy,
+                    onMutate = ::mutate,
+                    onNavigate = ::navigateTo,
+                )
+            }
+            Legend()
+        }
+
+        // Settings dialogs overlay the whole app (scrim + centred card, DESIGN §9).
+        val current = export
+        if (current != null && dialog == SettingsDialog.ARCHIVE) {
+            ArchiveDialog(
+                doneCount = current.tasks.count { it.status == "done" },
+                droppedCount = current.tasks.count { it.status == "dropped" },
+                busy = busy,
+                onConfirm = { done, dropped ->
+                    dialog = null
+                    mutate(
+                        buildList {
+                            add("cleanup")
+                            // Both types = the verb's historical default; one type narrows.
+                            if (!(done && dropped)) {
+                                add("--only")
+                                add(if (done) "done" else "dropped")
                             }
                         },
-                        // Background click clears the selection, never the pin (§5).
-                        onClearSelection = { selectedId = null },
-                        hScroll = hScroll,
-                        vScroll = vScroll,
-                        cardRects = cardRects,
-                        modifier = Modifier.fillMaxSize(),
                     )
-                }
-            }
-            DetailPane(
-                task = export?.tasks?.firstOrNull { it.id == selectedId },
-                pinnedId = pinnedId,
-                error = error,
-                busy = busy,
-                onMutate = ::mutate,
-                onNavigate = ::navigateTo,
+                },
+                onDismiss = { dialog = null },
             )
         }
-        Legend()
     }
 }
 
