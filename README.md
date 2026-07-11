@@ -16,12 +16,13 @@ In that directory, you can use **simple CLI commands** to interact with your tas
 
 ![representative_UI_screenshot.png](docs/assets/representative_UI_screenshot.png)
 
-It stays **completely local on your machine** (no database, server, or background process), and allows you to **organize tasks in a direct acyclical graph (DAG)**, 
-as well as keeping track of light-weight metadata, like adding a datetime until which the task is considered `deferred`. 
+It stays **completely local on your machine** (no database, server, or background process), 
+and allows you to **organize tasks in a directed acyclical graph (DAG)**. 
+You can also keep track of light-weight metadata, like adding a datetime until which the task is considered `deferred`. 
 
 As you might have guessed... it is also developed for (and with) **AI agents**, to provide a shared surface for tasks to do yourself, or handoff to your artificial assistants :)
 
-> If you want to run the demo to get a feel for the tool, follow the [Installation](#Installation) and run `taskkling init --demo-mode` in an empty folder. (WIP)
+> If you want to get a feel for the tool, follow the [Installation](#Installation) and run `taskkling init --demo-mode` in an empty folder.
 
 ## Why use taskkling ?
 
@@ -33,7 +34,7 @@ Taskkling is aimed to sit between existing task management tools, bringing toget
   * (+) Graph-based structure
   * (-) Hard to understand task state
 * Ticket systems (e.g. Jira)
-  * (+) Capture vast possible
+  * (+) Vast possible task structures
   * (-) Requires enterprise-grade setup and maintenance
 * [Taskwarrior](https://taskwarrior.org/)
   * (+) Light-weight local task manager
@@ -45,26 +46,26 @@ I hope you come to like it.
 
 ### Tool Comparison
 
-| | Text editors | Obsidian | Ticket systems  | Taskwarrior | **taskkling** |
-|---|:-:|:--------:|:-:|:-:|:-:|
-| Binary tasks (`[ ]`/`[x]`)? | ✅ |    ✅     | ✅ | ✅ | ✅ |
-| Task states beyond open/done? | ❌ |    ~     | ✅ | ✅ | ✅ |
-| Custom states & workflows? | ❌ |    ~     | ✅ | ❌ | ❌ |
-| Tags, priority, due dates? | ❌ |    ~     | ✅ | ✅ | ✅ |
-| N-to-M task dependencies? | ❌ |    ❌     | ✅ | ✅ | ✅ |
-| Allows sub-tasking? | ❌ |    ❌     | ✅ | ❌ | ❌ |
-| "What's ready right now?" out of the box? | ❌ |    ❌     | ~ | ✅ | ✅ |
-| Tasks are human-editable text files? | ✅ |    ✅     | ❌ | ~ | ✅ |
-| Has a GUI? | ✅ |    ✅     | ✅ | ❌ | ✅ |
-| Works without internet? | ✅ |    ✅     | ❌ | ✅ | ✅* |
-| No server, account, or admin? | ✅ |    ✅     | ❌ | ✅ | ✅ |
-| Multi-user collaboration? | ❌ |    ~     | ✅ | ❌ | ❌ |
+|                                     | Text editors | Obsidian | Ticket systems  | Taskwarrior | **taskkling** |
+|-------------------------------------|:-:|:--------:|:-:|:-:|:-:|
+| Simple tasks (`[ ]`/`[x]`)?         | ✅ |     ✅    | ✅ | ✅ | ✅ |
+| Rich task states (e.g. `blocked`) ? | ❌ |    ~     | ✅ | ✅ | ✅ |
+| Custom states & workflows?          | ❌ |    ~     | ✅ | ❌ | ❌ |
+| Tags, priority, due dates?          | ❌ |    ~     | ✅ | ✅ | ✅ |
+| N-to-M task dependencies?           | ❌ |    ❌     | ✅ | ✅ | ✅ |
+| Allows sub-tasking?                 | ❌ |    ❌     | ✅ | ❌ | ❌ |
+| "Get next tasks" out of the box?    | ❌ |    ❌     | ~ | ✅ | ✅ |
+| Human-editable ?                    | ✅ |    ✅     | ❌ | ~ | ✅ |
+| Has a GUI?                          | ✅ |    ✅     | ✅ | ❌ | ✅ |
+| Works without internet?             | ✅ |    ✅     | ❌ | ✅ | ✅* |
+| No server, account, or admin?       | ✅ |    ✅     | ❌ | ✅ | ✅ |
+| Multi-user collaboration?           | ❌ |    ~     | ✅ | ❌ | ❌ |
 
-✅ yes · ~ partial / needs plugins or setup · ❌ no · \* the CLI is fully offline; the first `taskkling ui` run downloads the UI once, then it's cached.
-
-Neither the tools nor the capabilities are exhaustive — open an issue or PR to suggest extensions.
+*\* the CLI is fully offline; the first `taskkling ui` run downloads the UI once, then it's cached.*
 
 ## Installation
+
+Run the install script in your terminal:
 
 **macOS / Linux**
 
@@ -121,13 +122,43 @@ quarantine attribute.
 
 ## Initializing a taskkling store
 
-There are two ways to drive `taskkling` after install:
+Taskkling organizes all its data in a **taskkling store**, which is a directory named `.taskkling/`.
+It is created when you run the `init` command within that directory.
 
-**1. Global PATH (recommended)**
-In your workspace(s), run `taskkling init`. Afterwards, you can use `taskkling …` from anywhere inside a project tree (not just root). 
+```shell
+PS C:\my-project> taskkling --help
+# Shows all available commands (installation worked)
+
+PS C:\my-project> taskkling list
+taskkling: not inside a taskkling workspace (run 'taskkling init')
+
+PS C:\my-project> taskkling init [with or without --local-bin]
+initialized taskkling workspace: C:\my-project
+
+PS C:\my-project> ls
+d-----    .taskkling    # exists now
+
+PS C:\my-project> cd .taskkling/
+PS C:\my-project> ls
+d-----    tasks         # tasks dir, each task is a markdown file
+-a----    config.toml   # fine-grained config
+-a----    lock          # misc: global lock for sequential writes
+d-----    tmp           # misc: files are updated via tmp-write and replace                                                                                                                                                       
+
+PS C:\my-project> taskkling list
+# works now, but has nothing to show
+
+PS C:\my-project> taskkling ui
+# starts the UI to visualize and interact with your tasks
+```
+
+There are two ways to create a `taskkling` store:
+
+**1. Global PATH (recommended)**<br>
+In your workspace(s), run `taskkling init`. Afterwards, you can use `taskkling …` from anywhere inside the project tree (not just root). 
 This will use the global binary, but walk up the directory tree until it finds a parent dir, which contains `.taskkling/`.
 
-**2. Per-project wrapper scripts**
+**2. Per-project wrapper scripts**<br>
 In your workspace(s), run `taskkling init --local-bin`. 
 This scaffolds the workspace AND copies the running binary into `.taskkling/bin`, then drops
 the wrapper scripts (`./taskkling` + `./taskkling.cmd`) in the repo root. Run this once
@@ -138,11 +169,9 @@ after a fresh install to set up the per-project wrapper in one step.
 
 ## Usage
 
-After install, you can use `taskkling --help` to see all commands.
-
 ```sh
-taskkling add "Draft the proposal" -t docs        # create a task, prints its id (-b - = body from stdin)
-taskkling add "Ship it" -t docs -d t-a1z9         # depends on t-a1z9 (-d repeats; or -d a,b)
+taskkling add "Draft the proposal" --thread docs  # create a task under the thread "docs", prints its id
+taskkling add "Ship it" -t docs -d t-a1z9         # created task depends on t-a1z9 (-d repeats; or -d a,b)
 taskkling list                                    # whole backlog, ls -la style
 taskkling list --ready                            # what's actionable right now
 taskkling export                                  # full JSON (stored + computed)
