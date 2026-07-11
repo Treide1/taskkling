@@ -267,6 +267,17 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
   - **Selectable text**: panel text is selectable and copyable. Interactive islands (dropdowns,
     inline editors, and the reference links' click-to-navigate) opt out of selection where the
     two gestures fight.
+- **Settings dialogs** (archive / prune): a full-app scrim (black at 45%, click-away
+  dismisses) with a centred 300-wide `panel` card, radius 7, padding 16. The card's 1px
+  border, bold title, and confirm button carry the dialog's **alert accent**: archiving
+  is `waiting` amber (noticeable, not alarming); pruning is `blocked` red (destructive).
+  Body copy is `muted` 12 and states the consequence. One drawn-checkbox row per closed
+  type (`done`, `dropped`, both pre-checked) with its live count from the current export;
+  the checked fill uses the dialog accent. Buttons right-aligned: quiet `cancel` outline +
+  an accent-bordered confirm, disabled while a CLI call is in flight or when the selection
+  matches zero tasks. Confirm runs the mapped CLI verb(s) through the mutation path —
+  archive: `cleanup` (`--only <type>` when narrowed); prune: the `delete` verb per matching
+  task — and the app refreshes from the returned export.
 - **Legend** (bottom, `panel`, 1px `line` top border, padding 8×16): one 12px rounded swatch +
   `muted` label per state.
 
