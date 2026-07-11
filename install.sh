@@ -7,6 +7,12 @@
 # Pin a version (defaults to the latest release):
 #   TASKKLING_VERSION=v0.1.0 sh install.sh
 #
+# Override the install dir (defaults to ~/.local/bin):
+#   TASKKLING_INSTALL_DIR=/tmp/taskkling-check sh install.sh
+#
+# Skip the PATH hint (e.g. for isolated verification — pass flags through a pipe with `-s --`):
+#   curl -fsSL .../install.sh | sh -s -- --no-path
+#
 # Gatekeeper note (macOS): binaries fetched with curl do NOT receive the
 # `com.apple.quarantine` extended attribute — that flag is applied by GUI
 # downloaders (browsers), not by curl. So this piped-install path launches
@@ -23,6 +29,16 @@ INSTALL_DIR="${TASKKLING_INSTALL_DIR:-${HOME}/.local/bin}"
 
 err() { printf 'error: %s\n' "$1" >&2; exit 1; }
 info() { printf '%s\n' "$1"; }
+
+# --- Parse flags -----------------------------------------------------------------
+NO_PATH=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-path) NO_PATH=1 ;;
+    *) err "unknown option: $1" ;;
+  esac
+  shift
+done
 
 # --- Resolve the release asset for this OS/arch --------------------------------
 os="$(uname -s)"
@@ -116,26 +132,33 @@ info "Installed taskkling to ${dest}"
 "$dest" config init >/dev/null 2>&1 || true
 
 # --- PATH hint -----------------------------------------------------------------
-case ":${PATH}:" in
-  *":${INSTALL_DIR}:"*) ;;
-  *)
-    # Tailor the suggestion to the user's shell. ~/.profile is read only by bash/sh
-    # login shells; zsh (the macOS default) ignores it and fish needs different
-    # syntax -- so a hardcoded ~/.profile hint silently does nothing on a stock Mac.
-    # Pick the file/command from $SHELL.
-    info ""
-    info "Note: ${INSTALL_DIR} is not on your PATH. Add it, e.g.:"
-    case "$(basename "${SHELL:-}")" in
-      zsh)
-        info "  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.zshrc"
-        ;;
-      fish)
-        info "  fish_add_path \"${INSTALL_DIR}\""
-        ;;
-      *)
-        info "  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.profile"
-        ;;
-    esac
-    info "then restart your shell (or apply it to the current session)."
-    ;;
-esac
+# Note: this only ever prints a suggestion; it never mutates a shell profile itself.
+# --no-path skips even that, for isolated/scripted verification runs.
+if [ "$NO_PATH" -eq 1 ]; then
+  info ""
+  info "--no-path set: skipping the PATH hint."
+else
+  case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*) ;;
+    *)
+      # Tailor the suggestion to the user's shell. ~/.profile is read only by bash/sh
+      # login shells; zsh (the macOS default) ignores it and fish needs different
+      # syntax -- so a hardcoded ~/.profile hint silently does nothing on a stock Mac.
+      # Pick the file/command from $SHELL.
+      info ""
+      info "Note: ${INSTALL_DIR} is not on your PATH. Add it, e.g.:"
+      case "$(basename "${SHELL:-}")" in
+        zsh)
+          info "  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.zshrc"
+          ;;
+        fish)
+          info "  fish_add_path \"${INSTALL_DIR}\""
+          ;;
+        *)
+          info "  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.profile"
+          ;;
+      esac
+      info "then restart your shell (or apply it to the current session)."
+      ;;
+  esac
+fi

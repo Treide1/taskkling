@@ -81,18 +81,18 @@ For `BASE = https://github.com/Treide1/taskkling/releases/latest/download`:
 2. **`SHA256SUMS` is well-formed** — exactly twelve entries, one per payload asset.
 3. **The install path works end-to-end** — fetch and run one install script from the
    published URL on a scratch `HOME` and confirm `taskkling --version` reports the new version.
+   On Windows, run `install.ps1 -NoPath -InstallDir <scratch dir>` — `-NoPath` skips the
+   `HKCU\Environment\Path` write entirely and `-InstallDir` keeps the binary out of the real
+   `%LOCALAPPDATA%`, so the check touches nothing outside `<scratch dir>` (see the script's
+   header comment for the full flag list, including the `iex`-pipe invocation form).
+
+   > **Windows note:** don't run `install.ps1` without `-NoPath` for verification — plain
+   > `HOME`/env overrides do **not** isolate its PATH step; it writes the real
+   > `HKCU\Environment\Path` regardless. Always pass `-NoPath` (and `-InstallDir`) as above.
 4. **The UI path works end-to-end** — on a host with a display, run `taskkling ui` with the
    fresh binary: first launch fetches jar + runtime with progress, verifies, opens the
    window, and returns the prompt; `taskkling ui --fetch-only` on a second machine (or
    after clearing the cache home) exercises the headless prefetch path.
-
-   > **Windows hazard:** overriding `HOME`/env vars does **not** isolate `install.ps1`'s
-   > PATH step — it writes the **real** `HKCU\Environment\Path` regardless (and that rewrite
-   > carries the t-359h empty-segment normalization). Running it naively pollutes the real
-   > user registry. Snapshot `HKCU\Environment\Path` before and byte-exact-restore it after,
-   > or verify the artifact directly (download + extract + `--version`) without invoking the
-   > PATH registration. See `dx` task for an `install.ps1` `-NoPath`/isolation flag that
-   > would make this safe by construction.
 
 ## Milestone head convention (interim until v0.7.0 first-class milestones)
 

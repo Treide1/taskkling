@@ -5,6 +5,26 @@
 #
 # Pin a version (defaults to the latest release):
 #   $env:TASKKLING_VERSION = 'v0.1.0'; irm https://github.com/Treide1/taskkling/releases/latest/download/install.ps1 | iex
+#
+# Flags. A bare `irm | iex` pipes script *text* into iex, which cannot receive named
+# arguments, so flags only reach the script via the scriptblock-invocation pattern or by
+# downloading the script first:
+#   iex "& { $(irm https://github.com/Treide1/taskkling/releases/latest/download/install.ps1) } -NoPath"
+#   # or:
+#   Invoke-WebRequest .../install.ps1 -OutFile install.ps1; .\install.ps1 -NoPath
+#
+#   -NoPath                Install the binary and print --version, but skip the HKCU
+#                           user-PATH registry write entirely. Use this to verify a release
+#                           in isolation without touching the real user PATH — see
+#                           docs/RELEASING.md post-publish check 3.
+#   -InstallDir <path>     Override where the binary is placed (defaults to
+#                           %LOCALAPPDATA%\Programs\taskkling, or $env:TASKKLING_INSTALL_DIR
+#                           if set). Combine with -NoPath for a fully isolated, disposable
+#                           install that touches nothing outside <path>.
+param(
+    [switch]$NoPath,
+    [string]$InstallDir = $(if ($env:TASKKLING_INSTALL_DIR) { $env:TASKKLING_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\taskkling' })
+)
 $ErrorActionPreference = 'Stop'
 
 $repo = 'Treide1/taskkling'
@@ -54,10 +74,9 @@ try {
     }
     Write-Host "Checksum OK ($actual)"
 
-    # Install to %LOCALAPPDATA%\Programs\taskkling\taskkling.exe.
-    $installDir = Join-Path $env:LOCALAPPDATA 'Programs\taskkling'
-    New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-    $dest = Join-Path $installDir 'taskkling.exe'
+    # Install to $InstallDir\taskkling.exe (see -InstallDir above for overrides).
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    $dest = Join-Path $InstallDir 'taskkling.exe'
     Move-Item -LiteralPath $binPath -Destination $dest -Force
 
     Write-Host ''
@@ -69,44 +88,49 @@ try {
     # Best-effort: a config-write hiccup must never fail the install.
     try { & $dest config init | Out-Null } catch { }
 
-    # Add the install dir to the USER PATH if it is not already present.
-    #
-    # Edit the registry directly instead of [Environment]::*EnvironmentVariable:
-    # that API reads the *expanded* PATH and always writes REG_SZ, which downgrades
-    # REG_EXPAND_SZ -> REG_SZ and freezes every %VAR% entry (e.g.
-    # %USERPROFILE%\AppData\Local\Microsoft\WindowsApps) into a literal path. Read
-    # raw (DoNotExpandEnvironmentNames) and write back as ExpandString. Same approach
-    # as the bun and cargo-dist installers.
-    $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
-    try {
-        $rawPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-        # Match on the filtered split (a `;;`/trailing-`;` is never a real entry), but rebuild
-        # from the RAW value so a pre-existing empty segment survives verbatim — ADR-004
-        # minimal-touch: the add owns only its own entry and must not silently normalize the
-        # user's PATH cosmetics away on the first rewrite (t-359h). '' -> just $installDir.
-        $entries = @($rawPath.Split(';') | Where-Object { $_ -ne '' })
-        if ($entries -notcontains $installDir) {
-            $newPath = if ($rawPath -eq '') { $installDir } else { "$rawPath;$installDir" }
-            # Keep PATH expandable when it carries %VAR% refs; else preserve the
-            # existing kind; else default to ExpandString for a fresh value.
-            $kind = if ($newPath.Contains('%')) {
-                [Microsoft.Win32.RegistryValueKind]::ExpandString
-            } elseif ($null -ne $envKey.GetValue('Path')) {
-                $envKey.GetValueKind('Path')
-            } else {
-                [Microsoft.Win32.RegistryValueKind]::ExpandString
-            }
-            $envKey.SetValue('Path', $newPath, $kind)
-            Write-Host ''
-            Write-Host "Added $installDir to your user PATH. Restart your shell for it to take effect."
+    if ($NoPath) {
+        Write-Host ''
+        Write-Host '-NoPath set: skipping the user PATH registry write.'
+    } else {
+        # Add the install dir to the USER PATH if it is not already present.
+        #
+        # Edit the registry directly instead of [Environment]::*EnvironmentVariable:
+        # that API reads the *expanded* PATH and always writes REG_SZ, which downgrades
+        # REG_EXPAND_SZ -> REG_SZ and freezes every %VAR% entry (e.g.
+        # %USERPROFILE%\AppData\Local\Microsoft\WindowsApps) into a literal path. Read
+        # raw (DoNotExpandEnvironmentNames) and write back as ExpandString. Same approach
+        # as the bun and cargo-dist installers.
+        $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        try {
+            $rawPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            # Match on the filtered split (a `;;`/trailing-`;` is never a real entry), but rebuild
+            # from the RAW value so a pre-existing empty segment survives verbatim — ADR-004
+            # minimal-touch: the add owns only its own entry and must not silently normalize the
+            # user's PATH cosmetics away on the first rewrite (t-359h). '' -> just $InstallDir.
+            $entries = @($rawPath.Split(';') | Where-Object { $_ -ne '' })
+            if ($entries -notcontains $InstallDir) {
+                $newPath = if ($rawPath -eq '') { $InstallDir } else { "$rawPath;$InstallDir" }
+                # Keep PATH expandable when it carries %VAR% refs; else preserve the
+                # existing kind; else default to ExpandString for a fresh value.
+                $kind = if ($newPath.Contains('%')) {
+                    [Microsoft.Win32.RegistryValueKind]::ExpandString
+                } elseif ($null -ne $envKey.GetValue('Path')) {
+                    $envKey.GetValueKind('Path')
+                } else {
+                    [Microsoft.Win32.RegistryValueKind]::ExpandString
+                }
+                $envKey.SetValue('Path', $newPath, $kind)
+                Write-Host ''
+                Write-Host "Added $InstallDir to your user PATH. Restart your shell for it to take effect."
 
-            # Nudge running processes so new shells see it without a reboot:
-            # round-tripping a dummy USER var fires WM_SETTINGCHANGE with no P/Invoke.
-            [Environment]::SetEnvironmentVariable('TASKKLING_PATH_SYNC', '1', 'User')
-            [Environment]::SetEnvironmentVariable('TASKKLING_PATH_SYNC', [NullString]::Value, 'User')
+                # Nudge running processes so new shells see it without a reboot:
+                # round-tripping a dummy USER var fires WM_SETTINGCHANGE with no P/Invoke.
+                [Environment]::SetEnvironmentVariable('TASKKLING_PATH_SYNC', '1', 'User')
+                [Environment]::SetEnvironmentVariable('TASKKLING_PATH_SYNC', [NullString]::Value, 'User')
+            }
+        } finally {
+            $envKey.Dispose()
         }
-    } finally {
-        $envKey.Dispose()
     }
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
