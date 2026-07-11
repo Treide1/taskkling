@@ -31,6 +31,12 @@ jobs:
         # compiles main + test and runs the Layout/viewport math unit tests, subsuming the
         # previous compile-only check.
         run: ./gradlew :contract:jvmTest :core:jvmTest :ui:test --no-daemon --stacktrace
+      - name: UI packaging checks
+        # ADR-016 decision 7: build all four per-target uberjars and run the cheap audits —
+        # (b) jdeps module deps ⊆ curated jlink list, (c) each jar carries its own Skiko
+        # native and no foreign-OS ones. Guards exactly what PRs change (dependency bumps,
+        # packaging edits); jlink itself stays release-only (pinned inputs, ~300 MB to re-verify).
+        run: ./gradlew :ui:checkUiPackaging --no-daemon --stacktrace
 
   native:
     name: Native (${{ matrix.target }})

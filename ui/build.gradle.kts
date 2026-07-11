@@ -1,4 +1,6 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
+import java.util.zip.ZipFile
 
 plugins {
     alias(libs.plugins.kotlinJvm)
@@ -17,7 +19,12 @@ dependencies {
     // guarantees the single-write-path principle (PRD §6.1). The UI is a pure
     // CLI client; it cannot parse or write task files.
     implementation(project(":contract"))
-    implementation(compose.desktop.currentOs)
+    // Compile against the platform-neutral desktop API (desktop-jvm carries the
+    // code, no Skiko native); the HOST's native comes in via runtimeOnly so
+    // `:ui:run` and `:ui:test` work locally while the per-target uberjar
+    // configurations below stay free of host natives (ADR-016).
+    implementation("org.jetbrains.compose.desktop:desktop-jvm:${libs.versions.compose.get()}")
+    runtimeOnly(compose.desktop.currentOs)
     // The DTOs in :contract carry generated serializers; the UI needs the JSON
     // runtime to decode `taskkling export` output (PRD §6.3, §12).
     implementation(libs.kotlinx.serialization.json)
@@ -48,4 +55,157 @@ compose.desktop {
             linux { iconFile.set(project.file("icons/taskkling.png")) }
         }
     }
+}
+
+// --- Per-target uberjars + packaging checks (ADR-016 decisions 2 + 7) -----------------------------------------------
+//
+// Compose's own packageUberJarForCurrentOS can only bake in the HOST's Skiko
+// native, which would force a 4-runner release matrix (rejected by ADR-009).
+// Instead: one resolvable configuration per release target — the module's own
+// declared deps plus THAT target's desktop artifact (which pulls its
+// skiko-awt-runtime-<target>) and no host natives — and one Jar task per
+// target flattening it. All four build on any machine; release CI runs them
+// on one ubuntu leg (ADR-016 decision 1, wired in t-6q6a).
+
+/** target vocabulary (ADR-011: matches CLI release assets) → task-name suffix + that target's desktop artifact. */
+val uberJarTargets: List<Triple<String, String, String>> = listOf("linux-x64", "macos-x64", "macos-arm64", "windows-x64").map { target ->
+    val camel = target.split("-").joinToString("") { part -> part.replaceFirstChar(Char::uppercase) }
+    // desktop-jvm-<target> = desktop-jvm (the code) + skiko-awt-runtime-<target> (that target's native).
+    Triple(target, camel, "org.jetbrains.compose.desktop:desktop-jvm-$target:${libs.versions.compose.get()}")
+}
+
+val uberJarTasks: Map<String, TaskProvider<Jar>> = uberJarTargets.associate { (target, camel, desktopDep) ->
+    val runtimeCfg = configurations.create("uiRuntime$camel") {
+        isCanBeConsumed = false
+        isCanBeResolved = true
+        // Inherit the DECLARED deps (contract, desktop.common, serialization) but not
+        // runtimeOnly — that's where the host's currentOs natives live, kept out on purpose.
+        extendsFrom(configurations.implementation.get())
+        attributes {
+            attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.JAVA_RUNTIME))
+            attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category.LIBRARY))
+            // :contract is KMP — pin its jvm variant explicitly.
+            attribute(KotlinPlatformType.attribute, KotlinPlatformType.jvm)
+        }
+    }
+    dependencies.add(runtimeCfg.name, desktopDep)
+
+    target to tasks.register<Jar>("packageUberJar$camel") {
+        group = "distribution"
+        description = "Uberjar for $target: app classes + full runtime classpath incl. that target's Skiko native (ADR-016)."
+        // ADR-011: no version in the filename — the release tag carries it.
+        archiveFileName.set("taskkling-ui-$target.jar")
+        destinationDirectory.set(layout.buildDirectory.dir("uberjars"))
+        manifest { attributes["Main-Class"] = "io.taskkling.ui.MainKt" }
+        // First-wins on duplicates (same policy as the Compose plugin's uberjar
+        // flattening); stale signature files from signed deps must not survive the merge.
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
+        from(sourceSets.main.get().output)
+        dependsOn(runtimeCfg)
+        from({ runtimeCfg.filter { it.name.endsWith(".jar") }.map { zipTree(it) } })
+    }
+}
+
+tasks.register("packageAllUberJars") {
+    group = "distribution"
+    description = "Builds all four per-target UI uberjars from this one machine (ADR-016)."
+    uberJarTasks.values.forEach { dependsOn(it) }
+}
+
+// The curated jlink module list (ADR-016 decision 4): the single source the
+// release pipeline feeds to `jlink --add-modules` (t-6q6a). Derived ONCE via
+//   jdeps --multi-release 21 --print-module-deps --ignore-missing-deps ui/build/uberjars/taskkling-ui-linux-x64.jar
+// then reviewed and hardcoded. Hand-add any reflective deps jdeps cannot see;
+// as of Compose 1.11.1 / Skiko bundled therein there are none to add —
+// jdk.unsupported (Skiko's sun.misc.Unsafe use) already shows up statically.
+// checkUiJarModules below re-runs the derivation on every PR and fails when its
+// output stops being a subset of this list — bump the list (and re-review) when
+// a dependency update trips it. Re-derivation reminder lives in RELEASING.md.
+val curatedUiRuntimeModules = listOf(
+    "java.base",
+    "java.desktop",
+    "java.instrument",
+    "jdk.unsupported",
+)
+
+tasks.register("printUiRuntimeModules") {
+    group = "distribution"
+    description = "Prints the curated jlink module list as a comma-separated string (consumed by the release pipeline)."
+    doLast { println(curatedUiRuntimeModules.joinToString(",")) }
+}
+
+// Check (b), ADR-016 decision 5: jdeps output ⊆ curated list — the tripwire that
+// makes the fixed list maintenance-free. Runs against the linux jar (jdeps reads
+// class files; the bundled native differs per target, the bytecode does not).
+val checkUiJarModules = tasks.register("checkUiJarModules") {
+    group = "verification"
+    description = "Asserts jdeps' module deps of the uberjar are a subset of the curated jlink module list (ADR-016)."
+    val jarTask = uberJarTasks.getValue("linux-x64")
+    dependsOn(jarTask)
+    val jarFile = jarTask.flatMap { it.archiveFile }
+    val launcher = javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) }
+    doLast {
+        val binDir = launcher.get().metadata.installationPath.dir("bin").asFile
+        val jdeps = binDir.resolve("jdeps.exe").takeIf { it.exists() } ?: binDir.resolve("jdeps")
+        val proc = ProcessBuilder(
+            jdeps.absolutePath, "--multi-release", "21", "--print-module-deps", "--ignore-missing-deps",
+            jarFile.get().asFile.absolutePath,
+        ).redirectErrorStream(true).start()
+        val output = proc.inputStream.bufferedReader().readText().trim()
+        check(proc.waitFor() == 0) { "jdeps failed:\n$output" }
+        val derived = output.lines().last().split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val missing = derived - curatedUiRuntimeModules.toSet()
+        check(missing.isEmpty()) {
+            "jdeps found module dependencies missing from curatedUiRuntimeModules (ui/build.gradle.kts): $missing\n" +
+                "A dependency bump likely widened the module graph. Re-derive with:\n" +
+                "  jdeps --multi-release 21 --print-module-deps --ignore-missing-deps ${jarFile.get().asFile}\n" +
+                "review the additions, and update the curated list."
+        }
+        logger.lifecycle("checkUiJarModules OK: jdeps modules $derived ⊆ curated list $curatedUiRuntimeModules")
+    }
+}
+
+// Check (c), ADR-016 decision 5: each jar carries its own target's Skiko native
+// and nothing from a foreign OS — the classic cross-jar packaging bug is invisible
+// to any launch test on one OS, but a content audit catches it on every target.
+// Audited by OS FAMILY, not exact target: upstream Skiko (0.144.6) deliberately
+// ships BOTH macOS dylibs (x64 + arm64) inside each macos skiko-awt-runtime jar,
+// so the two mac jars legitimately pair them; a linux/windows native in a mac jar
+// (or vice versa) is still the hard failure this audit exists for.
+val checkUiJarNatives = tasks.register("checkUiJarNatives") {
+    group = "verification"
+    description = "Asserts each per-target uberjar bundles its own target's Skiko native and no foreign-OS natives (ADR-016)."
+    uberJarTasks.values.forEach { dependsOn(it) }
+    val jarsByTarget = uberJarTasks.mapValues { (_, task) -> task.flatMap { it.archiveFile } }
+    val osFamilies = listOf("linux", "macos", "windows")
+    doLast {
+        jarsByTarget.forEach { (target, jarProvider) ->
+            val jar = jarProvider.get().asFile
+            val ownOs = target.substringBefore('-')
+            val skikoNatives = ZipFile(jar).use { zip ->
+                zip.entries().asSequence()
+                    .map { it.name.substringAfterLast('/') }
+                    .filter { name ->
+                        "skiko" in name && (name.endsWith(".so") || name.endsWith(".dylib") || name.endsWith(".dll"))
+                    }
+                    .toList()
+            }
+            val unclassifiable = skikoNatives.filterNot { name -> osFamilies.any { it in name } }
+            check(unclassifiable.isEmpty()) {
+                "${jar.name}: Skiko native(s) $unclassifiable name no known OS — extend the audit's vocabulary."
+            }
+            val ownExact = skikoNatives.filter { target in it }
+            val foreignOs = skikoNatives.filter { name -> osFamilies.any { os -> os != ownOs && os in name } }
+            check(ownExact.isNotEmpty()) { "${jar.name}: no Skiko native for its own target '$target' found — launch would fail on load." }
+            check(foreignOs.isEmpty()) { "${jar.name}: bundles foreign-OS Skiko native(s) $foreignOs — wrong natives baked in." }
+            logger.lifecycle("checkUiJarNatives OK: ${jar.name} carries $skikoNatives")
+        }
+    }
+}
+
+tasks.register("checkUiPackaging") {
+    group = "verification"
+    description = "PR-CI packaging checks: builds all four uberjars, then runs the module-subset and Skiko-native audits."
+    dependsOn(checkUiJarModules, checkUiJarNatives)
 }
