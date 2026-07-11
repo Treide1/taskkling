@@ -4,6 +4,10 @@ How a `vX.Y.Z` release is cut and verified. The pipeline is wire-only
 (`.github/workflows/release.yml`): pushing a version tag runs the test suites, builds the
 release assets, checksums them, and publishes them with both install scripts to the
 project's public GitHub Releases. Tagging is human-owned — no tag is cut by automation.
+An **explicit user instruction to an agent to cut a release counts as the human cut**; that
+one sentence is the single authority rule — gate-task bodies and agent memory notes restate
+it, they do not add to it. The executable procedure lives in `.claude/skills/cut-release`
+(invoked as `/cut-release`); this document is the rationale.
 
 ## Asset inventory (since v0.6.0, ADR-011/016)
 
@@ -89,6 +93,28 @@ For `BASE = https://github.com/Treide1/taskkling/releases/latest/download`:
    > or verify the artifact directly (download + extract + `--version`) without invoking the
    > PATH registration. See `dx` task for an `install.ps1` `-NoPath`/isolation flag that
    > would make this safe by construction.
+
+## Milestone head convention (interim until v0.7.0 first-class milestones)
+
+Every release milestone in the dogfood backlog is headed by the same three tasks — copy
+this shape verbatim instead of imitating the nearest older milestone (hand-imitated heads
+are how v0.6.1/v0.6.2 drifted apart and accrued dangling edges):
+
+- **bump** — `bump version to X.Y.Z`; depends on **the previous milestone's gate only**
+  (not the impl tasks — the gate already aggregates them).
+- **gate** — `taskkling vX.Y.Z (<name> gate)`; depends on the previous gate, the bump,
+  and **every impl task in the milestone**. The body carries the milestone spec/DoD and
+  any start conditions.
+- **cut** — `cut vX.Y.Z release (human)`; depends on the gate only.
+
+Shared thread label on all of them (e.g. `v0.6.1-stabilization`). Hard rule: **every id a
+head task references must exist in the active store** — ids that live only on an unmerged
+branch make the head un-mutable (referential integrity rejects any new edge on the node,
+which is what froze the v0.6.2 head). Create head tasks only from ids visible in
+`taskkling list`.
+
+This section retires when v0.7.0's first-class `milestone` attribute + derived gate lands
+(t-xgzw / t-6pfw).
 
 ## v0.6.0 release-notes stub (one-time; paste atop the generated notes)
 
