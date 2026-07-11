@@ -1,6 +1,6 @@
 # taskkling — Product Requirements Document
 
-> Status: **v0.1 design, approved for build.** This PRD is the founding artifact of a standalone,
+> This PRD is the founding artifact of a standalone,
 > reusable tool. It is deliberately **agnostic to any other layer or tool** — no knowledge base,
 > calendar, agent runtime, or host project is assumed or named. Where examples are needed, they
 > are generic.
@@ -12,15 +12,14 @@
 **taskkling** is a lightweight, git-native, **directed-acyclic-graph (DAG) task manager** for
 solo operators and **human + agent** teams. Work is modelled as tasks connected by
 `depends` edges. The source of truth is **one markdown file per task** (YAML frontmatter +
-freeform body) in a git repository. There is no database, daemon, server, or background process.
+freeform body), recommended in a git repository. There is no database, daemon, server, or background process.
 
 It ships two artifacts:
 
 1. A **Kotlin/Native CLI binary** (`taskkling`) — the single read **and** write interface. Fast
    cold start, no runtime to install. This is what both humans and agents drive.
 2. A **light Compose Multiplatform Desktop UI** — a *pure client* of the CLI: it reads the CLI's
-   JSON export for display and performs every mutation by invoking the CLI. It never touches the
-   files directly, so it can never become a second writer.
+   JSON export for display and performs every mutation by invoking the CLI. It's not a second writer.
 
 The design north star: **"file I/O with editable metadata."** The CLI is thin, validated sugar
 over plain markdown files; everything it does, a human could do by hand-editing — the CLI just
@@ -60,7 +59,7 @@ backbone **dumb** — plain files + a tiny binary — and invests only where the
 - **Agent-ergonomic**: terse, scriptable, JSON-capable, dependency-aware interop.
 - A **light** desktop UI that visualises the graph and mutates only via the CLI.
 
-### Non-goals (v0.1)
+### Non-goals
 - **No coupling to any external system** — knowledge bases, calendars, agent frameworks, chat
   tools, issue trackers. Integrations are downstream glue, out of scope here.
 - **No multi-user collaboration / real-time sync** — git is the only sync; solo/low-contention
