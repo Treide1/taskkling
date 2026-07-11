@@ -27,6 +27,7 @@ import io.taskkling.core.HostOs
 import io.taskkling.core.initWorkspace
 import io.taskkling.core.installLocalBin
 import io.taskkling.core.installNewExecutable
+import io.taskkling.core.seedDemoTasks
 import io.taskkling.core.installOtherExecutable
 import io.taskkling.core.currentReleaseAssetName
 import io.taskkling.core.findSha256
@@ -199,18 +200,37 @@ private abstract class MutationCommand(name: String, description: String) : TkCo
     }
 }
 
-/** `init [--local-bin]` — scaffold a workspace in the cwd (PRD §10.7); optionally self-install the binary. */
+/**
+ * `init [--local-bin] [--demo-mode]` — scaffold a workspace in the cwd (PRD §10.7);
+ * optionally self-install the binary and/or seed the demo sandbox (ADR-017).
+ */
 private class InitCmd : TkCommand("init", "Scaffold a taskkling workspace (.taskkling/ + tasks/)") {
     val localBin by option(
         ArgType.Boolean, "local-bin",
         description = "Also install the running binary into <root>/.taskkling/bin and drop ./taskkling wrappers",
     ).default(false)
+    val demoMode by option(
+        ArgType.Boolean, "demo-mode", "dm",
+        description = "Seed a self-contained demo backlog (kept under .taskkling/tasks) to explore risk-free",
+    ).default(false)
 
     override fun run() {
-        val result = initWorkspace(root)
+        val result = initWorkspace(root, demoLayout = demoMode)
         if (!quiet) {
             val verb = if (result.alreadyExisted) "already initialized" else "initialized taskkling workspace"
             println("$verb: ${result.root}")
+        }
+        if (demoMode) {
+            // Seed only a task-free workspace: `init` stays idempotent, and a
+            // re-run (e.g. a worktree-creation hook firing twice) can never dump
+            // demo data into a store someone has started using for real.
+            val ws = Workspace.discover(result.root.toString())
+            if (ws.allKnownIds().isEmpty()) {
+                val n = ws.seedDemoTasks()
+                if (!quiet) println("seeded $n demo tasks (sandbox data - mutate freely)")
+            } else if (!quiet) {
+                println("demo seed skipped: workspace already contains tasks")
+            }
         }
         if (localBin) {
             val installed = installLocalBin(result.root)

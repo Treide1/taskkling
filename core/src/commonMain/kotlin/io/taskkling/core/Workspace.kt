@@ -46,10 +46,14 @@ public data class Config(
             return c
         }
 
-        /** The documented default `config.toml` written by `init` (PRD §14). */
-        public fun defaultToml(): String =
+        /**
+         * The documented default `config.toml` written by `init` (PRD §14).
+         * [tasksDir] deviates from the default only for `init --demo-mode`
+         * (ADR-017), which keeps the sandbox tasks inside the meta dir.
+         */
+        public fun defaultToml(tasksDir: String = "tasks"): String =
             """
-            tasks_dir       = "tasks"      # active-task directory (archive/ and trash/ are subdirs)
+            tasks_dir       = "$tasksDir"      # active-task directory (archive/ and trash/ are subdirs)
             id_prefix       = "t-"         # task id prefix
             granularity     = "minute"     # day | minute | second (display/working; deferred feature)
             default_thread  = ""           # applied by `add` when --thread omitted

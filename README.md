@@ -89,6 +89,12 @@ In any repo, scaffold the taskkling workspace:
 taskkling init          # creates .taskkling/ + tasks/, idempotent
 ```
 
+Just exploring? `taskkling init --demo-mode` (short `-dm`) seeds a small demo backlog
+instead of an empty one — every state on display, safe to mutate freely, kept entirely
+under `.taskkling/` (so git never sees it; delete `.taskkling/` and it's gone). Ideal
+for a scratch dir, a first look at `taskkling ui`, or agent worktrees that need working
+data without touching a real store (ADR-017).
+
 ## Invocation
 
 There are three ways to drive `taskkling` after install:
