@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -104,11 +105,13 @@ fun main(args: Array<String>) {
                 Box(Modifier.fillMaxSize().background(Tk.bg)) {
                     if (binary == null) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                "taskkling binary not found.\nSet it on PATH, TASKKLING_BINARY, or config binary_path.",
-                                color = Tk.muted,
-                                fontSize = 13.sp,
-                            )
+                            SelectionContainer {
+                                Text(
+                                    "taskkling binary not found.\nSet it on PATH, TASKKLING_BINARY, or config binary_path.",
+                                    color = Tk.muted,
+                                    fontSize = 13.sp,
+                                )
+                            }
                         }
                     } else {
                         App(CliClient(binary, workRoot))
@@ -250,7 +253,9 @@ private fun App(client: CliClient) {
                         when {
                             error != null && current == null ->
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Text("error: $error", color = Tk.blocked, fontSize = 13.sp)
+                                    SelectionContainer {
+                                        Text("error: $error", color = Tk.blocked, fontSize = 13.sp)
+                                    }
                                 }
                             current == null ->
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
