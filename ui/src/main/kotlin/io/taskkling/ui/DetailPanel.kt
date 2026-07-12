@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.taskkling.contract.TaskDto
 import java.awt.Cursor
+import kotlinx.coroutines.delay
 
 /**
  * The detail panel (DESIGN §9): a [width]-wide column with a `line` left border. The width is
@@ -193,16 +194,26 @@ private val ResizeCursor = PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZ
  * an id to a dispatched agent without leaving the UI. The affordance announces
  * itself BEFORE the click (DESIGN principle 9): hovering the id fades in the
  * overlapping-sheets copy glyph beside it and sharpens the id to `txt` under a
- * hand cursor. The glyph's slot is always reserved (alpha-faded, never added),
- * so nothing in the row shifts.
+ * hand cursor. A click swaps the glyph to a `done`-green checkmark for ~1.2s —
+ * confirmation in the slot the user is already looking at, not a surprise label.
+ * The glyph's slot is always reserved (alpha-faded, never added), so nothing in
+ * the row shifts.
  */
 @Composable
 private fun CopyableId(id: String) {
     val clipboard = LocalClipboardManager.current
     val interactions = remember { MutableInteractionSource() }
     val hovered by interactions.collectIsHoveredAsState()
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1200)
+            copied = false
+        }
+    }
     // Slight fade so the glyph appears/retreats rather than popping (DESIGN §11 tier).
-    val glyphAlpha by animateFloatAsState(if (hovered) 1f else 0f, tween(120))
+    // The checkmark holds full alpha for its beat even if the cursor has already left.
+    val glyphAlpha by animateFloatAsState(if (hovered || copied) 1f else 0f, tween(120))
     DisableSelection {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -210,13 +221,16 @@ private fun CopyableId(id: String) {
             modifier = Modifier
                 .hoverable(interactions)
                 .pointerHoverIcon(PointerIcon.Hand)
-                .clickable { clipboard.setText(AnnotatedString(id)) },
+                .clickable {
+                    clipboard.setText(AnnotatedString(id))
+                    copied = true
+                },
         ) {
             Text(id, fontSize = 11.sp, color = if (hovered) Tk.txt else Tk.faint)
             Icon(
-                imageVector = UiIcons.Copy,
-                contentDescription = "copy id",
-                tint = Tk.muted,
+                imageVector = if (copied) UiIcons.Check else UiIcons.Copy,
+                contentDescription = if (copied) "id copied" else "copy id",
+                tint = if (copied) Tk.done else Tk.muted,
                 modifier = Modifier.size(12.dp).alpha(glyphAlpha),
             )
         }
