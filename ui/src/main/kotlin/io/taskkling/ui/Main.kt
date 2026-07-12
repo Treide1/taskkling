@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -36,6 +37,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
@@ -350,7 +352,8 @@ private fun App(client: CliClient) {
 /**
  * Header (DESIGN §9): app title + faint suffix, a muted generated-note with the
  * refresh button beside it, count chips pushed right with the settings cogwheel
- * appended at the row's end.
+ * appended at the row's end. Everything right of the fixed title block scales
+ * through the [HeaderLadder] degradation ladder (t-2on2).
  */
 @Composable
 private fun Header(
@@ -372,6 +375,8 @@ private fun Header(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(18.dp),
     ) {
+        // Title block — the icon + wordmark. Fixed, OUTSIDE the ladder (t-2on2): it never
+        // shrinks or drops out however narrow the window gets.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Image(painterResource("icons/taskkling.svg"), contentDescription = null, modifier = Modifier.size(18.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -379,21 +384,20 @@ private fun Header(
                 Text(" · graph", fontSize = 14.sp, color = Tk.faint)
             }
         }
+        // The rest of the header — generated-note + refresh, the flexible gap, and the
+        // chips + settings cog — is one degradation ladder (t-2on2). weight(1f) hands its
+        // SubcomposeLayout a real bounded width (the leftover after the title), which is
+        // what lets it pick the widest stage that fits. With no export there's nothing to
+        // scale — a plain spacer holds the row open, unchanged from before.
         if (export != null) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("generated ${fmtDateTime(export.generatedAt)}", fontSize = 11.sp, color = Tk.muted)
-                // Re-runs export through the busy gate (DESIGN §9 refresh button).
-                QuietIconButton(UiIcons.Refresh, "refresh", enabled = !busy, onClick = onRefresh)
-            }
-        }
-        if (export != null) {
-            // Fills the same flexible slot the plain Spacer would (pushing the chips to the
-            // row's end) but also hosts them, so HeaderCounts' SubcomposeLayout is measured
-            // with a real bounded width instead of the unbounded width a fixed sibling would
-            // get in a Row (t-era5) — that bound is what lets it decide compact vs full.
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-                HeaderCounts(export, busy = busy, onArchive = onArchive, onPrune = onPrune)
-            }
+            HeaderLadder(
+                export,
+                busy = busy,
+                onRefresh = onRefresh,
+                onArchive = onArchive,
+                onPrune = onPrune,
+                modifier = Modifier.weight(1f),
+            )
         } else {
             Spacer(Modifier.weight(1f))
         }
@@ -401,37 +405,109 @@ private fun Header(
 }
 
 /**
- * The four state count chips + settings cogwheel, right-aligned in the header (DESIGN §9).
- * Degrades to compact dot+count chips (t-era5) when the full labelled row would not fit the
- * available header width — measured via [SubcomposeLayout] rather than a hardcoded window
- * breakpoint, so it tracks whatever space the header actually has (detail panel width,
- * multi-monitor DPI, etc).
+ * One stage of the header degradation ladder (t-2on2): a (timestamp, chips) pairing.
+ * [timestamp] is the generated-note's font size, or null to hide the note text entirely
+ * (the refresh icon always stays); [compactChips] switches the count chips to their
+ * t-era5 dot+count form. The refresh and settings icons never appear here as anything
+ * scalable — they render at a fixed size in every stage.
+ */
+private data class HeaderStage(val timestamp: TextUnit?, val compactChips: Boolean)
+
+/**
+ * The scaling policy, as an ordered list, most-preferred FIRST (t-2on2). Reading it
+ * top-to-bottom is the exact order header elements give way as the window narrows: the
+ * timestamp is the least important element, so it degrades (full → compact chips beside
+ * it → shrunk → hidden) before the icons are ever touched. To reorder the ladder, change
+ * a stage's font, or add a stage, edit THIS list — [HeaderLadder]'s measure loop needs no
+ * other change.
+ */
+private val HEADER_STAGES: List<HeaderStage> = listOf(
+    HeaderStage(timestamp = 11.sp, compactChips = false), // 1. full note + full labelled chips
+    HeaderStage(timestamp = 11.sp, compactChips = true),  // 2. full note + compact dot+count chips (t-era5)
+    HeaderStage(timestamp = 9.sp, compactChips = true),   // 3. shrunk note + compact chips
+    HeaderStage(timestamp = null, compactChips = true),   // 4. note hidden (refresh icon stays) + compact chips
+)
+
+/**
+ * Header degradation ladder (t-2on2): renders the FIRST [HEADER_STAGES] entry whose natural
+ * width fits the leftover header width, so the timestamp scales/vanishes before the icons.
+ * Folds in the old HeaderCounts probe — stages 1 vs 2+ differ only by the chips' `compact`
+ * flag, so one SubcomposeLayout drives both the timestamp ladder and the chip degrade rather
+ * than nesting two. Measured, not breakpointed, so it tracks the space the header actually
+ * has (detail-panel width, multi-monitor DPI, etc).
  */
 @Composable
-private fun HeaderCounts(
+private fun HeaderLadder(
     export: ExportDto,
     busy: Boolean,
+    onRefresh: () -> Unit,
     onArchive: (() -> Unit)?,
     onPrune: (() -> Unit)?,
+    modifier: Modifier = Modifier,
 ) {
-    SubcomposeLayout { constraints ->
-        // Probe pass: measure the full-labelled row with no width limit to learn the
-        // narrowest width it needs to render in full. Not placed — SubcomposeLayout drops
-        // slots that go unmeasured-and-unplaced by the end of the pass.
-        val fullWidth = subcompose("probe") {
-            CountChipRow(export, compact = false, busy = busy, onArchive = onArchive, onPrune = onPrune)
-        }.maxOf { it.measure(Constraints()).width }
+    SubcomposeLayout(modifier) { constraints ->
+        // Walk the stages most-preferred first; a stage's NATURAL width is measured with
+        // unbounded Constraints(), under which the weighted gap collapses to its 18dp
+        // minimum — so this is the tightest width the stage needs. The first stage that
+        // fits the leftover header width wins; probing STOPS there, so the common wide
+        // window measures a single stage. The last stage is the unconditional fallback
+        // (never probed — it wins by default when nothing narrower fits).
+        var winner = HEADER_STAGES.lastIndex
+        for (i in 0 until HEADER_STAGES.lastIndex) {
+            val natural = subcompose("probe-$i") {
+                HeaderStageRow(export, HEADER_STAGES[i], busy, onRefresh, onArchive, onPrune)
+            }.maxOf { it.measure(Constraints()).width }
+            if (natural <= constraints.maxWidth) {
+                winner = i
+                break
+            }
+        }
 
-        val compact = fullWidth > constraints.maxWidth
-        val placeables = subcompose(if (compact) "compact" else "full") {
-            CountChipRow(export, compact = compact, busy = busy, onArchive = onArchive, onPrune = onPrune)
+        // Render the winner under a distinct slot key — a probe measurable can't be
+        // remeasured — this time with the real bounded constraints, so its weighted gap
+        // expands and the chip block + cog sit flush at the header's right edge.
+        val placeables = subcompose("stage-$winner") {
+            HeaderStageRow(export, HEADER_STAGES[winner], busy, onRefresh, onArchive, onPrune)
         }.map { it.measure(constraints) }
-
         val width = placeables.maxOf { it.width }
         val height = placeables.maxOf { it.height }
         layout(width, height) {
             placeables.forEach { it.place(0, 0) }
         }
+    }
+}
+
+/**
+ * The content of one ladder stage (t-2on2): generated-note + refresh on the left, count
+ * chips + settings cog on the right, a weighted gap between them. Under the probe's
+ * unbounded measure the weighted spacer is 0, so the row measures its true content width;
+ * under the winner's bounded measure the spacer absorbs all slack, keeping the chips
+ * right-aligned in whichever stage wins — the fixed 18dp spacer guarantees a minimum gap
+ * so the note never touches the chips even at the tightest fit.
+ */
+@Composable
+private fun HeaderStageRow(
+    export: ExportDto,
+    stage: HeaderStage,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+    onArchive: (() -> Unit)?,
+    onPrune: (() -> Unit)?,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        // Generated-note: the timestamp text is the ladder's first casualty — it shrinks
+        // (stage 3) then drops out entirely (stage 4). The refresh button never moves size
+        // and always renders, so even the hidden-timestamp stage keeps a way to re-export.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (stage.timestamp != null) {
+                Text("generated ${fmtDateTime(export.generatedAt)}", fontSize = stage.timestamp, color = Tk.muted)
+            }
+            // Re-runs export through the busy gate (DESIGN §9 refresh button).
+            QuietIconButton(UiIcons.Refresh, "refresh", enabled = !busy, onClick = onRefresh)
+        }
+        Spacer(Modifier.width(18.dp))
+        Spacer(Modifier.weight(1f))
+        CountChipRow(export, compact = stage.compactChips, busy = busy, onArchive = onArchive, onPrune = onPrune)
     }
 }
 
