@@ -75,7 +75,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.taskkling.contract.TaskDto
 import java.awt.Cursor
-import kotlinx.coroutines.delay
 
 /**
  * The detail panel (DESIGN §9): a [width]-wide column with a `line` left border. The width is
@@ -194,10 +193,12 @@ private val ResizeCursor = PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZ
  * an id to a dispatched agent without leaving the UI. The affordance announces
  * itself BEFORE the click (DESIGN principle 9): hovering the id fades in the
  * overlapping-sheets copy glyph beside it and sharpens the id to `txt` under a
- * hand cursor. A click swaps the glyph to a `done`-green checkmark for ~1.2s —
- * confirmation in the slot the user is already looking at, not a surprise label.
- * The glyph's slot is always reserved (alpha-faded, never added), so nothing in
- * the row shifts.
+ * hand cursor. A click swaps the glyph to a `done`-green checkmark — confirmation
+ * in the slot the user is already looking at, not a surprise label. No timer: the
+ * checkmark lives and fades exactly like the copy glyph (one hover-driven alpha),
+ * and only a NEW hover resets it — resetting on unhover would swap the glyph
+ * mid-fade-out and flicker. The glyph's slot is always reserved (alpha-faded,
+ * never added), so nothing in the row shifts.
  */
 @Composable
 private fun CopyableId(id: String) {
@@ -205,15 +206,11 @@ private fun CopyableId(id: String) {
     val interactions = remember { MutableInteractionSource() }
     val hovered by interactions.collectIsHoveredAsState()
     var copied by remember { mutableStateOf(false) }
-    LaunchedEffect(copied) {
-        if (copied) {
-            delay(1200)
-            copied = false
-        }
+    LaunchedEffect(hovered) {
+        if (hovered) copied = false
     }
     // Slight fade so the glyph appears/retreats rather than popping (DESIGN §11 tier).
-    // The checkmark holds full alpha for its beat even if the cursor has already left.
-    val glyphAlpha by animateFloatAsState(if (hovered || copied) 1f else 0f, tween(120))
+    val glyphAlpha by animateFloatAsState(if (hovered) 1f else 0f, tween(120))
     DisableSelection {
         Row(
             verticalAlignment = Alignment.CenterVertically,

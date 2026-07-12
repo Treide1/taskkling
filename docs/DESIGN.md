@@ -239,9 +239,11 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
     sharpens it to `txt` under a hand cursor and fades in the overlapping-sheets copy glyph
     beside it (principle 9: the affordance announces itself before the click). Clicking
     copies the bare id (e.g. `t-60pe`) to the system clipboard — the fast path for handing
-    an id to a dispatched agent — and swaps the glyph to a `done`-green checkmark for
-    ~1.2s as confirmation, in the slot the user is already looking at. The glyph's slot is
-    alpha-faded, never inserted, so the row never shifts.
+    an id to a dispatched agent — and swaps the glyph to a `done`-green checkmark as
+    confirmation, in the slot the user is already looking at. The checkmark behaves
+    exactly like the copy glyph (fades out on unhover, no timer); the next hover starts
+    fresh with the copy glyph. The glyph's slot is alpha-faded, never inserted, so the
+    row never shifts.
   - **Reference ids are links**: `accent` colored, click navigates the selection to that task
     AND pans the canvas to centre its card (150ms, clamped to the scroll bounds). Plain card
     clicks on the canvas never pan.
