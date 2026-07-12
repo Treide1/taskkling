@@ -228,6 +228,10 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
     "blocker of" lists the downstream dependents. (UI labels are blocker-vocabulary
     translations of the contract's `depends`/`blockers`/`dependents` — DOMAIN_LANGUAGE §7.)
   - Absent values render as `faint` "—" rather than disappearing, so the panel shape is stable.
+  - **Header id — click to copy**: the id in the header row reads `faint`, but sharpens to
+    `txt` with a hand cursor on hover and copies the bare id (e.g. `t-60pe`) to the system
+    clipboard on click — the fast path for handing an id to a dispatched agent. A brief
+    `accent` "copied" hint trails the id and clears after ~1.2s, without shifting the row.
   - **Reference ids are links**: `accent` colored, click navigates the selection to that task
     AND pans the canvas to centre its card (150ms, clamped to the scroll bounds). Plain card
     clicks on the canvas never pan.

@@ -59,7 +59,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -70,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.taskkling.contract.TaskDto
 import java.awt.Cursor
+import kotlinx.coroutines.delay
 
 /**
  * The detail panel (DESIGN §9): a [width]-wide column with a `line` left border. The width is
@@ -181,6 +184,48 @@ private val HANDLE_HIT = 6.dp
 /** Horizontal-resize pointer for the panel's drag gutter (Compose Desktop → AWT cursor). */
 private val ResizeCursor = PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR))
 
+/**
+ * The task id in the header row (DESIGN §9): reads `faint`, but clicking copies
+ * the bare id (e.g. `t-60pe`) to the system clipboard — the fast path for handing
+ * an id to a dispatched agent without leaving the UI. Hover sharpens it to `txt`
+ * with a hand cursor to read as clickable; a click swaps in a brief `accent`
+ * "copied" hint that clears itself after ~1.2s. The hint trails the id, so it
+ * never shifts the header row (the return control stays weight-pinned right).
+ */
+@Composable
+private fun CopyableId(id: String) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1200)
+            copied = false
+        }
+    }
+    DisableSelection {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val interactions = remember { MutableInteractionSource() }
+            val hovered by interactions.collectIsHoveredAsState()
+            Text(
+                id,
+                fontSize = 11.sp,
+                color = if (hovered) Tk.txt else Tk.faint,
+                modifier = Modifier
+                    .hoverable(interactions)
+                    .pointerHoverIcon(PointerIcon.Hand)
+                    .clickable {
+                        clipboard.setText(AnnotatedString(id))
+                        copied = true
+                    },
+            )
+            if (copied) {
+                Spacer(Modifier.width(6.dp))
+                Text("copied", fontSize = 10.sp, color = Tk.accent)
+            }
+        }
+    }
+}
+
 /** `status` dropdown values → their lifecycle verbs (DESIGN §9 mapping table). */
 private fun statusArgs(id: String, status: String): List<String> = when (status) {
     "open" -> listOf("reopen", id)
@@ -219,7 +264,7 @@ private fun TaskDetails(
             )
             Spacer(Modifier.height(2.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(task.id, fontSize = 11.sp, color = Tk.faint)
+                CopyableId(task.id)
                 if (pinnedId != null && pinnedId != task.id) {
                     Spacer(Modifier.weight(1f))
                     DisableSelection {
