@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -45,7 +46,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -83,8 +83,10 @@ import java.awt.Cursor
  * actions can't stack.
  *
  * Whenever a pin exists but [task] isn't the pinned one — another selection or
- * the empty state — the pinned-card return FAB floats top-right; clicking it
- * hands [pinnedId] to [onNavigate] (re-select + pan-to-card).
+ * the empty state — a pinned-card return control appears (trailing the id header
+ * row of a selection, or under the empty-state hint); clicking it hands
+ * [pinnedId] to [onNavigate] (re-select + pan-to-card). It sits in the panel's
+ * flow rather than floating, so it can never occlude the task title.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -124,17 +126,19 @@ internal fun DetailPane(
                             fontSize = 13.sp,
                             textAlign = TextAlign.Center,
                         )
+                        // With no selection there's no id header row to host the
+                        // return control, so it sits under the hint instead.
+                        if (pinnedId != null) {
+                            Spacer(Modifier.height(16.dp))
+                            DisableSelection {
+                                PinReturn(onClick = { onNavigate(pinnedId) })
+                            }
+                        }
                     }
                 }
             } else {
-                TaskDetails(task, error, busy, onMutate, onNavigate)
+                TaskDetails(task, pinnedId, error, busy, onMutate, onNavigate)
             }
-        }
-        if (pinnedId != null && pinnedId != task?.id) {
-            PinReturnFab(
-                onClick = { onNavigate(pinnedId) },
-                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
-            )
         }
         // Left-edge resize handle (t-q8i2): a slim full-height hit zone over the panel's left
         // border. Dragging horizontally resizes the panel live; positive delta (drag right)
@@ -190,6 +194,7 @@ private fun statusArgs(id: String, status: String): List<String> = when (status)
 @Composable
 private fun TaskDetails(
     task: TaskDto,
+    pinnedId: String?,
     error: String?,
     busy: Boolean,
     onMutate: (args: List<String>) -> Unit,
@@ -213,7 +218,15 @@ private fun TaskDetails(
                 onMutate = onMutate,
             )
             Spacer(Modifier.height(2.dp))
-            Text(task.id, fontSize = 11.sp, color = Tk.faint)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(task.id, fontSize = 11.sp, color = Tk.faint)
+                if (pinnedId != null && pinnedId != task.id) {
+                    Spacer(Modifier.weight(1f))
+                    DisableSelection {
+                        PinReturn(onClick = { onNavigate(pinnedId) })
+                    }
+                }
+            }
             Spacer(Modifier.height(14.dp))
 
             EnumField("status", task.status, listOf("open", "done", "dropped", "waiting"), enabled = !busy) {
@@ -506,22 +519,27 @@ private fun RefField(
 }
 
 /**
- * The pinned-card return FAB (DESIGN §9): a small floating rounded-rect card
- * reading "filled-pin →". Same quiet chrome as the outline buttons but with a
- * shadow — it floats over the panel instead of sitting in its flow.
+ * The pinned-card return control (DESIGN §9): a small rounded-rect reading
+ * "filled-pin →" that lives in the panel's flow — trailing the id header row of
+ * a selection, or under the empty-state hint. Quiet like the panel's other
+ * controls (transparent at rest, a `panel2`/`line` lift on hover) and, unlike
+ * the retired floating FAB, it never overlays the task title. Clicking re-selects
+ * the pinned task and pans its card back into view.
  */
 @Composable
-private fun PinReturnFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(7.dp)
+private fun PinReturn(onClick: () -> Unit) {
+    val interactions = remember { MutableInteractionSource() }
+    val hovered by interactions.collectIsHoveredAsState()
+    val shape = RoundedCornerShape(6.dp)
     Row(
-        modifier
-            .shadow(8.dp, shape, clip = false)
+        Modifier
             .clip(shape)
-            .background(Tk.panel2)
-            .border(1.dp, Tk.line, shape)
+            .background(if (hovered) Tk.panel2 else Color.Transparent)
+            .border(1.dp, if (hovered) Tk.line else Color.Transparent, shape)
+            .hoverable(interactions)
             .pointerHoverIcon(PointerIcon.Hand)
             .clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -529,9 +547,9 @@ private fun PinReturnFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
             imageVector = PinIcons.Filled,
             contentDescription = "return to pinned task",
             tint = Tk.accent,
-            modifier = Modifier.size(13.dp),
+            modifier = Modifier.size(12.dp),
         )
-        Text("→", fontSize = 13.sp, color = Tk.txt)
+        Text("→", fontSize = 12.sp, color = if (hovered) Tk.txt else Tk.muted)
     }
 }
 

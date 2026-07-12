@@ -231,11 +231,14 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
   - **Reference ids are links**: `accent` colored, click navigates the selection to that task
     AND pans the canvas to centre its card (150ms, clamped to the scroll bounds). Plain card
     clicks on the canvas never pan.
-  - **Pinned-card return FAB**: while a task is pinned and its content is not on the panel
-    (another selection, or the empty state), a small rounded-rect card — filled pin (`accent`)
-    + "→" — floats at the panel's top-right (`panel2` fill, `line` border, shadow). Clicking
-    it re-selects the pinned task and pans its card back into view (the same navigate as
-    reference links).
+  - **Pinned-card return control**: while a task is pinned and its content is not on the panel
+    (another selection, or the empty state), a small rounded-rect — filled pin (`accent`) +
+    "→" — offers the way back. It sits in the panel's flow rather than floating: on a selection
+    it trails the **id header row** (right-aligned beside the id); in the empty state it sits
+    under the hint. Quiet chrome like the panel's other controls — transparent at rest, a
+    `panel2` fill + `line` border lift on hover — so it can never occlude the task title.
+    Clicking it re-selects the pinned task and pans its card back into view (the same navigate
+    as reference links).
   - **Direct field editing** (principle 8): stored fields are edited in place on the panel;
     there are no separate mutation buttons (the former done/drop/reopen row is retired).
     - **Enum fields** open a value dropdown on click: the closed state renders like a plain
