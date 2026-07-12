@@ -43,6 +43,47 @@ internal object UiIcons {
         }.build()
     }
 
+    /** Overlapping-sheets copy glyph (detail-panel id hover affordance, DESIGN §9). */
+    val Copy: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "copy",
+            defaultWidth = 16.dp,
+            defaultHeight = 16.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.White), pathFillType = PathFillType.NonZero) {
+                // Back sheet: top-left outline peeking out behind the front sheet.
+                moveTo(16f, 1f)
+                horizontalLineTo(4f)
+                curveTo(2.9f, 1f, 2f, 1.9f, 2f, 3f)
+                verticalLineToRelative(14f)
+                horizontalLineToRelative(2f)
+                verticalLineTo(3f)
+                horizontalLineToRelative(12f)
+                verticalLineTo(1f)
+                close()
+                // Front sheet: full outlined rectangle.
+                moveTo(19f, 5f)
+                horizontalLineTo(8f)
+                curveTo(6.9f, 5f, 6f, 5.9f, 6f, 7f)
+                verticalLineToRelative(14f)
+                curveToRelative(0f, 1.1f, 0.9f, 2f, 2f, 2f)
+                horizontalLineToRelative(11f)
+                curveToRelative(1.1f, 0f, 2f, -0.9f, 2f, -2f)
+                verticalLineTo(7f)
+                curveToRelative(0f, -1.1f, -0.9f, -2f, -2f, -2f)
+                close()
+                moveTo(19f, 21f)
+                horizontalLineTo(8f)
+                verticalLineTo(7f)
+                horizontalLineToRelative(11f)
+                verticalLineToRelative(14f)
+                close()
+            }
+        }.build()
+    }
+
     /** Cogwheel glyph (header settings menu, DESIGN §9). Even-odd: the second subpath hollows the hub. */
     val Gear: ImageVector by lazy {
         ImageVector.Builder(

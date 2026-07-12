@@ -41,6 +41,13 @@ mutation flow, discovery), see PRD §6.3 and §13.
    `closed`), `id`, and `computed.*` are not editable anywhere. The concrete field↔verb
    mapping lives in §9 — the one place to update when the CLI attribute surface changes
    (e.g. the task-store-v2 overhaul).
+9. **Affordances announce themselves before the click.** An interaction the user must
+   discover is clarified *before* they have to act, ideally through an established icon
+   (the overlapping-sheets copy glyph, a resize cursor) — never only through feedback that
+   arrives after the fact. The counterweight: affordance hints must not clutter the app.
+   When the affordance is directly available in place (a click with no mouse travel), its
+   hint may appear on hover — revealed exactly when it becomes relevant, invisible
+   otherwise (e.g. the id's copy glyph fades in on hover).
 
 ## 2. Primary state & precedence
 
@@ -228,10 +235,12 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
     "blocker of" lists the downstream dependents. (UI labels are blocker-vocabulary
     translations of the contract's `depends`/`blockers`/`dependents` — DOMAIN_LANGUAGE §7.)
   - Absent values render as `faint` "—" rather than disappearing, so the panel shape is stable.
-  - **Header id — click to copy**: the id in the header row reads `faint`, but sharpens to
-    `txt` with a hand cursor on hover and copies the bare id (e.g. `t-60pe`) to the system
-    clipboard on click — the fast path for handing an id to a dispatched agent. A brief
-    `accent` "copied" hint trails the id and clears after ~1.2s, without shifting the row.
+  - **Header id — click to copy**: the id in the header row reads `faint`; hovering it
+    sharpens it to `txt` under a hand cursor and fades in the overlapping-sheets copy glyph
+    beside it (principle 9: the affordance announces itself before the click). Clicking
+    copies the bare id (e.g. `t-60pe`) to the system clipboard — the fast path for handing
+    an id to a dispatched agent. The glyph's slot is alpha-faded, never inserted, so the
+    row never shifts.
   - **Reference ids are links**: `accent` colored, click navigates the selection to that task
     AND pans the canvas to centre its card (150ms, clamped to the scroll bounds). Plain card
     clicks on the canvas never pan.
