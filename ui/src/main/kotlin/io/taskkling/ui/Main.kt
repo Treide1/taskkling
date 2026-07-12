@@ -29,13 +29,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
 import io.taskkling.contract.ExportDto
+import java.awt.GraphicsEnvironment
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -77,10 +83,21 @@ fun main(args: Array<String>) {
     }
 
     application {
+        // Default window (t-9de2): ~85% of the screen's WORK area (excludes the taskbar,
+        // unlike raw screen size), centred. Session-only — recomputed fresh each launch,
+        // never persisted, so it tracks whichever monitor/work-area the app starts on.
+        val windowState = rememberWindowState(
+            size = remember {
+                val work = GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
+                DpSize((work.width * 0.85f).dp, (work.height * 0.85f).dp)
+            },
+            position = WindowPosition(Alignment.Center),
+        )
         Window(
             onCloseRequest = ::exitApplication,
             title = "taskkling",
             icon = painterResource("icons/taskkling.png"),
+            state = windowState,
         ) {
             TaskklingTheme {
                 Box(Modifier.fillMaxSize().background(Tk.bg)) {
