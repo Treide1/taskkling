@@ -577,6 +577,10 @@ private fun PinReturn(onClick: () -> Unit) {
     val interactions = remember { MutableInteractionSource() }
     val hovered by interactions.collectIsHoveredAsState()
     val shape = RoundedCornerShape(6.dp)
+    // The button height is pinned explicitly (user feedback 2026-07-12): the pin glyph
+    // reads too small at a third of the height, so it fills ~2/3 of it instead — the
+    // height stays what the old text-plus-padding geometry produced, only the padding's
+    // share shrank in the icon's favor.
     Row(
         Modifier
             .clip(shape)
@@ -585,7 +589,8 @@ private fun PinReturn(onClick: () -> Unit) {
             .hoverable(interactions)
             .pointerHoverIcon(PointerIcon.Hand)
             .clickable { onClick() }
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .height(22.dp)
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -593,7 +598,7 @@ private fun PinReturn(onClick: () -> Unit) {
             imageVector = PinIcons.Filled,
             contentDescription = "return to pinned task",
             tint = Tk.accent,
-            modifier = Modifier.size(12.dp),
+            modifier = Modifier.size(15.dp),
         )
         Text("→", fontSize = 12.sp, color = if (hovered) Tk.txt else Tk.muted)
     }
