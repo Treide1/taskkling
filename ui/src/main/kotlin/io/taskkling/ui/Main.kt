@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -131,6 +132,11 @@ private fun App(client: CliClient) {
     var busy by remember { mutableStateOf(false) }
     // The open settings dialog (archive/prune), session-only like the pin.
     var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
+    // The user-dragged detail-panel width in dp (t-q8i2). Session-only — like the pin, it never
+    // persists and resets to the default on relaunch. Held as a raw dp Float and re-clamped
+    // against the live window width at layout time (see the BoxWithConstraints below), so the
+    // panel never exceeds the 60% cap after a window resize.
+    var panelWidth by remember { mutableStateOf(PANEL_DEFAULT_W) }
     val scope = rememberCoroutineScope()
 
     // The canvas scroll state lives here, above GraphPane, so wheel scrolling, drag
@@ -232,7 +238,13 @@ private fun App(client: CliClient) {
                 onArchive = { dialog = SettingsDialog.ARCHIVE },
                 onPrune = { dialog = SettingsDialog.PRUNE },
             )
-            Row(Modifier.weight(1f).fillMaxWidth()) {
+            // BoxWithConstraints exposes the live window width so the panel's dragged width can be
+            // re-clamped against the 60% cap every layout pass — a Modifier-level clamp at measure
+            // time, so a window shrink pulls an over-wide panel back within the cap (t-q8i2).
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+              val windowWidth = maxWidth.value
+              val clampedPanelWidth = clampPanelWidth(panelWidth, windowWidth)
+              Row(Modifier.fillMaxSize()) {
                 Box(Modifier.weight(1f).fillMaxHeight()) {
                     val current = export
                     when {
@@ -275,9 +287,15 @@ private fun App(client: CliClient) {
                     pinnedId = pinnedId,
                     error = error,
                     busy = busy,
+                    width = clampedPanelWidth.dp,
+                    // Dragging the left-edge handle right (positive delta) shrinks the panel; the
+                    // new raw width is re-clamped against the current window so a drag can't push
+                    // it past the min or the 60% cap.
+                    onWidthDrag = { deltaDp -> panelWidth = clampPanelWidth(panelWidth - deltaDp.value, windowWidth) },
                     onMutate = ::mutate,
                     onNavigate = ::navigateTo,
                 )
+              }
             }
             Legend()
         }

@@ -102,3 +102,30 @@ public fun clampScroll(offset: Int, maxScroll: Int): Int = offset.coerceIn(0, ma
  */
 public fun centerScrollOffset(center: Float, viewport: Int, maxScroll: Int): Int =
     clampScroll((center - viewport / 2f).toInt(), maxScroll)
+
+/** Detail-panel width bounds (t-q8i2), all in dp. The panel opens at [PANEL_DEFAULT_W] and the
+ *  user can drag it between [PANEL_MIN_W] (still readable) and a per-window cap of
+ *  [PANEL_CAP_FRACTION] of the window width (so the graph canvas stays usable). Session-only:
+ *  the dragged width is never persisted. */
+public const val PANEL_MIN_W: Float = 280f
+public const val PANEL_DEFAULT_W: Float = 320f
+public const val PANEL_CAP_FRACTION: Float = 0.6f
+
+/**
+ * Clamp a [desired] detail-panel width (dp) against the readable minimum [min] and a per-window
+ * maximum of [capFraction] × [windowWidth] (t-q8i2). The cap keeps the graph canvas usable as the
+ * panel grows; re-applying it whenever [windowWidth] changes is what keeps the panel from ever
+ * exceeding the cap after a window resize. Degenerate case: when the window is so narrow that the
+ * cap falls below [min], the minimum wins — the upper bound is lifted to [min], so the panel sits
+ * at [min] and simply can't grow (it may then overflow a truly tiny window, but stays readable).
+ * Pure (widths → width) so the clamp is unit-testable without a live layout. Idempotent.
+ */
+public fun clampPanelWidth(
+    desired: Float,
+    windowWidth: Float,
+    min: Float = PANEL_MIN_W,
+    capFraction: Float = PANEL_CAP_FRACTION,
+): Float {
+    val upper = maxOf(min, windowWidth * capFraction)
+    return desired.coerceIn(min, upper)
+}

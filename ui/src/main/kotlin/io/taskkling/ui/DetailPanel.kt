@@ -4,6 +4,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -56,17 +59,22 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.taskkling.contract.TaskDto
+import java.awt.Cursor
 
 /**
- * The detail panel (DESIGN §9): a fixed 320dp column with a `line` left border.
+ * The detail panel (DESIGN §9): a [width]-wide column with a `line` left border. The width is
+ * user-draggable via a left-edge resize gutter ([ResizeHandle] → [onWidthDrag]); the caller owns
+ * the (session-only) width state and its clamping (t-q8i2).
  * Empty state is a centred hint; a selection shows styled fields (absent values
  * as a faint "—"), computed-flag chips, and clickable reference ids. Stored
  * fields are edited in place (DESIGN principle 8): enum values through
@@ -85,12 +93,14 @@ internal fun DetailPane(
     pinnedId: String?,
     error: String?,
     busy: Boolean,
+    width: Dp,
+    onWidthDrag: (Dp) -> Unit,
     onMutate: (args: List<String>) -> Unit,
     onNavigate: (String) -> Unit,
 ) {
     Box(
         Modifier
-            .width(320.dp)
+            .width(width)
             .fillMaxHeight()
             .background(Tk.panel)
             .drawBehind {
@@ -126,8 +136,46 @@ internal fun DetailPane(
                 modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
             )
         }
+        // Left-edge resize handle (t-q8i2): a slim full-height hit zone over the panel's left
+        // border. Dragging horizontally resizes the panel live; positive delta (drag right)
+        // shrinks it, negative (drag left) grows it — Main re-clamps against the window. The
+        // hover/drag cursor is the E-resize arrow. Visual: a faint accent line on hover; the
+        // panel's own 0.5dp border stays the resting divider.
+        ResizeHandle(onWidthDrag = onWidthDrag, modifier = Modifier.align(Alignment.CenterStart))
     }
 }
+
+/** A left-anchored vertical resize gutter for the detail panel (t-q8i2). The visible line is
+ *  thinner than the [HANDLE_HIT] hit area so the target is easy to grab without a heavy divider. */
+@Composable
+private fun ResizeHandle(onWidthDrag: (Dp) -> Unit, modifier: Modifier = Modifier) {
+    val density = LocalDensity.current
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    Box(
+        modifier
+            .fillMaxHeight()
+            .width(HANDLE_HIT)
+            .hoverable(interaction)
+            .pointerHoverIcon(ResizeCursor)
+            .draggable(
+                orientation = Orientation.Horizontal,
+                state = rememberDraggableState { deltaPx -> onWidthDrag(with(density) { deltaPx.toDp() }) },
+            )
+            .drawBehind {
+                if (hovered) {
+                    val x = 1.dp.toPx()
+                    drawLine(Tk.accent, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
+                }
+            },
+    )
+}
+
+/** Hit width of the panel resize gutter (t-q8i2): wide enough to grab, slimmer than the FAB. */
+private val HANDLE_HIT = 6.dp
+
+/** Horizontal-resize pointer for the panel's drag gutter (Compose Desktop → AWT cursor). */
+private val ResizeCursor = PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR))
 
 /** `status` dropdown values → their lifecycle verbs (DESIGN §9 mapping table). */
 private fun statusArgs(id: String, status: String): List<String> = when (status) {
