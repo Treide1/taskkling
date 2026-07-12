@@ -134,4 +134,51 @@ class LayoutMathTest {
         assertEquals(400, centerScrollOffset(center = 500.9f, viewport = 201, maxScroll = 1000))
         assertTrue(centerScrollOffset(center = 500.9f, viewport = 201, maxScroll = 1000) <= 1000)
     }
+
+    // --- clampPanelWidth: the detail-panel drag bounds (t-q8i2) --------------------------
+
+    @Test
+    fun clampPanelWidthLeavesAnInRangeWidthUntouched() {
+        // A width between the min and the 60% cap on a roomy window passes through unchanged.
+        // cap = 1600 * 0.6 = 960; 400 is comfortably inside [280, 960].
+        assertEquals(400f, clampPanelWidth(desired = 400f, windowWidth = 1600f))
+    }
+
+    @Test
+    fun clampPanelWidthPullsUpToTheReadableMinimum() {
+        // A drag that would take the panel below the minimum lands exactly at the minimum.
+        assertEquals(PANEL_MIN_W, clampPanelWidth(desired = 100f, windowWidth = 1600f))
+    }
+
+    @Test
+    fun clampPanelWidthCapsAtSixtyPercentOfTheWindow() {
+        // The panel may not exceed 60% of the window, so the graph canvas stays usable.
+        // cap = 1000 * 0.6 = 600; a 900 drag clamps to 600.
+        assertEquals(600f, clampPanelWidth(desired = 900f, windowWidth = 1000f))
+    }
+
+    @Test
+    fun clampPanelWidthMinWinsWhenSixtyPercentFallsBelowTheMinimum() {
+        // Degenerate tiny window: cap = 400 * 0.6 = 240 < 280. The minimum wins — the panel sits at
+        // 280 and cannot grow, even though that exceeds 60% of this very small window.
+        assertEquals(PANEL_MIN_W, clampPanelWidth(desired = 999f, windowWidth = 400f))
+        assertEquals(PANEL_MIN_W, clampPanelWidth(desired = 50f, windowWidth = 400f))
+    }
+
+    @Test
+    fun clampPanelWidthReClampsAnOverWidePanelWhenTheWindowShrinks() {
+        // The width state is re-clamped every layout pass: a 700-wide panel that was fine on a wide
+        // window is pulled back within the cap once the window shrinks to 1000 (cap 600).
+        val wide = clampPanelWidth(desired = 700f, windowWidth = 1400f) // cap 840 -> stays 700
+        assertEquals(700f, wide)
+        assertEquals(600f, clampPanelWidth(desired = wide, windowWidth = 1000f))
+    }
+
+    @Test
+    fun clampPanelWidthIsIdempotent() {
+        for (desired in listOf(50f, 280f, 400f, 900f, 5000f)) {
+            val once = clampPanelWidth(desired, windowWidth = 1000f)
+            assertEquals(once, clampPanelWidth(once, windowWidth = 1000f), "clamp of clamped($desired)")
+        }
+    }
 }

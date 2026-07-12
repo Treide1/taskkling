@@ -41,6 +41,13 @@ mutation flow, discovery), see PRD §6.3 and §13.
    `closed`), `id`, and `computed.*` are not editable anywhere. The concrete field↔verb
    mapping lives in §9 — the one place to update when the CLI attribute surface changes
    (e.g. the task-store-v2 overhaul).
+9. **Affordances announce themselves before the click.** An interaction the user must
+   discover is clarified *before* they have to act, ideally through an established icon
+   (the overlapping-sheets copy glyph, a resize cursor) — never only through feedback that
+   arrives after the fact. The counterweight: affordance hints must not clutter the app.
+   When the affordance is directly available in place (a click with no mouse travel), its
+   hint may appear on hover — revealed exactly when it becomes relevant, invisible
+   otherwise (e.g. the id's copy glyph fades in on hover).
 
 ## 2. Primary state & precedence
 
@@ -228,14 +235,27 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
     "blocker of" lists the downstream dependents. (UI labels are blocker-vocabulary
     translations of the contract's `depends`/`blockers`/`dependents` — DOMAIN_LANGUAGE §7.)
   - Absent values render as `faint` "—" rather than disappearing, so the panel shape is stable.
+  - **Header id — click to copy**: the id in the header row reads `faint`; hovering it
+    sharpens it to `txt` under a hand cursor and fades in the overlapping-sheets copy glyph
+    beside it (principle 9: the affordance announces itself before the click). Clicking
+    copies the bare id (e.g. `t-60pe`) to the system clipboard — the fast path for handing
+    an id to a dispatched agent — and swaps the glyph to a `done`-green checkmark as
+    confirmation, in the slot the user is already looking at. The checkmark behaves
+    exactly like the copy glyph (fades out on unhover, no timer); the next hover starts
+    fresh with the copy glyph. The glyph's slot is alpha-faded, never inserted, so the
+    row never shifts.
   - **Reference ids are links**: `accent` colored, click navigates the selection to that task
     AND pans the canvas to centre its card (150ms, clamped to the scroll bounds). Plain card
     clicks on the canvas never pan.
-  - **Pinned-card return FAB**: while a task is pinned and its content is not on the panel
-    (another selection, or the empty state), a small rounded-rect card — filled pin (`accent`)
-    + "→" — floats at the panel's top-right (`panel2` fill, `line` border, shadow). Clicking
-    it re-selects the pinned task and pans its card back into view (the same navigate as
-    reference links).
+  - **Pinned-card return control**: while a task is pinned and its content is not on the panel
+    (another selection, or the empty state), a small rounded-rect — filled pin (`accent`) +
+    "→" — offers the way back. It sits in the panel's flow rather than floating: on a selection
+    it trails the **id header row** (right-aligned beside the id); in the empty state it sits
+    under the hint. It wears its `panel2` fill + `line` border at rest — a visible button,
+    not bare text — and hover lifts it with a 4dp shadow. In the panel's flow it can never
+    occlude the task title.
+    Clicking it re-selects the pinned task and pans its card back into view (the same navigate
+    as reference links).
   - **Direct field editing** (principle 8): stored fields are edited in place on the panel;
     there are no separate mutation buttons (the former done/drop/reopen row is retired).
     - **Enum fields** open a value dropdown on click: the closed state renders like a plain

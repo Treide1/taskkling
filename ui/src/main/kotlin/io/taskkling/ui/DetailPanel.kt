@@ -1,9 +1,14 @@
 package io.taskkling.ui
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -16,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -56,17 +62,24 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.taskkling.contract.TaskDto
+import java.awt.Cursor
 
 /**
- * The detail panel (DESIGN §9): a fixed 320dp column with a `line` left border.
+ * The detail panel (DESIGN §9): a [width]-wide column with a `line` left border. The width is
+ * user-draggable via a left-edge resize gutter ([ResizeHandle] → [onWidthDrag]); the caller owns
+ * the (session-only) width state and its clamping (t-q8i2).
  * Empty state is a centred hint; a selection shows styled fields (absent values
  * as a faint "—"), computed-flag chips, and clickable reference ids. Stored
  * fields are edited in place (DESIGN principle 8): enum values through
@@ -75,8 +88,10 @@ import io.taskkling.contract.TaskDto
  * actions can't stack.
  *
  * Whenever a pin exists but [task] isn't the pinned one — another selection or
- * the empty state — the pinned-card return FAB floats top-right; clicking it
- * hands [pinnedId] to [onNavigate] (re-select + pan-to-card).
+ * the empty state — a pinned-card return control appears (trailing the id header
+ * row of a selection, or under the empty-state hint); clicking it hands
+ * [pinnedId] to [onNavigate] (re-select + pan-to-card). It sits in the panel's
+ * flow rather than floating, so it can never occlude the task title.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -85,12 +100,14 @@ internal fun DetailPane(
     pinnedId: String?,
     error: String?,
     busy: Boolean,
+    width: Dp,
+    onWidthDrag: (Dp) -> Unit,
     onMutate: (args: List<String>) -> Unit,
     onNavigate: (String) -> Unit,
 ) {
     Box(
         Modifier
-            .width(320.dp)
+            .width(width)
             .fillMaxHeight()
             .background(Tk.panel)
             .drawBehind {
@@ -114,16 +131,104 @@ internal fun DetailPane(
                             fontSize = 13.sp,
                             textAlign = TextAlign.Center,
                         )
+                        // With no selection there's no id header row to host the
+                        // return control, so it sits under the hint instead.
+                        if (pinnedId != null) {
+                            Spacer(Modifier.height(16.dp))
+                            DisableSelection {
+                                PinReturn(onClick = { onNavigate(pinnedId) })
+                            }
+                        }
                     }
                 }
             } else {
-                TaskDetails(task, error, busy, onMutate, onNavigate)
+                TaskDetails(task, pinnedId, error, busy, onMutate, onNavigate)
             }
         }
-        if (pinnedId != null && pinnedId != task?.id) {
-            PinReturnFab(
-                onClick = { onNavigate(pinnedId) },
-                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+        // Left-edge resize handle (t-q8i2): a slim full-height hit zone over the panel's left
+        // border. Dragging horizontally resizes the panel live; positive delta (drag right)
+        // shrinks it, negative (drag left) grows it — Main re-clamps against the window. The
+        // hover/drag cursor is the E-resize arrow. Visual: on hover the hairline thickens in its
+        // own `line` color — quiet enough not to flash at a passing cursor — while the panel's
+        // 0.5dp border stays the resting divider.
+        ResizeHandle(onWidthDrag = onWidthDrag, modifier = Modifier.align(Alignment.CenterStart))
+    }
+}
+
+/** A left-anchored vertical resize gutter for the detail panel (t-q8i2). The visible line is
+ *  thinner than the [HANDLE_HIT] hit area so the target is easy to grab without a heavy divider. */
+@Composable
+private fun ResizeHandle(onWidthDrag: (Dp) -> Unit, modifier: Modifier = Modifier) {
+    val density = LocalDensity.current
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    Box(
+        modifier
+            .fillMaxHeight()
+            .width(HANDLE_HIT)
+            .hoverable(interaction)
+            .pointerHoverIcon(ResizeCursor)
+            .draggable(
+                orientation = Orientation.Horizontal,
+                state = rememberDraggableState { deltaPx -> onWidthDrag(with(density) { deltaPx.toDp() }) },
+            )
+            .drawBehind {
+                if (hovered) {
+                    val x = 1.dp.toPx()
+                    drawLine(Tk.line, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
+                }
+            },
+    )
+}
+
+/** Hit width of the panel resize gutter (t-q8i2): wide enough to grab, slimmer than the FAB. */
+private val HANDLE_HIT = 6.dp
+
+/** Horizontal-resize pointer for the panel's drag gutter (Compose Desktop → AWT cursor). */
+private val ResizeCursor = PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR))
+
+/**
+ * The task id in the header row (DESIGN §9): reads `faint`, but clicking copies
+ * the bare id (e.g. `t-60pe`) to the system clipboard — the fast path for handing
+ * an id to a dispatched agent without leaving the UI. The affordance announces
+ * itself BEFORE the click (DESIGN principle 9): hovering the id fades in the
+ * overlapping-sheets copy glyph beside it and sharpens the id to `txt` under a
+ * hand cursor. A click swaps the glyph to a `done`-green checkmark — confirmation
+ * in the slot the user is already looking at, not a surprise label. No timer: the
+ * checkmark lives and fades exactly like the copy glyph (one hover-driven alpha),
+ * and only a NEW hover resets it — resetting on unhover would swap the glyph
+ * mid-fade-out and flicker. The glyph's slot is always reserved (alpha-faded,
+ * never added), so nothing in the row shifts.
+ */
+@Composable
+private fun CopyableId(id: String) {
+    val clipboard = LocalClipboardManager.current
+    val interactions = remember { MutableInteractionSource() }
+    val hovered by interactions.collectIsHoveredAsState()
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(hovered) {
+        if (hovered) copied = false
+    }
+    // Slight fade so the glyph appears/retreats rather than popping (DESIGN §11 tier).
+    val glyphAlpha by animateFloatAsState(if (hovered) 1f else 0f, tween(120))
+    DisableSelection {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            modifier = Modifier
+                .hoverable(interactions)
+                .pointerHoverIcon(PointerIcon.Hand)
+                .clickable {
+                    clipboard.setText(AnnotatedString(id))
+                    copied = true
+                },
+        ) {
+            Text(id, fontSize = 11.sp, color = if (hovered) Tk.txt else Tk.faint)
+            Icon(
+                imageVector = if (copied) UiIcons.Check else UiIcons.Copy,
+                contentDescription = if (copied) "id copied" else "copy id",
+                tint = if (copied) Tk.done else Tk.muted,
+                modifier = Modifier.size(12.dp).alpha(glyphAlpha),
             )
         }
     }
@@ -142,6 +247,7 @@ private fun statusArgs(id: String, status: String): List<String> = when (status)
 @Composable
 private fun TaskDetails(
     task: TaskDto,
+    pinnedId: String?,
     error: String?,
     busy: Boolean,
     onMutate: (args: List<String>) -> Unit,
@@ -165,7 +271,15 @@ private fun TaskDetails(
                 onMutate = onMutate,
             )
             Spacer(Modifier.height(2.dp))
-            Text(task.id, fontSize = 11.sp, color = Tk.faint)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                CopyableId(task.id)
+                if (pinnedId != null && pinnedId != task.id) {
+                    Spacer(Modifier.weight(1f))
+                    DisableSelection {
+                        PinReturn(onClick = { onNavigate(pinnedId) })
+                    }
+                }
+            }
             Spacer(Modifier.height(14.dp))
 
             EnumField("status", task.status, listOf("open", "done", "dropped", "waiting"), enabled = !busy) {
@@ -458,22 +572,36 @@ private fun RefField(
 }
 
 /**
- * The pinned-card return FAB (DESIGN §9): a small floating rounded-rect card
- * reading "filled-pin →". Same quiet chrome as the outline buttons but with a
- * shadow — it floats over the panel instead of sitting in its flow.
+ * The pinned-card return control (DESIGN §9): a small rounded-rect reading
+ * "filled-pin →" that lives in the panel's flow — trailing the id header row of
+ * a selection, or under the empty-state hint. It always wears its `panel2`/`line`
+ * capsule so it reads as a button at rest; hover lifts it with a 4dp shadow.
+ * Unlike the retired floating FAB, it never overlays the task title. Clicking
+ * re-selects the pinned task and pans its card back into view.
  */
 @Composable
-private fun PinReturnFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(7.dp)
+private fun PinReturn(onClick: () -> Unit) {
+    val interactions = remember { MutableInteractionSource() }
+    val hovered by interactions.collectIsHoveredAsState()
+    val shape = RoundedCornerShape(6.dp)
+    // The button height is pinned explicitly (user feedback 2026-07-12): the pin glyph
+    // reads too small at a third of the height, so it fills ~2/3 of it instead — the
+    // height stays what the old text-plus-padding geometry produced, only the padding's
+    // share shrank in the icon's favor.
+    // Chrome is always on (user feedback 2026-07-12): transparent-at-rest didn't read as
+    // a button until hovered, so the `panel2`/`line` capsule is the resting state and
+    // hover lifts the button with a 4dp shadow instead.
     Row(
-        modifier
-            .shadow(8.dp, shape, clip = false)
+        Modifier
+            .shadow(if (hovered) 4.dp else 0.dp, shape, clip = false)
             .clip(shape)
             .background(Tk.panel2)
             .border(1.dp, Tk.line, shape)
+            .hoverable(interactions)
             .pointerHoverIcon(PointerIcon.Hand)
             .clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .height(22.dp)
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -481,9 +609,9 @@ private fun PinReturnFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
             imageVector = PinIcons.Filled,
             contentDescription = "return to pinned task",
             tint = Tk.accent,
-            modifier = Modifier.size(13.dp),
+            modifier = Modifier.size(15.dp),
         )
-        Text("→", fontSize = 13.sp, color = Tk.txt)
+        Text("→", fontSize = 12.sp, color = if (hovered) Tk.txt else Tk.muted)
     }
 }
 

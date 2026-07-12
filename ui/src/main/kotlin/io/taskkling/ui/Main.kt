@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,8 +14,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,13 +32,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
 import io.taskkling.contract.ExportDto
+import java.awt.GraphicsEnvironment
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -77,20 +87,33 @@ fun main(args: Array<String>) {
     }
 
     application {
+        // Default window (t-9de2): ~85% of the screen's WORK area (excludes the taskbar,
+        // unlike raw screen size), centred. Session-only — recomputed fresh each launch,
+        // never persisted, so it tracks whichever monitor/work-area the app starts on.
+        val windowState = rememberWindowState(
+            size = remember {
+                val work = GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
+                DpSize((work.width * 0.85f).dp, (work.height * 0.85f).dp)
+            },
+            position = WindowPosition(Alignment.Center),
+        )
         Window(
             onCloseRequest = ::exitApplication,
             title = "taskkling",
             icon = painterResource("icons/taskkling.png"),
+            state = windowState,
         ) {
             TaskklingTheme {
                 Box(Modifier.fillMaxSize().background(Tk.bg)) {
                     if (binary == null) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                "taskkling binary not found.\nSet it on PATH, TASKKLING_BINARY, or config binary_path.",
-                                color = Tk.muted,
-                                fontSize = 13.sp,
-                            )
+                            SelectionContainer {
+                                Text(
+                                    "taskkling binary not found.\nSet it on PATH, TASKKLING_BINARY, or config binary_path.",
+                                    color = Tk.muted,
+                                    fontSize = 13.sp,
+                                )
+                            }
                         }
                     } else {
                         App(CliClient(binary, workRoot))
@@ -114,6 +137,11 @@ private fun App(client: CliClient) {
     var busy by remember { mutableStateOf(false) }
     // The open settings dialog (archive/prune), session-only like the pin.
     var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
+    // The user-dragged detail-panel width in dp (t-q8i2). Session-only — like the pin, it never
+    // persists and resets to the default on relaunch. Held as a raw dp Float and re-clamped
+    // against the live window width at layout time (see the BoxWithConstraints below), so the
+    // panel never exceeds the 60% cap after a window resize.
+    var panelWidth by remember { mutableStateOf(PANEL_DEFAULT_W) }
     val scope = rememberCoroutineScope()
 
     // The canvas scroll state lives here, above GraphPane, so wheel scrolling, drag
@@ -215,52 +243,66 @@ private fun App(client: CliClient) {
                 onArchive = { dialog = SettingsDialog.ARCHIVE },
                 onPrune = { dialog = SettingsDialog.PRUNE },
             )
-            Row(Modifier.weight(1f).fillMaxWidth()) {
-                Box(Modifier.weight(1f).fillMaxHeight()) {
-                    val current = export
-                    when {
-                        error != null && current == null ->
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("error: $error", color = Tk.blocked, fontSize = 13.sp)
-                            }
-                        current == null ->
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("loading…", color = Tk.muted, fontSize = 13.sp)
-                            }
-                        else -> GraphPane(
-                            export = current,
-                            selectedId = selectedId,
-                            // Highlight source: the pin wins; without one, selection highlights.
-                            highlightedId = pinnedId ?: selectedId,
-                            pinnedId = pinnedId,
-                            onSelect = { selectedId = it },
-                            // Pinning selects too (one click = full focus); a second click on
-                            // the pinned card's pin unpins and leaves selection untouched.
-                            onPinToggle = { id ->
-                                if (pinnedId == id) {
-                                    pinnedId = null
-                                } else {
-                                    pinnedId = id
-                                    selectedId = id
+            // BoxWithConstraints exposes the live window width so the panel's dragged width can be
+            // re-clamped against the 60% cap every layout pass — a Modifier-level clamp at measure
+            // time, so a window shrink pulls an over-wide panel back within the cap (t-q8i2).
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val windowWidth = maxWidth.value
+                val clampedPanelWidth = clampPanelWidth(panelWidth, windowWidth)
+                Row(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        val current = export
+                        when {
+                            error != null && current == null ->
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    SelectionContainer {
+                                        Text("error: $error", color = Tk.blocked, fontSize = 13.sp)
+                                    }
                                 }
-                            },
-                            // Background click clears the selection, never the pin (§5).
-                            onClearSelection = { selectedId = null },
-                            hScroll = hScroll,
-                            vScroll = vScroll,
-                            cardRects = cardRects,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                            current == null ->
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("loading…", color = Tk.muted, fontSize = 13.sp)
+                                }
+                            else -> GraphPane(
+                                export = current,
+                                selectedId = selectedId,
+                                // Highlight source: the pin wins; without one, selection highlights.
+                                highlightedId = pinnedId ?: selectedId,
+                                pinnedId = pinnedId,
+                                onSelect = { selectedId = it },
+                                // Pinning selects too (one click = full focus); a second click on
+                                // the pinned card's pin unpins and leaves selection untouched.
+                                onPinToggle = { id ->
+                                    if (pinnedId == id) {
+                                        pinnedId = null
+                                    } else {
+                                        pinnedId = id
+                                        selectedId = id
+                                    }
+                                },
+                                // Background click clears the selection, never the pin (§5).
+                                onClearSelection = { selectedId = null },
+                                hScroll = hScroll,
+                                vScroll = vScroll,
+                                cardRects = cardRects,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
+                    DetailPane(
+                        task = export?.tasks?.firstOrNull { it.id == selectedId },
+                        pinnedId = pinnedId,
+                        error = error,
+                        busy = busy,
+                        width = clampedPanelWidth.dp,
+                        // Dragging the left-edge handle right (positive delta) shrinks the panel; the
+                        // new raw width is re-clamped against the current window so a drag can't push
+                        // it past the min or the 60% cap.
+                        onWidthDrag = { deltaDp -> panelWidth = clampPanelWidth(panelWidth - deltaDp.value, windowWidth) },
+                        onMutate = ::mutate,
+                        onNavigate = ::navigateTo,
+                    )
                 }
-                DetailPane(
-                    task = export?.tasks?.firstOrNull { it.id == selectedId },
-                    pinnedId = pinnedId,
-                    error = error,
-                    busy = busy,
-                    onMutate = ::mutate,
-                    onNavigate = ::navigateTo,
-                )
             }
             Legend()
         }
@@ -310,7 +352,8 @@ private fun App(client: CliClient) {
 /**
  * Header (DESIGN §9): app title + faint suffix, a muted generated-note with the
  * refresh button beside it, count chips pushed right with the settings cogwheel
- * appended at the row's end.
+ * appended at the row's end. Everything right of the fixed title block scales
+ * through the [HeaderLadder] degradation ladder (t-2on2).
  */
 @Composable
 private fun Header(
@@ -332,6 +375,8 @@ private fun Header(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(18.dp),
     ) {
+        // Title block — the icon + wordmark. Fixed, OUTSIDE the ladder (t-2on2): it never
+        // shrinks or drops out however narrow the window gets.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Image(painterResource("icons/taskkling.svg"), contentDescription = null, modifier = Modifier.size(18.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -339,23 +384,147 @@ private fun Header(
                 Text(" · graph", fontSize = 14.sp, color = Tk.faint)
             }
         }
+        // The rest of the header — generated-note + refresh, the flexible gap, and the
+        // chips + settings cog — is one degradation ladder (t-2on2). weight(1f) hands its
+        // SubcomposeLayout a real bounded width (the leftover after the title), which is
+        // what lets it pick the widest stage that fits. With no export there's nothing to
+        // scale — a plain spacer holds the row open, unchanged from before.
         if (export != null) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("generated ${fmtDateTime(export.generatedAt)}", fontSize = 11.sp, color = Tk.muted)
-                // Re-runs export through the busy gate (DESIGN §9 refresh button).
-                QuietIconButton(UiIcons.Refresh, "refresh", enabled = !busy, onClick = onRefresh)
+            HeaderLadder(
+                export,
+                busy = busy,
+                onRefresh = onRefresh,
+                onArchive = onArchive,
+                onPrune = onPrune,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
+    }
+}
+
+/**
+ * One stage of the header degradation ladder (t-2on2): a (timestamp, chips) pairing.
+ * [timestamp] is the generated-note's font size, or null to hide the note text entirely
+ * (the refresh icon always stays); [compactChips] switches the count chips to their
+ * t-era5 dot+count form. The refresh and settings icons never appear here as anything
+ * scalable — they render at a fixed size in every stage.
+ */
+private data class HeaderStage(val timestamp: TextUnit?, val compactChips: Boolean)
+
+/**
+ * The scaling policy, as an ordered list, most-preferred FIRST (t-2on2). Reading it
+ * top-to-bottom is the exact order header elements give way as the window narrows: the
+ * timestamp is the least important element, so it degrades (full → compact chips beside
+ * it → shrunk → hidden) before the icons are ever touched. To reorder the ladder, change
+ * a stage's font, or add a stage, edit THIS list — [HeaderLadder]'s measure loop needs no
+ * other change.
+ */
+private val HEADER_STAGES: List<HeaderStage> = listOf(
+    HeaderStage(timestamp = 11.sp, compactChips = false), // 1. full note + full labelled chips
+    HeaderStage(timestamp = 11.sp, compactChips = true),  // 2. full note + compact dot+count chips (t-era5)
+    HeaderStage(timestamp = 9.sp, compactChips = true),   // 3. shrunk note + compact chips
+    HeaderStage(timestamp = null, compactChips = true),   // 4. note hidden (refresh icon stays) + compact chips
+)
+
+/**
+ * Header degradation ladder (t-2on2): renders the FIRST [HEADER_STAGES] entry whose natural
+ * width fits the leftover header width, so the timestamp scales/vanishes before the icons.
+ * Folds in the old HeaderCounts probe — stages 1 vs 2+ differ only by the chips' `compact`
+ * flag, so one SubcomposeLayout drives both the timestamp ladder and the chip degrade rather
+ * than nesting two. Measured, not breakpointed, so it tracks the space the header actually
+ * has (detail-panel width, multi-monitor DPI, etc).
+ */
+@Composable
+private fun HeaderLadder(
+    export: ExportDto,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+    onArchive: (() -> Unit)?,
+    onPrune: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    SubcomposeLayout(modifier) { constraints ->
+        // Walk the stages most-preferred first; a stage's NATURAL width is measured with
+        // unbounded Constraints(), under which the weighted gap collapses to its 18dp
+        // minimum — so this is the tightest width the stage needs. The first stage that
+        // fits the leftover header width wins; probing STOPS there, so the common wide
+        // window measures a single stage. The last stage is the unconditional fallback
+        // (never probed — it wins by default when nothing narrower fits).
+        var winner = HEADER_STAGES.lastIndex
+        for (i in 0 until HEADER_STAGES.lastIndex) {
+            val natural = subcompose("probe-$i") {
+                HeaderStageRow(export, HEADER_STAGES[i], busy, onRefresh, onArchive, onPrune)
+            }.maxOf { it.measure(Constraints()).width }
+            if (natural <= constraints.maxWidth) {
+                winner = i
+                break
             }
         }
+
+        // Render the winner under a distinct slot key — a probe measurable can't be
+        // remeasured — this time with the real bounded constraints, so its weighted gap
+        // expands and the chip block + cog sit flush at the header's right edge.
+        val placeables = subcompose("stage-$winner") {
+            HeaderStageRow(export, HEADER_STAGES[winner], busy, onRefresh, onArchive, onPrune)
+        }.map { it.measure(constraints) }
+        val width = placeables.maxOf { it.width }
+        val height = placeables.maxOf { it.height }
+        layout(width, height) {
+            placeables.forEach { it.place(0, 0) }
+        }
+    }
+}
+
+/**
+ * The content of one ladder stage (t-2on2): generated-note + refresh on the left, count
+ * chips + settings cog on the right, a weighted gap between them. Under the probe's
+ * unbounded measure the weighted spacer is 0, so the row measures its true content width;
+ * under the winner's bounded measure the spacer absorbs all slack, keeping the chips
+ * right-aligned in whichever stage wins — the fixed 18dp spacer guarantees a minimum gap
+ * so the note never touches the chips even at the tightest fit.
+ */
+@Composable
+private fun HeaderStageRow(
+    export: ExportDto,
+    stage: HeaderStage,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+    onArchive: (() -> Unit)?,
+    onPrune: (() -> Unit)?,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        // Generated-note: the timestamp text is the ladder's first casualty — it shrinks
+        // (stage 3) then drops out entirely (stage 4). The refresh button never moves size
+        // and always renders, so even the hidden-timestamp stage keeps a way to re-export.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (stage.timestamp != null) {
+                Text("generated ${fmtDateTime(export.generatedAt)}", fontSize = stage.timestamp, color = Tk.muted)
+            }
+            // Re-runs export through the busy gate (DESIGN §9 refresh button).
+            QuietIconButton(UiIcons.Refresh, "refresh", enabled = !busy, onClick = onRefresh)
+        }
+        Spacer(Modifier.width(18.dp))
         Spacer(Modifier.weight(1f))
-        if (export != null) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CountChip(Tk.ready, export.counts.ready, "ready")
-                CountChip(Tk.blocked, export.counts.blocked, "blocked")
-                CountChip(Tk.waiting, export.counts.waiting, "waiting")
-                CountChip(Tk.done, export.counts.done, "done")
-                SettingsMenu(enabled = !busy, onArchive = onArchive, onPrune = onPrune)
-            }
-        }
+        CountChipRow(export, compact = stage.compactChips, busy = busy, onArchive = onArchive, onPrune = onPrune)
+    }
+}
+
+@Composable
+private fun CountChipRow(
+    export: ExportDto,
+    compact: Boolean,
+    busy: Boolean,
+    onArchive: (() -> Unit)?,
+    onPrune: (() -> Unit)?,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        CountChip(Tk.ready, export.counts.ready, "ready", compact)
+        CountChip(Tk.blocked, export.counts.blocked, "blocked", compact)
+        CountChip(Tk.waiting, export.counts.waiting, "waiting", compact)
+        CountChip(Tk.done, export.counts.done, "done", compact)
+        SettingsMenu(enabled = !busy, onArchive = onArchive, onPrune = onPrune)
     }
 }
 

@@ -61,9 +61,14 @@ public fun OutlineTag(text: String, textColor: Color = Tk.muted, border: Color =
     Chip(text = text, textColor = textColor, fill = Tk.panel2, border = border, bold = false)
 }
 
-/** Header count chip: `panel2`/`line` capsule with a state-dot, bold count, muted label (DESIGN §8/§9). */
+/**
+ * Header count chip: `panel2`/`line` capsule with a state-dot, bold count, muted label
+ * (DESIGN §8/§9). [compact] (t-era5) drops the label — dot + count only — for the header
+ * row's narrow degrade; shape, fill, border, and padding scale stay identical so the chip
+ * reads as the same control in both forms.
+ */
 @Composable
-public fun CountChip(color: Color, count: Int, label: String) {
+public fun CountChip(color: Color, count: Int, label: String, compact: Boolean = false) {
     Row(
         Modifier
             .clip(RoundedCornerShape(12.dp))
@@ -75,7 +80,9 @@ public fun CountChip(color: Color, count: Int, label: String) {
     ) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(color))
         Text("$count", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Tk.txt)
-        Text(label, fontSize = 13.sp, color = Tk.muted)
+        if (!compact) {
+            Text(label, fontSize = 13.sp, color = Tk.muted)
+        }
     }
 }
 
