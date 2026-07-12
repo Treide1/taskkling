@@ -363,16 +363,69 @@ private fun Header(
                 QuietIconButton(UiIcons.Refresh, "refresh", enabled = !busy, onClick = onRefresh)
             }
         }
-        Spacer(Modifier.weight(1f))
         if (export != null) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CountChip(Tk.ready, export.counts.ready, "ready")
-                CountChip(Tk.blocked, export.counts.blocked, "blocked")
-                CountChip(Tk.waiting, export.counts.waiting, "waiting")
-                CountChip(Tk.done, export.counts.done, "done")
-                SettingsMenu(enabled = !busy, onArchive = onArchive, onPrune = onPrune)
+            // Fills the same flexible slot the plain Spacer would (pushing the chips to the
+            // row's end) but also hosts them, so HeaderCounts' SubcomposeLayout is measured
+            // with a real bounded width instead of the unbounded width a fixed sibling would
+            // get in a Row (t-era5) — that bound is what lets it decide compact vs full.
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                HeaderCounts(export, busy = busy, onArchive = onArchive, onPrune = onPrune)
             }
+        } else {
+            Spacer(Modifier.weight(1f))
         }
+    }
+}
+
+/**
+ * The four state count chips + settings cogwheel, right-aligned in the header (DESIGN §9).
+ * Degrades to compact dot+count chips (t-era5) when the full labelled row would not fit the
+ * available header width — measured via [SubcomposeLayout] rather than a hardcoded window
+ * breakpoint, so it tracks whatever space the header actually has (detail panel width,
+ * multi-monitor DPI, etc).
+ */
+@Composable
+private fun HeaderCounts(
+    export: ExportDto,
+    busy: Boolean,
+    onArchive: (() -> Unit)?,
+    onPrune: (() -> Unit)?,
+) {
+    SubcomposeLayout { constraints ->
+        // Probe pass: measure the full-labelled row with no width limit to learn the
+        // narrowest width it needs to render in full. Not placed — SubcomposeLayout drops
+        // slots that go unmeasured-and-unplaced by the end of the pass.
+        val fullWidth = subcompose("probe") {
+            CountChipRow(export, compact = false, busy = busy, onArchive = onArchive, onPrune = onPrune)
+        }.maxOf { it.measure(Constraints()).width }
+
+        val compact = fullWidth > constraints.maxWidth
+        val placeables = subcompose(if (compact) "compact" else "full") {
+            CountChipRow(export, compact = compact, busy = busy, onArchive = onArchive, onPrune = onPrune)
+        }.map { it.measure(constraints) }
+
+        val width = placeables.maxOf { it.width }
+        val height = placeables.maxOf { it.height }
+        layout(width, height) {
+            placeables.forEach { it.place(0, 0) }
+        }
+    }
+}
+
+@Composable
+private fun CountChipRow(
+    export: ExportDto,
+    compact: Boolean,
+    busy: Boolean,
+    onArchive: (() -> Unit)?,
+    onPrune: (() -> Unit)?,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        CountChip(Tk.ready, export.counts.ready, "ready", compact)
+        CountChip(Tk.blocked, export.counts.blocked, "blocked", compact)
+        CountChip(Tk.waiting, export.counts.waiting, "waiting", compact)
+        CountChip(Tk.done, export.counts.done, "done", compact)
+        SettingsMenu(enabled = !busy, onArchive = onArchive, onPrune = onPrune)
     }
 }
 
