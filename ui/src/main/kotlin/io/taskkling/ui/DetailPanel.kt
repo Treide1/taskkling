@@ -146,8 +146,9 @@ internal fun DetailPane(
         // Left-edge resize handle (t-q8i2): a slim full-height hit zone over the panel's left
         // border. Dragging horizontally resizes the panel live; positive delta (drag right)
         // shrinks it, negative (drag left) grows it — Main re-clamps against the window. The
-        // hover/drag cursor is the E-resize arrow. Visual: a faint accent line on hover; the
-        // panel's own 0.5dp border stays the resting divider.
+        // hover/drag cursor is the E-resize arrow. Visual: on hover the hairline thickens in its
+        // own `line` color — quiet enough not to flash at a passing cursor — while the panel's
+        // 0.5dp border stays the resting divider.
         ResizeHandle(onWidthDrag = onWidthDrag, modifier = Modifier.align(Alignment.CenterStart))
     }
 }
@@ -172,7 +173,7 @@ private fun ResizeHandle(onWidthDrag: (Dp) -> Unit, modifier: Modifier = Modifie
             .drawBehind {
                 if (hovered) {
                     val x = 1.dp.toPx()
-                    drawLine(Tk.accent, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
+                    drawLine(Tk.line, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
                 }
             },
     )
