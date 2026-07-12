@@ -3,12 +3,16 @@ package io.taskkling.ui
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -50,7 +54,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -83,6 +90,12 @@ import kotlin.math.hypot
  * panning, and programmatic pan-to-card all mutate the same clamped state.
  * [cardRects] is hoisted for the same reason: the measure pass below fills it,
  * and the caller's pan-to-card (§9) reads a target card's centre from it.
+ *
+ * t-aq99: dependency edges are authored here too — a drag from a card's
+ * (+) handle spawns a live S-curve that drops onto a target card ([onLink]) or
+ * evaporates on empty canvas; a tap near an existing edge selects it
+ * ([selectedEdge]/[onSelectEdge]) and its midpoint (×) chip or Del unlinks it
+ * ([onUnlink]). Interaction semantics per [variant], see [LinkDirection].
  */
 @Composable
 internal fun GraphPane(
@@ -90,9 +103,15 @@ internal fun GraphPane(
     selectedId: String?,
     highlightedId: String?,
     pinnedId: String?,
+    variant: LinkDirection,
+    handlesNeedSelection: Boolean,
+    selectedEdge: Edge?,
     onSelect: (String) -> Unit,
     onPinToggle: (String) -> Unit,
     onClearSelection: () -> Unit,
+    onSelectEdge: (Edge) -> Unit,
+    onLink: (dependent: String, blocker: String) -> Unit,
+    onUnlink: (dependent: String, blocker: String) -> Unit,
     hScroll: ScrollState,
     vScroll: ScrollState,
     cardRects: HashMap<String, CardRect>,
@@ -131,6 +150,54 @@ internal fun GraphPane(
     // True while a background drag is panning; drives the grab→grabbing cursor swap.
     var panning by remember { mutableStateOf(false) }
 
+    // t-aq99: the in-flight link drag, if any. Anchored in content px; the
+    // pointer position is snapshot state so the temp-arrow draw follows each move.
+    var drag by remember { mutableStateOf<LinkDrag?>(null) }
+
+    fun startDrag(id: String, side: HandleSide) {
+        val rect = cardRects[id] ?: return
+        val anchor = Offset(if (side == HandleSide.LEFT) rect.left else rect.right, rect.centerY)
+        // TWO_HANDLES: validity (self / duplicate / would-cycle) computed ONCE at drag
+        // start from the in-memory export; ONE_HANDLE leaves validation to the CLI at drop.
+        val invalid = when (variant) {
+            LinkDirection.TWO_HANDLES -> invalidLinkTargets(export.tasks, id, side)
+            LinkDirection.ONE_HANDLE -> setOf(id)
+        }
+        drag = LinkDrag(id, side, anchor, invalid)
+    }
+
+    fun endDrag() {
+        val d = drag ?: return
+        drag = null
+        val target = cardRects.entries.firstOrNull { d.pointer in it.value }?.key ?: return
+        if (target == d.sourceId || target in d.invalid) return
+        when (variant) {
+            LinkDirection.TWO_HANDLES ->
+                if (d.side == HandleSide.LEFT) onLink(d.sourceId, target) else onLink(target, d.sourceId)
+            LinkDirection.ONE_HANDLE -> {
+                // Direction inferred from where the drop lands relative to the source
+                // (canvas flow is left→right); re-dragging an existing edge toggles it off.
+                val src = cardRects[d.sourceId] ?: return
+                val tgt = cardRects.getValue(target)
+                val (dependent, blocker) =
+                    if (tgt.centerX >= src.centerX) target to d.sourceId else d.sourceId to target
+                if (gl.edges.any { it.from == blocker && it.to == dependent }) {
+                    onUnlink(dependent, blocker)
+                } else {
+                    onLink(dependent, blocker)
+                }
+            }
+        }
+    }
+
+    // The valid drop target under the pointer, driving the target's green ring and
+    // the temp arrow's snap. Recomposes per drag move — cheap, everything else skips.
+    val activeDrag = drag
+    val dragHoverTarget = activeDrag?.let { d ->
+        cardRects.entries.firstOrNull { d.pointer in it.value }?.key
+            ?.takeIf { it != d.sourceId && it !in d.invalid }
+    }
+
     // The canvas covers at least the viewport (§5): these pre-scroll constraints are
     // the viewport size, and the measure pass clamps the content to them, so the grid
     // and the click/pan surface reach the window edges even on small graphs.
@@ -143,18 +210,64 @@ internal fun GraphPane(
                 // override with their own hand cursor — except mid-pan, where crossing a card
                 // means nothing, so the override flag pins the grabbing cursor everywhere.
                 .pointerHoverIcon(if (panning) GRABBING_CURSOR else GRAB_CURSOR, overrideDescendants = panning)
-                .pointerInput(hScroll, vScroll) {
+                .pointerInput(hScroll, vScroll, gl, selectedEdge) {
                     // Pan on LMB background drag (§5): pointer delta == scroll delta (1:1, no
                     // inertia), through the same clamped ScrollStates the wheel mutates. The
                     // gesture claims a press only when it lands OUTSIDE every card — hit-tested
                     // against the measured rects the edge layer already uses — so cards keep
                     // their click/hover behaviour untouched.
+                    //
+                    // t-aq99: two background-tap targets slot in ahead of the pan — the
+                    // selected edge's midpoint (×) chip, and edge proximity (tap within ~6dp of
+                    // a curve selects it). Both read the DOWN in the Initial pass and consume it
+                    // so the Layout's click-to-clear never sees those taps.
+                    val arrowPx = ARROW_LEN.toPx()
+                    val minDxPx = 40.dp.toPx()
+                    val edgeHitPx = 6.dp.toPx()
+                    val chipHitPx = (CHIP_R + 4.dp).toPx()
+                    val handleOverflowPx = 12.dp.toPx()
                     awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                         if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
                         // The gesture sees viewport coordinates; the rects live in content px.
                         val inContent = down.position + Offset(hScroll.value.toFloat(), vScroll.value.toFloat())
-                        if (cardRects.values.any { inContent in it }) return@awaitEachGesture
+
+                        // 1. The unlink chip on the selected edge.
+                        val sel = selectedEdge
+                        if (sel != null) {
+                            val a = cardRects[sel.from]
+                            val b = cardRects[sel.to]
+                            if (a != null && b != null) {
+                                val mid = cubicPoint(edgeCurve(a, b, arrowPx, minDxPx), 0.5f)
+                                if ((inContent - mid).getDistance() <= chipHitPx) {
+                                    down.consume()
+                                    if (awaitTapCompletion(down.id, PAN_SLOP.toPx())) onUnlink(sel.to, sel.from)
+                                    return@awaitEachGesture
+                                }
+                            }
+                        }
+
+                        // 2. Cards own their presses — inflated so the overflowing (+) handles
+                        // never double as a pan grip.
+                        if (cardRects.values.any { it.containsInflated(inContent, handleOverflowPx) }) return@awaitEachGesture
+
+                        // 3. A tap near an edge selects it for unlinking.
+                        var hit: Edge? = null
+                        var bestD = edgeHitPx
+                        for (e in gl.edges) {
+                            val a = cardRects[e.from] ?: continue
+                            val b = cardRects[e.to] ?: continue
+                            val d = distanceToCurve(inContent, edgeCurve(a, b, arrowPx, minDxPx))
+                            if (d <= bestD) {
+                                bestD = d
+                                hit = e
+                            }
+                        }
+                        if (hit != null) {
+                            down.consume()
+                            if (awaitTapCompletion(down.id, PAN_SLOP.toPx())) onSelectEdge(hit)
+                            return@awaitEachGesture
+                        }
                         // A few px of slop before committing keeps click-to-clear (§1.4) alive
                         // under mouse jitter; the accrued delta is replayed on commit, so the
                         // total pan stays 1:1 with the pointer.
@@ -192,9 +305,25 @@ internal fun GraphPane(
                             task = p.task,
                             selected = p.task.id == selectedId,
                             pinned = p.task.id == pinnedId,
-                            dimmed = highlightedId != null && p.task.id !in star,
+                            // During a link drag the Star dim yields to validity: only the
+                            // targets the drag must not drop on dim (TWO_HANDLES).
+                            dimmed = if (activeDrag != null) {
+                                variant == LinkDirection.TWO_HANDLES &&
+                                    p.task.id in activeDrag.invalid && p.task.id != activeDrag.sourceId
+                            } else {
+                                highlightedId != null && p.task.id !in star
+                            },
+                            dropTarget = p.task.id == dragHoverTarget,
+                            variant = variant,
+                            handlesNeedSelection = handlesNeedSelection,
+                            dragActive = activeDrag != null,
+                            dragSource = activeDrag?.sourceId == p.task.id,
                             onSelect = { onSelect(p.task.id) },
                             onPinToggle = { onPinToggle(p.task.id) },
+                            onHandleDragStart = { side -> startDrag(p.task.id, side) },
+                            onHandleDrag = { delta -> drag?.let { it.pointer += delta } },
+                            onHandleDragEnd = { endDrag() },
+                            onHandleDragCancel = { drag = null },
                         )
                     }
                 },
@@ -207,11 +336,60 @@ internal fun GraphPane(
                         for (e in gl.edges) {
                             val a = cardRects[e.from] ?: continue
                             val b = cardRects[e.to] ?: continue
+                            val isSelected = e == selectedEdge
                             val highlighted = highlightedId != null && (e.from == highlightedId || e.to == highlightedId)
-                            val color = if (highlighted) Tk.accent else Tk.line
-                            val strokeW = if (highlighted) 2.4.dp.toPx() else 1.6.dp.toPx()
-                            val alpha = if (highlighted) 1f else 1f - 0.8f * dimFraction
+                            val color = if (isSelected || highlighted) Tk.accent else Tk.line
+                            val strokeW = if (isSelected || highlighted) 2.4.dp.toPx() else 1.6.dp.toPx()
+                            val alpha = if (isSelected || highlighted) 1f else 1f - 0.8f * dimFraction
                             drawSCurveEdge(a.right, a.centerY, b.left, b.centerY, color, strokeW, alpha)
+                        }
+                        // t-aq99: the selected edge's midpoint (×) chip — the explicit
+                        // unlink affordance (option a). Clicking it or pressing Del unlinks.
+                        val sel = selectedEdge
+                        if (sel != null) {
+                            val a = cardRects[sel.from]
+                            val b = cardRects[sel.to]
+                            if (a != null && b != null) {
+                                val mid = cubicPoint(edgeCurve(a, b, ARROW_LEN.toPx(), 40.dp.toPx()), 0.5f)
+                                drawCircle(Tk.panel2, CHIP_R.toPx(), mid)
+                                drawCircle(Tk.line, CHIP_R.toPx(), mid, style = Stroke(1.dp.toPx()))
+                                val r = 3.5.dp.toPx()
+                                val w = 1.5.dp.toPx()
+                                drawLine(Tk.blocked, mid + Offset(-r, -r), mid + Offset(r, r), w, cap = StrokeCap.Round)
+                                drawLine(Tk.blocked, mid + Offset(-r, r), mid + Offset(r, -r), w, cap = StrokeCap.Round)
+                            }
+                        }
+                        // t-aq99: the in-flight drag arrow. Drawn in its FINAL
+                        // orientation — for a left-handle (or leftward one-handle) drag the
+                        // head points into the source, since the dragged card is the blocker's
+                        // dependent. Green over a valid target (snapped to its anchor), red
+                        // over an invalid one, accent over empty canvas.
+                        val d = drag
+                        if (d != null) {
+                            val src = cardRects[d.sourceId]
+                            if (src != null) {
+                                val hoverEntry = cardRects.entries.firstOrNull { d.pointer in it.value && it.key != d.sourceId }
+                                val hoverRect = hoverEntry?.value
+                                val valid = hoverEntry != null && hoverEntry.key !in d.invalid
+                                val color = when {
+                                    valid -> Tk.ready
+                                    hoverEntry != null -> Tk.blocked
+                                    else -> Tk.accent
+                                }
+                                val w = 2.4.dp.toPx()
+                                val intoSource = when {
+                                    variant == LinkDirection.TWO_HANDLES -> d.side == HandleSide.LEFT
+                                    hoverRect != null -> hoverRect.centerX < src.centerX
+                                    else -> d.pointer.x < src.centerX
+                                }
+                                if (intoSource) {
+                                    val tail = if (valid && hoverRect != null) Offset(hoverRect.right, hoverRect.centerY) else d.pointer
+                                    drawSCurveEdge(tail.x, tail.y, src.left, src.centerY, color, w, 0.95f)
+                                } else {
+                                    val head = if (valid && hoverRect != null) Offset(hoverRect.left, hoverRect.centerY) else d.pointer
+                                    drawSCurveEdge(src.right, src.centerY, head.x, head.y, color, w, 0.95f)
+                                }
+                            }
                         }
                     }
                     .clickable(interactionSource = canvasClick, indication = null) { onClearSelection() },
@@ -282,6 +460,97 @@ private val GRABBING_CURSOR = PointerIcon(java.awt.Cursor(java.awt.Cursor.MOVE_C
 
 /** Pointer travel before a background press commits to panning instead of a click (§1.4 vs §5). */
 private val PAN_SLOP = 3.dp
+
+// --- t-aq99: drag-to-link machinery -------------------------------------------------
+
+/** Radius of the selected edge's midpoint (×) unlink chip. */
+private val CHIP_R = 9.dp
+
+/** Crosshair over the (+) link handles — a "precision authoring" cue distinct from the card hand. */
+private val HANDLE_CURSOR = PointerIcon(java.awt.Cursor(java.awt.Cursor.CROSSHAIR_CURSOR))
+
+/**
+ * One in-flight link drag: fixed source/side/validity, a moving [pointer] in content
+ * px. Only [pointer] is snapshot state — the draw pass and the drop-target ring read
+ * it, so each move invalidates exactly those.
+ */
+internal class LinkDrag(
+    val sourceId: String,
+    val side: HandleSide,
+    anchor: Offset,
+    val invalid: Set<String>,
+) {
+    var pointer: Offset by mutableStateOf(anchor)
+}
+
+/** [CardRect.contains] with a [m]-px margin — the pan hit-test uses it so the edge-straddling handles stay grabbable. */
+internal fun CardRect.containsInflated(p: Offset, m: Float): Boolean =
+    p.x >= left - m && p.x < left + width + m && p.y >= top - m && p.y < top + height + m
+
+/**
+ * Follow [id] (Initial pass, matching the down we consumed) until release: true if it
+ * stayed a tap (release within [slopPx] total travel), false once it strays or is lost.
+ */
+private suspend fun AwaitPointerEventScope.awaitTapCompletion(id: PointerId, slopPx: Float): Boolean {
+    var total = Offset.Zero
+    while (true) {
+        val event = awaitPointerEvent(PointerEventPass.Initial)
+        val change = event.changes.firstOrNull { it.id == id } ?: return false
+        if (!change.pressed) return total.getDistance() <= slopPx
+        total += change.positionChange()
+        change.consume()
+        if (total.getDistance() > slopPx) return false
+    }
+}
+
+/**
+ * A (+) link handle straddling a card edge: 16dp circle in a 24dp hit box whose centre
+ * sits ON the edge (12dp overflows the card). It shares the card's hover
+ * [MutableInteractionSource] so crossing from card onto handle never drops the hover
+ * that keeps the handle mounted, and adds its own for the hover accent.
+ */
+@Composable
+private fun LinkHandle(
+    side: HandleSide,
+    cardHover: MutableInteractionSource,
+    onStart: (HandleSide) -> Unit,
+    onMove: (Offset) -> Unit,
+    onEnd: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val own = remember { MutableInteractionSource() }
+    val hovered by own.collectIsHoveredAsState()
+    Box(
+        modifier
+            .size(24.dp)
+            .hoverable(cardHover)
+            .hoverable(own)
+            .pointerHoverIcon(HANDLE_CURSOR)
+            .pointerInput(side) {
+                detectDragGestures(
+                    onDragStart = { onStart(side) },
+                    onDrag = { change, delta ->
+                        change.consume()
+                        onMove(delta)
+                    },
+                    onDragEnd = { onEnd() },
+                    onDragCancel = { onCancel() },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(16.dp)) {
+            drawCircle(Tk.panel2)
+            drawCircle(if (hovered) Tk.muted else Tk.line, style = Stroke(1.dp.toPx()))
+            val r = 4.dp.toPx()
+            val w = 1.5.dp.toPx()
+            val glyph = if (hovered) Tk.txt else Tk.muted
+            drawLine(glyph, Offset(center.x - r, center.y), Offset(center.x + r, center.y), w, cap = StrokeCap.Round)
+            drawLine(glyph, Offset(center.x, center.y - r), Offset(center.x, center.y + r), w, cap = StrokeCap.Round)
+        }
+    }
+}
 
 /** Dotted grid: 1dp-radius `dot` circles on a 26dp grid, anchored at `(1,1)` (DESIGN §5). */
 private fun DrawScope.drawDottedGrid() {
@@ -361,8 +630,17 @@ private fun NodeCard(
     selected: Boolean,
     pinned: Boolean,
     dimmed: Boolean,
+    dropTarget: Boolean,
+    variant: LinkDirection,
+    handlesNeedSelection: Boolean,
+    dragActive: Boolean,
+    dragSource: Boolean,
     onSelect: () -> Unit,
     onPinToggle: () -> Unit,
+    onHandleDragStart: (HandleSide) -> Unit,
+    onHandleDrag: (Offset) -> Unit,
+    onHandleDragEnd: () -> Unit,
+    onHandleDragCancel: () -> Unit,
 ) {
     val state = stateOf(task)
     val interaction = remember { MutableInteractionSource() }
@@ -380,48 +658,112 @@ private fun NodeCard(
     val alpha by animateFloatAsState(if (dimmed) 0.28f else 1f, tween(150))
     val shape = RoundedCornerShape(7.dp)
 
+    // t-aq99: when the (+) link handles reveal. Leaning: selected AND hovered
+    // (zero noise otherwise); env-overridable to hover-only for comparison. Closed
+    // cards never author links FROM themselves (they stay valid drop targets); the
+    // drag's source card keeps its handles mounted for the whole gesture — unmounting
+    // the composable mid-drag would cancel the pointer input under the user's hand.
+    val closed = state == TaskState.DONE || state == TaskState.DROPPED
+    val showHandles = !closed &&
+        (dragSource || (!dragActive && hovered && (selected || !handlesNeedSelection)))
+
+    // The card proper is a clipped inner Box so the edge-straddling handles can
+    // overflow the outer (unclipped) one; the Layout measures the outer, whose size
+    // the align+offset handles never extend, so card rects are unchanged.
     Box(
         Modifier
             // The parent Layout fixes this card's (x, y) slot; the hover lift is a pure
             // draw-layer translation (§6, §11) so animating it never re-measures the graph.
             .width(CARD_W.dp)
-            .heightIn(min = CARD_MIN_H.dp)
             .graphicsLayer {
                 this.alpha = alpha
                 translationY = lift.toPx()
-            }
-            .shadow(elevation, shape, clip = false)
-            .clip(shape)
-            .background(Tk.panel)
-            .drawBehind {
-                val bw = 1.dp.toPx()
-                val r = 7.dp.toPx()
-                // 1dp `line` border, inset so its full width sits inside the clip.
-                drawRoundRect(
-                    color = Tk.line,
-                    topLeft = Offset(bw / 2, bw / 2),
-                    size = Size(size.width - bw, size.height - bw),
-                    cornerRadius = CornerRadius(r - bw / 2),
-                    style = Stroke(bw),
-                )
-                // 4dp accent left bar (corners clipped to the card rounding).
-                drawRect(color = state.color, size = Size(4.dp.toPx(), size.height))
-                // Selection ring: 2dp accent outline.
-                if (selected) {
-                    val rw = 2.dp.toPx()
-                    drawRoundRect(
-                        color = Tk.accent,
-                        topLeft = Offset(rw / 2, rw / 2),
-                        size = Size(size.width - rw, size.height - rw),
-                        cornerRadius = CornerRadius(r - rw / 2),
-                        style = Stroke(rw),
-                    )
-                }
-            }
-            .pointerHoverIcon(PointerIcon.Hand)
-            .clickable(interactionSource = interaction, indication = null) { onSelect() }
-            .padding(vertical = 8.dp, horizontal = 10.dp),
+            },
     ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = CARD_MIN_H.dp)
+                .shadow(elevation, shape, clip = false)
+                .clip(shape)
+                .background(Tk.panel)
+                .drawBehind {
+                    val bw = 1.dp.toPx()
+                    val r = 7.dp.toPx()
+                    // 1dp `line` border, inset so its full width sits inside the clip.
+                    drawRoundRect(
+                        color = Tk.line,
+                        topLeft = Offset(bw / 2, bw / 2),
+                        size = Size(size.width - bw, size.height - bw),
+                        cornerRadius = CornerRadius(r - bw / 2),
+                        style = Stroke(bw),
+                    )
+                    // 4dp accent left bar (corners clipped to the card rounding).
+                    drawRect(color = state.color, size = Size(4.dp.toPx(), size.height))
+                    // Selection ring: 2dp accent outline.
+                    if (selected) {
+                        val rw = 2.dp.toPx()
+                        drawRoundRect(
+                            color = Tk.accent,
+                            topLeft = Offset(rw / 2, rw / 2),
+                            size = Size(size.width - rw, size.height - rw),
+                            cornerRadius = CornerRadius(r - rw / 2),
+                            style = Stroke(rw),
+                        )
+                    }
+                    // t-aq99: valid drop target under a link drag — ready-green ring.
+                    if (dropTarget) {
+                        val rw = 2.dp.toPx()
+                        drawRoundRect(
+                            color = Tk.ready,
+                            topLeft = Offset(rw / 2, rw / 2),
+                            size = Size(size.width - rw, size.height - rw),
+                            cornerRadius = CornerRadius(r - rw / 2),
+                            style = Stroke(rw),
+                        )
+                    }
+                }
+                .pointerHoverIcon(PointerIcon.Hand)
+                .clickable(interactionSource = interaction, indication = null) { onSelect() }
+                .padding(vertical = 8.dp, horizontal = 10.dp),
+        ) {
+            CardContent(task, state, pinned, hovered, onPinToggle)
+        }
+        if (showHandles) {
+            if (variant == LinkDirection.TWO_HANDLES) {
+                LinkHandle(
+                    side = HandleSide.LEFT,
+                    cardHover = interaction,
+                    onStart = onHandleDragStart,
+                    onMove = onHandleDrag,
+                    onEnd = onHandleDragEnd,
+                    onCancel = onHandleDragCancel,
+                    modifier = Modifier.align(Alignment.CenterStart).offset(x = (-12).dp),
+                )
+            }
+            LinkHandle(
+                side = HandleSide.RIGHT,
+                cardHover = interaction,
+                onStart = onHandleDragStart,
+                onMove = onHandleDrag,
+                onEnd = onHandleDragEnd,
+                onCancel = onHandleDragCancel,
+                modifier = Modifier.align(Alignment.CenterEnd).offset(x = 12.dp),
+            )
+        }
+    }
+}
+
+/** The card's inner content column, unchanged by the feature — split out so [NodeCard] stays readable. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CardContent(
+    task: TaskDto,
+    state: TaskState,
+    pinned: Boolean,
+    hovered: Boolean,
+    onPinToggle: () -> Unit,
+) {
         Column {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(task.id, fontSize = 11.sp, color = Tk.faint)
@@ -466,7 +808,6 @@ private fun NodeCard(
                 CardTags(task, state)
             }
         }
-    }
 }
 
 /** The card's wrapping metadata row, in the fixed DESIGN §8 tag order. */
