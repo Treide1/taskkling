@@ -242,60 +242,60 @@ private fun App(client: CliClient) {
             // re-clamped against the 60% cap every layout pass — a Modifier-level clamp at measure
             // time, so a window shrink pulls an over-wide panel back within the cap (t-q8i2).
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-              val windowWidth = maxWidth.value
-              val clampedPanelWidth = clampPanelWidth(panelWidth, windowWidth)
-              Row(Modifier.fillMaxSize()) {
-                Box(Modifier.weight(1f).fillMaxHeight()) {
-                    val current = export
-                    when {
-                        error != null && current == null ->
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("error: $error", color = Tk.blocked, fontSize = 13.sp)
-                            }
-                        current == null ->
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("loading…", color = Tk.muted, fontSize = 13.sp)
-                            }
-                        else -> GraphPane(
-                            export = current,
-                            selectedId = selectedId,
-                            // Highlight source: the pin wins; without one, selection highlights.
-                            highlightedId = pinnedId ?: selectedId,
-                            pinnedId = pinnedId,
-                            onSelect = { selectedId = it },
-                            // Pinning selects too (one click = full focus); a second click on
-                            // the pinned card's pin unpins and leaves selection untouched.
-                            onPinToggle = { id ->
-                                if (pinnedId == id) {
-                                    pinnedId = null
-                                } else {
-                                    pinnedId = id
-                                    selectedId = id
+                val windowWidth = maxWidth.value
+                val clampedPanelWidth = clampPanelWidth(panelWidth, windowWidth)
+                Row(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        val current = export
+                        when {
+                            error != null && current == null ->
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("error: $error", color = Tk.blocked, fontSize = 13.sp)
                                 }
-                            },
-                            // Background click clears the selection, never the pin (§5).
-                            onClearSelection = { selectedId = null },
-                            hScroll = hScroll,
-                            vScroll = vScroll,
-                            cardRects = cardRects,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                            current == null ->
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("loading…", color = Tk.muted, fontSize = 13.sp)
+                                }
+                            else -> GraphPane(
+                                export = current,
+                                selectedId = selectedId,
+                                // Highlight source: the pin wins; without one, selection highlights.
+                                highlightedId = pinnedId ?: selectedId,
+                                pinnedId = pinnedId,
+                                onSelect = { selectedId = it },
+                                // Pinning selects too (one click = full focus); a second click on
+                                // the pinned card's pin unpins and leaves selection untouched.
+                                onPinToggle = { id ->
+                                    if (pinnedId == id) {
+                                        pinnedId = null
+                                    } else {
+                                        pinnedId = id
+                                        selectedId = id
+                                    }
+                                },
+                                // Background click clears the selection, never the pin (§5).
+                                onClearSelection = { selectedId = null },
+                                hScroll = hScroll,
+                                vScroll = vScroll,
+                                cardRects = cardRects,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
+                    DetailPane(
+                        task = export?.tasks?.firstOrNull { it.id == selectedId },
+                        pinnedId = pinnedId,
+                        error = error,
+                        busy = busy,
+                        width = clampedPanelWidth.dp,
+                        // Dragging the left-edge handle right (positive delta) shrinks the panel; the
+                        // new raw width is re-clamped against the current window so a drag can't push
+                        // it past the min or the 60% cap.
+                        onWidthDrag = { deltaDp -> panelWidth = clampPanelWidth(panelWidth - deltaDp.value, windowWidth) },
+                        onMutate = ::mutate,
+                        onNavigate = ::navigateTo,
+                    )
                 }
-                DetailPane(
-                    task = export?.tasks?.firstOrNull { it.id == selectedId },
-                    pinnedId = pinnedId,
-                    error = error,
-                    busy = busy,
-                    width = clampedPanelWidth.dp,
-                    // Dragging the left-edge handle right (positive delta) shrinks the panel; the
-                    // new raw width is re-clamped against the current window so a drag can't push
-                    // it past the min or the 60% cap.
-                    onWidthDrag = { deltaDp -> panelWidth = clampPanelWidth(panelWidth - deltaDp.value, windowWidth) },
-                    onMutate = ::mutate,
-                    onNavigate = ::navigateTo,
-                )
-              }
             }
             Legend()
         }
