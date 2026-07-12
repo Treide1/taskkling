@@ -239,8 +239,9 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
     (another selection, or the empty state), a small rounded-rect — filled pin (`accent`) +
     "→" — offers the way back. It sits in the panel's flow rather than floating: on a selection
     it trails the **id header row** (right-aligned beside the id); in the empty state it sits
-    under the hint. Quiet chrome like the panel's other controls — transparent at rest, a
-    `panel2` fill + `line` border lift on hover — so it can never occlude the task title.
+    under the hint. It wears its `panel2` fill + `line` border at rest — a visible button,
+    not bare text — and hover lifts it with a 4dp shadow. In the panel's flow it can never
+    occlude the task title.
     Clicking it re-selects the pinned task and pans its card back into view (the same navigate
     as reference links).
   - **Direct field editing** (principle 8): stored fields are edited in place on the panel;

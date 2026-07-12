@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -567,10 +568,10 @@ private fun RefField(
 /**
  * The pinned-card return control (DESIGN §9): a small rounded-rect reading
  * "filled-pin →" that lives in the panel's flow — trailing the id header row of
- * a selection, or under the empty-state hint. Quiet like the panel's other
- * controls (transparent at rest, a `panel2`/`line` lift on hover) and, unlike
- * the retired floating FAB, it never overlays the task title. Clicking re-selects
- * the pinned task and pans its card back into view.
+ * a selection, or under the empty-state hint. It always wears its `panel2`/`line`
+ * capsule so it reads as a button at rest; hover lifts it with a 4dp shadow.
+ * Unlike the retired floating FAB, it never overlays the task title. Clicking
+ * re-selects the pinned task and pans its card back into view.
  */
 @Composable
 private fun PinReturn(onClick: () -> Unit) {
@@ -581,11 +582,15 @@ private fun PinReturn(onClick: () -> Unit) {
     // reads too small at a third of the height, so it fills ~2/3 of it instead — the
     // height stays what the old text-plus-padding geometry produced, only the padding's
     // share shrank in the icon's favor.
+    // Chrome is always on (user feedback 2026-07-12): transparent-at-rest didn't read as
+    // a button until hovered, so the `panel2`/`line` capsule is the resting state and
+    // hover lifts the button with a 4dp shadow instead.
     Row(
         Modifier
+            .shadow(if (hovered) 4.dp else 0.dp, shape, clip = false)
             .clip(shape)
-            .background(if (hovered) Tk.panel2 else Color.Transparent)
-            .border(1.dp, if (hovered) Tk.line else Color.Transparent, shape)
+            .background(Tk.panel2)
+            .border(1.dp, Tk.line, shape)
             .hoverable(interactions)
             .pointerHoverIcon(PointerIcon.Hand)
             .clickable { onClick() }
