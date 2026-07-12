@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -92,10 +93,10 @@ import kotlin.math.hypot
  * and the caller's pan-to-card (§9) reads a target card's centre from it.
  *
  * t-aq99: dependency edges are authored here too — a drag from a card's
- * (+) handle spawns a live S-curve that drops onto a target card ([onLink]) or
- * evaporates on empty canvas; a tap near an existing edge selects it
- * ([selectedEdge]/[onSelectEdge]) and its midpoint (×) chip or Del unlinks it
- * ([onUnlink]). Interaction semantics per [variant], see [LinkDirection].
+ * chain-link handle spawns a live S-curve that drops onto a target card ([onLink],
+ * or [onUnlink] when that edge already exists — red feedback) or evaporates on
+ * empty canvas; a tap near an existing edge selects it ([selectedEdge]/
+ * [onSelectEdge]) and its midpoint (×) chip or Del unlinks it.
  */
 @Composable
 internal fun GraphPane(
@@ -103,7 +104,6 @@ internal fun GraphPane(
     selectedId: String?,
     highlightedId: String?,
     pinnedId: String?,
-    variant: LinkDirection,
     handlesNeedSelection: Boolean,
     selectedEdge: Edge?,
     onSelect: (String) -> Unit,
@@ -157,45 +157,30 @@ internal fun GraphPane(
     fun startDrag(id: String, side: HandleSide) {
         val rect = cardRects[id] ?: return
         val anchor = Offset(if (side == HandleSide.LEFT) rect.left else rect.right, rect.centerY)
-        // TWO_HANDLES: validity (self / duplicate / would-cycle) computed ONCE at drag
-        // start from the in-memory export; ONE_HANDLE leaves validation to the CLI at drop.
-        val invalid = when (variant) {
-            LinkDirection.TWO_HANDLES -> invalidLinkTargets(export.tasks, id, side)
-            LinkDirection.ONE_HANDLE -> setOf(id)
-        }
-        drag = LinkDrag(id, side, anchor, invalid)
+        // Target classification (unlink / invalid / link) computed ONCE at drag start
+        // from the in-memory export.
+        val targets = classifyLinkTargets(export.tasks, id, side)
+        drag = LinkDrag(id, side, anchor, targets)
     }
 
     fun endDrag() {
         val d = drag ?: return
         drag = null
         val target = cardRects.entries.firstOrNull { d.pointer in it.value }?.key ?: return
-        if (target == d.sourceId || target in d.invalid) return
-        when (variant) {
-            LinkDirection.TWO_HANDLES ->
-                if (d.side == HandleSide.LEFT) onLink(d.sourceId, target) else onLink(target, d.sourceId)
-            LinkDirection.ONE_HANDLE -> {
-                // Direction inferred from where the drop lands relative to the source
-                // (canvas flow is left→right); re-dragging an existing edge toggles it off.
-                val src = cardRects[d.sourceId] ?: return
-                val tgt = cardRects.getValue(target)
-                val (dependent, blocker) =
-                    if (tgt.centerX >= src.centerX) target to d.sourceId else d.sourceId to target
-                if (gl.edges.any { it.from == blocker && it.to == dependent }) {
-                    onUnlink(dependent, blocker)
-                } else {
-                    onLink(dependent, blocker)
-                }
-            }
-        }
+        if (target == d.sourceId || target in d.targets.invalid) return
+        val (dependent, blocker) =
+            if (d.side == HandleSide.LEFT) d.sourceId to target else target to d.sourceId
+        // Same gesture, inverse effect: an existing edge in this direction unlinks.
+        if (target in d.targets.unlink) onUnlink(dependent, blocker) else onLink(dependent, blocker)
     }
 
-    // The valid drop target under the pointer, driving the target's green ring and
-    // the temp arrow's snap. Recomposes per drag move — cheap, everything else skips.
+    // The droppable target under the pointer, driving the target's ring (green = would
+    // link, red = would unlink) and the temp arrow's snap. Recomposes per drag move —
+    // cheap, everything else skips.
     val activeDrag = drag
     val dragHoverTarget = activeDrag?.let { d ->
         cardRects.entries.firstOrNull { d.pointer in it.value }?.key
-            ?.takeIf { it != d.sourceId && it !in d.invalid }
+            ?.takeIf { it != d.sourceId && it !in d.targets.invalid }
     }
 
     // The canvas covers at least the viewport (§5): these pre-scroll constraints are
@@ -306,15 +291,17 @@ internal fun GraphPane(
                             selected = p.task.id == selectedId,
                             pinned = p.task.id == pinnedId,
                             // During a link drag the Star dim yields to validity: only the
-                            // targets the drag must not drop on dim (TWO_HANDLES).
+                            // targets the drag must not drop on dim.
                             dimmed = if (activeDrag != null) {
-                                variant == LinkDirection.TWO_HANDLES &&
-                                    p.task.id in activeDrag.invalid && p.task.id != activeDrag.sourceId
+                                p.task.id in activeDrag.targets.invalid && p.task.id != activeDrag.sourceId
                             } else {
                                 highlightedId != null && p.task.id !in star
                             },
-                            dropTarget = p.task.id == dragHoverTarget,
-                            variant = variant,
+                            dropIndication = when {
+                                p.task.id != dragHoverTarget || activeDrag == null -> null
+                                p.task.id in activeDrag.targets.unlink -> DropIndication.UNLINK
+                                else -> DropIndication.LINK
+                            },
                             handlesNeedSelection = handlesNeedSelection,
                             dragActive = activeDrag != null,
                             dragSource = activeDrag?.sourceId == p.task.id,
@@ -360,33 +347,31 @@ internal fun GraphPane(
                             }
                         }
                         // t-aq99: the in-flight drag arrow. Drawn in its FINAL
-                        // orientation — for a left-handle (or leftward one-handle) drag the
-                        // head points into the source, since the dragged card is the blocker's
-                        // dependent. Green over a valid target (snapped to its anchor), red
-                        // over an invalid one, accent over empty canvas.
+                        // orientation — for a left-handle drag the head points into the
+                        // source, since the dragged card is the blocker's dependent. Green
+                        // over a would-link target, red over a would-UNLINK one (both
+                        // snapped to the target's anchor), muted over an inert invalid
+                        // card, accent over empty canvas.
                         val d = drag
                         if (d != null) {
                             val src = cardRects[d.sourceId]
                             if (src != null) {
                                 val hoverEntry = cardRects.entries.firstOrNull { d.pointer in it.value && it.key != d.sourceId }
                                 val hoverRect = hoverEntry?.value
-                                val valid = hoverEntry != null && hoverEntry.key !in d.invalid
+                                val hoverId = hoverEntry?.key
+                                val droppable = hoverId != null && hoverId !in d.targets.invalid
                                 val color = when {
-                                    valid -> Tk.ready
-                                    hoverEntry != null -> Tk.blocked
-                                    else -> Tk.accent
+                                    hoverId == null -> Tk.accent
+                                    !droppable -> Tk.muted
+                                    hoverId in d.targets.unlink -> Tk.blocked
+                                    else -> Tk.ready
                                 }
                                 val w = 2.4.dp.toPx()
-                                val intoSource = when {
-                                    variant == LinkDirection.TWO_HANDLES -> d.side == HandleSide.LEFT
-                                    hoverRect != null -> hoverRect.centerX < src.centerX
-                                    else -> d.pointer.x < src.centerX
-                                }
-                                if (intoSource) {
-                                    val tail = if (valid && hoverRect != null) Offset(hoverRect.right, hoverRect.centerY) else d.pointer
+                                if (d.side == HandleSide.LEFT) {
+                                    val tail = if (droppable && hoverRect != null) Offset(hoverRect.right, hoverRect.centerY) else d.pointer
                                     drawSCurveEdge(tail.x, tail.y, src.left, src.centerY, color, w, 0.95f)
                                 } else {
-                                    val head = if (valid && hoverRect != null) Offset(hoverRect.left, hoverRect.centerY) else d.pointer
+                                    val head = if (droppable && hoverRect != null) Offset(hoverRect.left, hoverRect.centerY) else d.pointer
                                     drawSCurveEdge(src.right, src.centerY, head.x, head.y, color, w, 0.95f)
                                 }
                             }
@@ -469,16 +454,19 @@ private val CHIP_R = 9.dp
 /** Crosshair over the (+) link handles — a "precision authoring" cue distinct from the card hand. */
 private val HANDLE_CURSOR = PointerIcon(java.awt.Cursor(java.awt.Cursor.CROSSHAIR_CURSOR))
 
+/** What dropping on a hovered card would do — drives the ring colour (green links, red unlinks). */
+internal enum class DropIndication { LINK, UNLINK }
+
 /**
- * One in-flight link drag: fixed source/side/validity, a moving [pointer] in content
- * px. Only [pointer] is snapshot state — the draw pass and the drop-target ring read
- * it, so each move invalidates exactly those.
+ * One in-flight link drag: fixed source/side/[targets] classification, a moving
+ * [pointer] in content px. Only [pointer] is snapshot state — the draw pass and the
+ * drop-target ring read it, so each move invalidates exactly those.
  */
 internal class LinkDrag(
     val sourceId: String,
     val side: HandleSide,
     anchor: Offset,
-    val invalid: Set<String>,
+    val targets: DragTargets,
 ) {
     var pointer: Offset by mutableStateOf(anchor)
 }
@@ -504,10 +492,12 @@ private suspend fun AwaitPointerEventScope.awaitTapCompletion(id: PointerId, slo
 }
 
 /**
- * A (+) link handle straddling a card edge: 16dp circle in a 24dp hit box whose centre
- * sits ON the edge (12dp overflows the card). It shares the card's hover
- * [MutableInteractionSource] so crossing from card onto handle never drops the hover
- * that keeps the handle mounted, and adds its own for the hover accent.
+ * A chain-link handle straddling a card edge: 16dp circle in a 24dp hit box whose
+ * centre sits ON the edge (12dp overflows the card). The glyph is a link — not a
+ * (+) — because the drag authors link AND unlink with equal weight. It shares the
+ * card's hover [MutableInteractionSource] so crossing from card onto handle never
+ * drops the hover that keeps the handle mounted, and adds its own for the hover
+ * accent.
  */
 @Composable
 private fun LinkHandle(
@@ -543,11 +533,29 @@ private fun LinkHandle(
         Canvas(Modifier.size(16.dp)) {
             drawCircle(Tk.panel2)
             drawCircle(if (hovered) Tk.muted else Tk.line, style = Stroke(1.dp.toPx()))
-            val r = 4.dp.toPx()
-            val w = 1.5.dp.toPx()
             val glyph = if (hovered) Tk.txt else Tk.muted
-            drawLine(glyph, Offset(center.x - r, center.y), Offset(center.x + r, center.y), w, cap = StrokeCap.Round)
-            drawLine(glyph, Offset(center.x, center.y - r), Offset(center.x, center.y + r), w, cap = StrokeCap.Round)
+            // Chain-link glyph at 45°: two overlapping stadium outlines.
+            rotate(45f) {
+                val w = 6.dp.toPx()
+                val h = 3.6.dp.toPx()
+                val overlap = 1.dp.toPx()
+                val sw = 1.2.dp.toPx()
+                val cr = CornerRadius(h / 2)
+                drawRoundRect(
+                    color = glyph,
+                    topLeft = Offset(center.x - w + overlap, center.y - h / 2),
+                    size = Size(w, h),
+                    cornerRadius = cr,
+                    style = Stroke(sw),
+                )
+                drawRoundRect(
+                    color = glyph,
+                    topLeft = Offset(center.x - overlap, center.y - h / 2),
+                    size = Size(w, h),
+                    cornerRadius = cr,
+                    style = Stroke(sw),
+                )
+            }
         }
     }
 }
@@ -630,8 +638,7 @@ private fun NodeCard(
     selected: Boolean,
     pinned: Boolean,
     dimmed: Boolean,
-    dropTarget: Boolean,
-    variant: LinkDirection,
+    dropIndication: DropIndication?,
     handlesNeedSelection: Boolean,
     dragActive: Boolean,
     dragSource: Boolean,
@@ -658,14 +665,13 @@ private fun NodeCard(
     val alpha by animateFloatAsState(if (dimmed) 0.28f else 1f, tween(150))
     val shape = RoundedCornerShape(7.dp)
 
-    // t-aq99: when the (+) link handles reveal. Leaning: selected AND hovered
-    // (zero noise otherwise); env-overridable to hover-only for comparison. Closed
-    // cards never author links FROM themselves (they stay valid drop targets); the
-    // drag's source card keeps its handles mounted for the whole gesture — unmounting
-    // the composable mid-drag would cancel the pointer input under the user's hand.
-    val closed = state == TaskState.DONE || state == TaskState.DROPPED
-    val showHandles = !closed &&
-        (dragSource || (!dragActive && hovered && (selected || !handlesNeedSelection)))
+    // t-aq99: when the chain-link handles reveal. Leaning: selected AND
+    // hovered (zero noise otherwise); env-overridable to hover-only for comparison.
+    // Every status gets handles — linking closed tasks is legal and organizationally
+    // useful. The drag's source card keeps its handles mounted for the whole gesture —
+    // unmounting the composable mid-drag would cancel the pointer input under the
+    // user's hand.
+    val showHandles = dragSource || (!dragActive && hovered && (selected || !handlesNeedSelection))
 
     // The card proper is a clipped inner Box so the edge-straddling handles can
     // overflow the outer (unclipped) one; the Layout measures the outer, whose size
@@ -711,11 +717,12 @@ private fun NodeCard(
                             style = Stroke(rw),
                         )
                     }
-                    // t-aq99: valid drop target under a link drag — ready-green ring.
-                    if (dropTarget) {
+                    // t-aq99: droppable target under a link drag — green ring for
+                    // a would-link drop, red for a would-unlink one.
+                    if (dropIndication != null) {
                         val rw = 2.dp.toPx()
                         drawRoundRect(
-                            color = Tk.ready,
+                            color = if (dropIndication == DropIndication.UNLINK) Tk.blocked else Tk.ready,
                             topLeft = Offset(rw / 2, rw / 2),
                             size = Size(size.width - rw, size.height - rw),
                             cornerRadius = CornerRadius(r - rw / 2),
@@ -730,17 +737,15 @@ private fun NodeCard(
             CardContent(task, state, pinned, hovered, onPinToggle)
         }
         if (showHandles) {
-            if (variant == LinkDirection.TWO_HANDLES) {
-                LinkHandle(
-                    side = HandleSide.LEFT,
-                    cardHover = interaction,
-                    onStart = onHandleDragStart,
-                    onMove = onHandleDrag,
-                    onEnd = onHandleDragEnd,
-                    onCancel = onHandleDragCancel,
-                    modifier = Modifier.align(Alignment.CenterStart).offset(x = (-12).dp),
-                )
-            }
+            LinkHandle(
+                side = HandleSide.LEFT,
+                cardHover = interaction,
+                onStart = onHandleDragStart,
+                onMove = onHandleDrag,
+                onEnd = onHandleDragEnd,
+                onCancel = onHandleDragCancel,
+                modifier = Modifier.align(Alignment.CenterStart).offset(x = (-12).dp),
+            )
             LinkHandle(
                 side = HandleSide.RIGHT,
                 cardHover = interaction,

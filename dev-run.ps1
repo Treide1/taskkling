@@ -2,13 +2,10 @@
 # .taskkling workspace. Refuses to run against the real dogfood store - the dev
 # mutates depends edges, so it must only ever see a demo workspace.
 #
-# Usage:  .\dev-run.ps1 [-Variant a|b] [-Handles selected-hover|hover] [-SkipBuild]
-#   -Variant   overrides the branch default (a = two handles + live validity,
-#              b = one handle + drop-side direction + re-drag toggle)
+# Usage:  .\dev-run.ps1 [-Handles selected-hover|hover] [-SkipBuild]
 #   -Handles   handle reveal rule (default selected-hover = the task's leaning)
 #   -SkipBuild launch the last-built jar without rebuilding
 param(
-    [ValidateSet("a", "b")] [string]$Variant,
     [ValidateSet("selected-hover", "hover")] [string]$Handles,
     [switch]$SkipBuild
 )
@@ -47,9 +44,8 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { Write-Error "uberjar build failed" }
 }
 
-if ($Variant) { $env:TASKKLING_LINK_DEV = $Variant } else { Remove-Item Env:TASKKLING_LINK_DEV -ErrorAction SilentlyContinue }
 if ($Handles) { $env:TASKKLING_LINK_HANDLES = $Handles } else { Remove-Item Env:TASKKLING_LINK_HANDLES -ErrorAction SilentlyContinue }
 
 $jar = Join-Path $root "ui\build\uberjars\taskkling-ui-windows-x64.jar"
-Write-Host "launching dev (variant=$(if ($Variant) { $Variant } else { 'branch default' }), binary=$env:TASKKLING_BINARY)"
+Write-Host "launching dev (binary=$env:TASKKLING_BINARY)"
 Start-Process -FilePath "$env:JAVA_HOME\bin\javaw.exe" -ArgumentList "-jar", "`"$jar`"" -WorkingDirectory $root

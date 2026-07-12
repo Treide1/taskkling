@@ -146,10 +146,9 @@ private fun App(client: CliClient) {
     var busy by remember { mutableStateOf(false) }
     // The open settings dialog (archive/prune), session-only like the pin.
     var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
-    // t-aq99: interaction variant (branch default, env-overridable), the toast
-    // queue, the edge selected for unlinking, and the one-shot undo memory — all
-    // session-only UI state; the CLI stays the single write path.
-    val variant = remember { resolveLinkDirection() }
+    // t-aq99: the handle-reveal rule (env-overridable), the toast queue, the
+    // edge selected for unlinking, and the one-shot undo memory — all session-only UI
+    // state; the CLI stays the single write path.
     val handlesNeedSelection = remember { resolveHandlesNeedSelection() }
     val toasts = remember { ToastState() }
     var selectedEdge by remember { mutableStateOf<Edge?>(null) }
@@ -361,7 +360,6 @@ private fun App(client: CliClient) {
                                 // Highlight source: the pin wins; without one, selection highlights.
                                 highlightedId = pinnedId ?: selectedId,
                                 pinnedId = pinnedId,
-                                variant = variant,
                                 handlesNeedSelection = handlesNeedSelection,
                                 selectedEdge = selectedEdge,
                                 onSelectEdge = { selectedEdge = it },
@@ -410,8 +408,7 @@ private fun App(client: CliClient) {
             }
             Legend(
                 hint = buildString {
-                    append("")
-                    append(if (variant == LinkDirection.TWO_HANDLES) "A · two handles · live validity" else "B · one handle · drop-side direction")
+                    append("two handles · live validity · drag links + unlinks")
                     if (!handlesNeedSelection) append(" · hover handles")
                 },
             )
