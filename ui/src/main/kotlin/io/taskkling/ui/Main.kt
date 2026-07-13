@@ -258,17 +258,24 @@ private fun App(client: CliClient) {
 
     // t-aq99: one link/unlink edge mutation. Result lands as a toast either
     // way — success carries the Ctrl+Z hint and arms the one-shot undo; failure
-    // carries the CLI's own reason (cycle, unknown id, …). Duplicate links are
-    // pre-checked here because the CLI treats them as a silent no-op (`distinct()`),
-    // which would otherwise toast a "linked" that changed nothing.
+    // carries the CLI's own reason (cycle, unknown id, …). Both no-op directions are
+    // pre-checked here against the LIVE export because the CLI treats them as silent
+    // exit-0 no-ops (link `distinct()`s, unlink filters a missing edge away): without
+    // these, a re-link would toast "already linked" only by luck and a re-unlink would
+    // falsely toast success. The edge is present iff `dependent` lists `blocker`.
     fun performEdgeOp(dependent: String, blocker: String, link: Boolean, isUndo: Boolean = false) {
         if (busy) {
             toasts.show("busy — try again in a moment", ToastKind.INFO)
             return
         }
         val current = export ?: return
-        if (link && current.tasks.firstOrNull { it.id == dependent }?.depends?.contains(blocker) == true) {
+        val edgeExists = current.tasks.firstOrNull { it.id == dependent }?.depends?.contains(blocker) == true
+        if (link && edgeExists) {
             toasts.show("already linked: $blocker → $dependent", ToastKind.INFO)
+            return
+        }
+        if (!link && !edgeExists) {
+            toasts.show("not linked: $blocker → $dependent", ToastKind.INFO)
             return
         }
         val verb = if (link) "link" else "unlink"

@@ -39,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -515,6 +516,15 @@ private fun LinkHandle(
 ) {
     val own = remember { MutableInteractionSource() }
     val hovered by own.collectIsHoveredAsState()
+    // `pointerInput(side)` restarts its gesture block only when `side` changes — which
+    // it never does — so the callbacks it captures would freeze at first composition,
+    // and every drag would classify link-vs-unlink against the app-start graph (the
+    // "non-update after link changes" bug). Route each call through a live handle so
+    // the gesture always invokes the latest lambda (closing over the latest export).
+    val onStartLive by rememberUpdatedState(onStart)
+    val onMoveLive by rememberUpdatedState(onMove)
+    val onEndLive by rememberUpdatedState(onEnd)
+    val onCancelLive by rememberUpdatedState(onCancel)
     Box(
         modifier
             .size(24.dp)
@@ -523,13 +533,13 @@ private fun LinkHandle(
             .pointerHoverIcon(HANDLE_CURSOR)
             .pointerInput(side) {
                 detectDragGestures(
-                    onDragStart = { onStart(side) },
+                    onDragStart = { onStartLive(side) },
                     onDrag = { change, delta ->
                         change.consume()
-                        onMove(delta)
+                        onMoveLive(delta)
                     },
-                    onDragEnd = { onEnd() },
-                    onDragCancel = { onCancel() },
+                    onDragEnd = { onEndLive() },
+                    onDragCancel = { onCancelLive() },
                 )
             },
         contentAlignment = Alignment.Center,
