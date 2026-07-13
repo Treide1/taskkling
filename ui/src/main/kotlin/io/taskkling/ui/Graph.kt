@@ -63,6 +63,7 @@ import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.text.font.FontWeight
@@ -92,11 +93,11 @@ import kotlin.math.hypot
  * [cardRects] is hoisted for the same reason: the measure pass below fills it,
  * and the caller's pan-to-card (§9) reads a target card's centre from it.
  *
- * t-aq99: dependency edges are authored here too — a drag from a card's
- * chain-link handle spawns a live S-curve that drops onto a target card ([onLink],
- * or [onUnlink] when that edge already exists — red feedback) or evaporates on
- * empty canvas; a tap near an existing edge selects it ([selectedEdge]/
- * [onSelectEdge]) and its midpoint (×) chip or Del unlinks it.
+ * t-aq99: dependency edges are authored here too — a card in link mode
+ * ([linkModeId]) shows → edge handles; a drag from one spawns a live S-curve that
+ * drops onto a target card ([onLink], or [onUnlink] when that edge already exists —
+ * red feedback) or evaporates on empty canvas; a tap near an existing edge selects it
+ * ([selectedEdge]/[onSelectEdge]) and its midpoint (×) chip or Del unlinks it.
  */
 @Composable
 internal fun GraphPane(
@@ -104,10 +105,11 @@ internal fun GraphPane(
     selectedId: String?,
     highlightedId: String?,
     pinnedId: String?,
-    handlesNeedSelection: Boolean,
+    linkModeId: String?,
     selectedEdge: Edge?,
     onSelect: (String) -> Unit,
     onPinToggle: (String) -> Unit,
+    onLinkModeToggle: (String) -> Unit,
     onClearSelection: () -> Unit,
     onSelectEdge: (Edge) -> Unit,
     onLink: (dependent: String, blocker: String) -> Unit,
@@ -302,11 +304,12 @@ internal fun GraphPane(
                                 p.task.id in activeDrag.targets.unlink -> DropIndication.UNLINK
                                 else -> DropIndication.LINK
                             },
-                            handlesNeedSelection = handlesNeedSelection,
+                            linkMode = p.task.id == linkModeId,
                             dragActive = activeDrag != null,
                             dragSource = activeDrag?.sourceId == p.task.id,
                             onSelect = { onSelect(p.task.id) },
                             onPinToggle = { onPinToggle(p.task.id) },
+                            onLinkModeToggle = { onLinkModeToggle(p.task.id) },
                             onHandleDragStart = { side -> startDrag(p.task.id, side) },
                             onHandleDrag = { delta -> drag?.let { it.pointer += delta } },
                             onHandleDragEnd = { endDrag() },
@@ -451,7 +454,7 @@ private val PAN_SLOP = 3.dp
 /** Radius of the selected edge's midpoint (×) unlink chip. */
 private val CHIP_R = 9.dp
 
-/** Crosshair over the (+) link handles — a "precision authoring" cue distinct from the card hand. */
+/** Crosshair over the link handles — a "precision authoring" cue distinct from the card hand. */
 private val HANDLE_CURSOR = PointerIcon(java.awt.Cursor(java.awt.Cursor.CROSSHAIR_CURSOR))
 
 /** What dropping on a hovered card would do — drives the ring colour (green links, red unlinks). */
@@ -492,12 +495,13 @@ private suspend fun AwaitPointerEventScope.awaitTapCompletion(id: PointerId, slo
 }
 
 /**
- * A chain-link handle straddling a card edge: 16dp circle in a 24dp hit box whose
- * centre sits ON the edge (12dp overflows the card). The glyph is a link — not a
- * (+) — because the drag authors link AND unlink with equal weight. It shares the
- * card's hover [MutableInteractionSource] so crossing from card onto handle never
- * drops the hover that keeps the handle mounted, and adds its own for the hover
- * accent.
+ * A link handle straddling a card edge: 16dp circle in a 24dp hit box whose centre
+ * sits ON the edge (12dp overflows the card). Shown only while the card is in link
+ * mode (its toggle is on). The glyph is a rightward → on BOTH edges: with the canvas
+ * flowing left→right, an arrow leaving the left edge reads as an incoming dependency
+ * (this task is blocked by …) and one leaving the right edge as an outgoing one (this
+ * task blocks …). It shares the card's hover [MutableInteractionSource] so the card's
+ * lift persists while the pointer is on the handle, and adds its own for the accent.
  */
 @Composable
 private fun LinkHandle(
@@ -531,31 +535,18 @@ private fun LinkHandle(
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.size(16.dp)) {
-            drawCircle(Tk.panel2)
-            drawCircle(if (hovered) Tk.muted else Tk.line, style = Stroke(1.dp.toPx()))
-            val glyph = if (hovered) Tk.txt else Tk.muted
-            // Chain-link glyph at 45°: two overlapping stadium outlines.
-            rotate(45f) {
-                val w = 6.dp.toPx()
-                val h = 3.6.dp.toPx()
-                val overlap = 1.dp.toPx()
-                val sw = 1.2.dp.toPx()
-                val cr = CornerRadius(h / 2)
-                drawRoundRect(
-                    color = glyph,
-                    topLeft = Offset(center.x - w + overlap, center.y - h / 2),
-                    size = Size(w, h),
-                    cornerRadius = cr,
-                    style = Stroke(sw),
-                )
-                drawRoundRect(
-                    color = glyph,
-                    topLeft = Offset(center.x - overlap, center.y - h / 2),
-                    size = Size(w, h),
-                    cornerRadius = cr,
-                    style = Stroke(sw),
-                )
-            }
+            // On-state chrome: an accent-tinted disc so a card in link mode reads as
+            // "armed"; the arrow sits in the card surface colour over it.
+            drawCircle(if (hovered) Tk.accent else Tk.accent.copy(alpha = 0.85f))
+            val glyph = Tk.bg
+            val half = 3.8.dp.toPx()
+            val sw = 1.5.dp.toPx()
+            val x0 = center.x - half
+            val x1 = center.x + half
+            drawLine(glyph, Offset(x0, center.y), Offset(x1, center.y), sw, cap = StrokeCap.Round)
+            val head = 2.6.dp.toPx()
+            drawLine(glyph, Offset(x1, center.y), Offset(x1 - head, center.y - head), sw, cap = StrokeCap.Round)
+            drawLine(glyph, Offset(x1, center.y), Offset(x1 - head, center.y + head), sw, cap = StrokeCap.Round)
         }
     }
 }
@@ -639,11 +630,12 @@ private fun NodeCard(
     pinned: Boolean,
     dimmed: Boolean,
     dropIndication: DropIndication?,
-    handlesNeedSelection: Boolean,
+    linkMode: Boolean,
     dragActive: Boolean,
     dragSource: Boolean,
     onSelect: () -> Unit,
     onPinToggle: () -> Unit,
+    onLinkModeToggle: () -> Unit,
     onHandleDragStart: (HandleSide) -> Unit,
     onHandleDrag: (Offset) -> Unit,
     onHandleDragEnd: () -> Unit,
@@ -665,13 +657,11 @@ private fun NodeCard(
     val alpha by animateFloatAsState(if (dimmed) 0.28f else 1f, tween(150))
     val shape = RoundedCornerShape(7.dp)
 
-    // t-aq99: when the chain-link handles reveal. Leaning: selected AND
-    // hovered (zero noise otherwise); env-overridable to hover-only for comparison.
-    // Every status gets handles — linking closed tasks is legal and organizationally
-    // useful. The drag's source card keeps its handles mounted for the whole gesture —
-    // unmounting the composable mid-drag would cancel the pointer input under the
-    // user's hand.
-    val showHandles = dragSource || (!dragActive && hovered && (selected || !handlesNeedSelection))
+    // t-aq99: the → edge handles reveal only when this card is in link mode
+    // (its id-row toggle is on) — no hover flicker. `dragSource` keeps them mounted
+    // for the whole gesture even if the toggle were flipped mid-drag: unmounting the
+    // composable would cancel the pointer input under the user's hand.
+    val showHandles = linkMode || dragSource
 
     // The card proper is a clipped inner Box so the edge-straddling handles can
     // overflow the outer (unclipped) one; the Layout measures the outer, whose size
@@ -734,7 +724,7 @@ private fun NodeCard(
                 .clickable(interactionSource = interaction, indication = null) { onSelect() }
                 .padding(vertical = 8.dp, horizontal = 10.dp),
         ) {
-            CardContent(task, state, pinned, hovered, onPinToggle)
+            CardContent(task, state, pinned, linkMode, hovered, onPinToggle, onLinkModeToggle)
         }
         if (showHandles) {
             LinkHandle(
@@ -759,42 +749,46 @@ private fun NodeCard(
     }
 }
 
-/** The card's inner content column, unchanged by the feature — split out so [NodeCard] stays readable. */
+/** The card's inner content column. The id row carries the link-mode + pin toggles (t-aq99). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CardContent(
     task: TaskDto,
     state: TaskState,
     pinned: Boolean,
+    linkMode: Boolean,
     hovered: Boolean,
     onPinToggle: () -> Unit,
+    onLinkModeToggle: () -> Unit,
 ) {
         Column {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(task.id, fontSize = 11.sp, color = Tk.faint)
                 Spacer(Modifier.weight(1f))
-                // Fixed 20dp slot so the hover reveal never re-measures the card (§6,
-                // §11): filled pin always visible while pinned, outline pin on hover
-                // elsewhere. The clickable spans a 36dp hit target overflowing the slot
-                // (requiredSize; pointer hits aren't clipped to parent bounds) with the
-                // glyph drawn at 20dp inside, and consumes the press so toggling never
-                // falls through to the card's select.
-                Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
-                    if (pinned || hovered) {
-                        Icon(
-                            imageVector = if (pinned) PinIcons.Filled else PinIcons.Outline,
-                            contentDescription = if (pinned) "unpin" else "pin",
-                            tint = if (pinned) Tk.accent else Tk.muted,
-                            modifier = Modifier
-                                .requiredSize(36.dp)
-                                .pointerHoverIcon(PointerIcon.Hand)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                ) { onPinToggle() }
-                                .padding(8.dp),
-                        )
-                    }
+                // Two id-row toggles in a fixed order — link, then pin — each in a
+                // reserved 20dp slot so the hover reveal never re-measures the card (§6,
+                // §11). An `active` toggle stays visible; an inactive one reveals on
+                // hover. The 6dp gap keeps their overflowing hit targets from colliding.
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CardToggle(
+                        visible = linkMode || hovered,
+                        active = linkMode,
+                        outline = UiIcons.Link,
+                        filled = UiIcons.Link,
+                        description = if (linkMode) "exit link mode" else "link mode",
+                        onClick = onLinkModeToggle,
+                    )
+                    CardToggle(
+                        visible = pinned || hovered,
+                        active = pinned,
+                        outline = PinIcons.Outline,
+                        filled = PinIcons.Filled,
+                        description = if (pinned) "unpin" else "pin",
+                        onClick = onPinToggle,
+                    )
                 }
             }
             Spacer(Modifier.height(2.dp))
@@ -813,6 +807,41 @@ private fun CardContent(
                 CardTags(task, state)
             }
         }
+}
+
+/**
+ * One id-row toggle (pin or link-mode, t-aq99): [filled]+`accent` while
+ * [active], [outline]+`muted` when merely [visible] on hover, nothing otherwise. The
+ * clickable spans a 26dp hit target that overflows the reserved 20dp slot (pointer
+ * hits aren't clipped to parent bounds) with the glyph drawn at 16dp inside, and
+ * consumes the press so a toggle never falls through to the card's select.
+ */
+@Composable
+private fun CardToggle(
+    visible: Boolean,
+    active: Boolean,
+    outline: ImageVector,
+    filled: ImageVector,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+        if (visible) {
+            Icon(
+                imageVector = if (active) filled else outline,
+                contentDescription = description,
+                tint = if (active) Tk.accent else Tk.muted,
+                modifier = Modifier
+                    .requiredSize(26.dp)
+                    .pointerHoverIcon(PointerIcon.Hand)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onClick() }
+                    .padding(5.dp),
+            )
+        }
+    }
 }
 
 /** The card's wrapping metadata row, in the fixed DESIGN §8 tag order. */

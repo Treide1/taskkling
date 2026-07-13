@@ -10,22 +10,17 @@ import io.taskkling.contract.TaskDto
  * legitimately become the BLOCKER of a further-left one when no cycle forms (layout
  * position is an effect of the edges, never a constraint on them).
  *
- * Current semantics: a chain-link handle straddles each card edge — left = "this task
- * is blocked by (drag to the blocker)", right = "this task blocks (drag to the
- * dependent)". One gesture authors BOTH directions of the relationship: dropping on
- * an unlinked card links (green feedback), dropping on an already-linked card unlinks
- * (red feedback) — which is why the glyph is a link, not a (+). Only genuinely
- * impossible targets (self, would-close-a-cycle) dim. Cards of EVERY status carry
- * handles: linking closed tasks is legal and useful for organizing.
- *
- * Env override: TASKKLING_LINK_HANDLES = "selected-hover" (leaning: handles only on
- * the selected card while hovered) | "hover" (handles on any hovered card).
+ * Reveal model (round 3, 2026-07-13): the frequent hover/unhover flicker of the
+ * edge handles was distracting, so they no longer track hover. Instead each card's
+ * id row carries a link-mode TOGGLE (a chain glyph beside the pin, same gentle
+ * reveal). Toggling it on shows that card's two edge handles — drawn as → arrows so
+ * ingoing (left) vs outgoing (right) reads at a glance — and they stay put until the
+ * toggle is turned off. A handle drag still authors BOTH directions: dropping on an
+ * unlinked card links (green), on an already-linked card unlinks (red); impossible
+ * targets (self, would-cycle) are muted. Cards of EVERY status can author links —
+ * linking closed tasks is legal and useful for organizing.
  */
 public enum class HandleSide { LEFT, RIGHT }
-
-/** True = handles need the card selected AND hovered (the task's leaning); false = hover alone reveals them. */
-public fun resolveHandlesNeedSelection(): Boolean =
-    System.getenv("TASKKLING_LINK_HANDLES")?.lowercase() != "hover"
 
 /** The last executed link/unlink, kept for the one-shot Ctrl+Z (inverse command, no general stack). */
 public data class LinkOp(val dependent: String, val blocker: String, val wasLink: Boolean)

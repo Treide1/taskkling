@@ -146,10 +146,10 @@ private fun App(client: CliClient) {
     var busy by remember { mutableStateOf(false) }
     // The open settings dialog (archive/prune), session-only like the pin.
     var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
-    // t-aq99: the handle-reveal rule (env-overridable), the toast queue, the
-    // edge selected for unlinking, and the one-shot undo memory — all session-only UI
-    // state; the CLI stays the single write path.
-    val handlesNeedSelection = remember { resolveHandlesNeedSelection() }
+    // t-aq99: the card currently in link mode (its → handles shown), the toast
+    // queue, the edge selected for unlinking, and the one-shot undo memory — all
+    // session-only UI state, like the pin; the CLI stays the single write path.
+    var linkModeId by remember { mutableStateOf<String?>(null) }
     val toasts = remember { ToastState() }
     var selectedEdge by remember { mutableStateOf<Edge?>(null) }
     var lastOp by remember { mutableStateOf<LinkOp?>(null) }
@@ -191,6 +191,7 @@ private fun App(client: CliClient) {
         error = null
         if (selectedId != null && next.tasks.none { it.id == selectedId }) selectedId = null
         if (pinnedId != null && next.tasks.none { it.id == pinnedId }) pinnedId = null
+        if (linkModeId != null && next.tasks.none { it.id == linkModeId }) linkModeId = null
         // A selected edge that no longer exists (unlinked, task gone) drops its selection.
         selectedEdge?.let { e ->
             val dependent = next.tasks.firstOrNull { it.id == e.to }
@@ -360,11 +361,14 @@ private fun App(client: CliClient) {
                                 // Highlight source: the pin wins; without one, selection highlights.
                                 highlightedId = pinnedId ?: selectedId,
                                 pinnedId = pinnedId,
-                                handlesNeedSelection = handlesNeedSelection,
+                                linkModeId = linkModeId,
                                 selectedEdge = selectedEdge,
                                 onSelectEdge = { selectedEdge = it },
                                 onLink = { dependent, blocker -> performEdgeOp(dependent, blocker, link = true) },
                                 onUnlink = { dependent, blocker -> performEdgeOp(dependent, blocker, link = false) },
+                                // Link mode is single, session-only like the pin: toggling one card off,
+                                // or transferring it to another. Handles show on whichever card holds it.
+                                onLinkModeToggle = { id -> linkModeId = if (linkModeId == id) null else id },
                                 onSelect = {
                                     selectedId = it
                                     selectedEdge = null
@@ -406,12 +410,7 @@ private fun App(client: CliClient) {
                     )
                 }
             }
-            Legend(
-                hint = buildString {
-                    append("two handles · live validity · drag links + unlinks")
-                    if (!handlesNeedSelection) append(" · hover handles")
-                },
-            )
+            Legend(hint = "link toggle (id row) → edge handles · drag links + unlinks")
         }
 
         // t-aq99: toasts overlay everything, bottom-centre, above the legend.

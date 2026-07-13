@@ -43,6 +43,56 @@ internal object UiIcons {
         }.build()
     }
 
+    /**
+     * Chain-link glyph (t-aq99: the card's link-mode toggle in the id row).
+     * One silhouette shown at two tints — `muted` off, `accent` (the fill colour)
+     * on — so a single glyph carries the toggle the way the pin's shape swap does.
+     */
+    val Link: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "link",
+            defaultWidth = 16.dp,
+            defaultHeight = 16.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.White), pathFillType = PathFillType.NonZero) {
+                // Left link eye.
+                moveTo(3.9f, 12f)
+                curveToRelative(0f, -1.71f, 1.39f, -3.1f, 3.1f, -3.1f)
+                horizontalLineToRelative(4f)
+                verticalLineTo(7f)
+                horizontalLineTo(7f)
+                curveToRelative(-2.76f, 0f, -5f, 2.24f, -5f, 5f)
+                reflectiveCurveToRelative(2.24f, 5f, 5f, 5f)
+                horizontalLineToRelative(4f)
+                verticalLineToRelative(-1.9f)
+                horizontalLineTo(7f)
+                curveToRelative(-1.71f, 0f, -3.1f, -1.39f, -3.1f, -3.1f)
+                close()
+                // Connecting bar.
+                moveTo(8f, 13f)
+                horizontalLineToRelative(8f)
+                verticalLineToRelative(-2f)
+                horizontalLineTo(8f)
+                close()
+                // Right link eye.
+                moveTo(17f, 7f)
+                horizontalLineToRelative(-4f)
+                verticalLineToRelative(1.9f)
+                horizontalLineToRelative(4f)
+                curveToRelative(1.71f, 0f, 3.1f, 1.39f, 3.1f, 3.1f)
+                reflectiveCurveToRelative(-1.39f, 3.1f, -3.1f, 3.1f)
+                horizontalLineToRelative(-4f)
+                verticalLineTo(17f)
+                horizontalLineToRelative(4f)
+                curveToRelative(2.76f, 0f, 5f, -2.24f, 5f, -5f)
+                reflectiveCurveToRelative(-2.24f, -5f, -5f, -5f)
+                close()
+            }
+        }.build()
+    }
+
     /** Overlapping-sheets copy glyph (detail-panel id hover affordance, DESIGN §9). */
     val Copy: ImageVector by lazy {
         ImageVector.Builder(
