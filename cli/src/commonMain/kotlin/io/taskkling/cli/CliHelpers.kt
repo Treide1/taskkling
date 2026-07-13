@@ -138,6 +138,9 @@ internal fun fieldMap(t: Task, c: Computed): LinkedHashMap<String, String> {
         "title" to t.title,
         "thread" to s(t.thread),
         "status" to t.status.wire,
+        // `req` is the user-facing name for the external requirement (ADR-018);
+        // `waiting_on` stays as a back-compat alias for the stored key.
+        "req" to s(t.waitingOn),
         "waiting_on" to s(t.waitingOn),
         "depends" to t.depends.joinToString(","),
         "due" to s(t.due),

@@ -243,6 +243,8 @@ private class InitCmd : TkCommand("init", "Scaffold a taskkling workspace (.task
 private class AddCmd : MutationCommand("add", "Create a task; prints the new id") {
     val title by argument(ArgType.String, description = "Task title")
     val thread by option(ArgType.String, "thread", "t", description = "Grouping label")
+    val status by option(ArgType.String, "status", "s", description = "Initial status: open | waiting | done | dropped (default open)")
+    val req by option(ArgType.String, "req", description = "External requirement text (independent of status)")
     val depends by option(ArgType.String, "depends", "d", description = "Dependency ids (comma-separated and/or repeatable)").multiple()
     val due by option(ArgType.String, "due", description = "Deadline (e.g. 2026-07-31T23:59:00Z or 2026-07-31)")
     val defer by option(ArgType.String, "defer", description = "Not-before datetime (suppresses readiness)")
@@ -256,6 +258,8 @@ private class AddCmd : MutationCommand("add", "Create a task; prints the new id"
                 AddArgs(
                     title = title,
                     thread = thread,
+                    status = status,
+                    req = req,
                     depends = flattenDepends(depends),
                     due = due,
                     defer = defer,
@@ -332,12 +336,16 @@ private class ReopenCmd : MutationCommand("reopen", "Reopen a task (clears close
     override fun run() = emit(Workspace.discover(root).reopenTask(id, exportOnSuccess))
 }
 
-/** `wait <id> [--until <dt>] [--on "<text>"]` — set waiting, fold defer (PRD §10.5). */
-private class WaitCmd : MutationCommand("wait", "Set status=waiting; optionally defer (--until) and external requirement (--on)") {
+/** `wait <id> [--until <dt>] [--req "<text>"]` — set waiting, fold defer (PRD §10.5). */
+private class WaitCmd : MutationCommand("wait", "Set status=waiting; optionally defer (--until) and external requirement (--req)") {
     val id by argument(ArgType.String, description = "Task id")
     val until by option(ArgType.String, "until", description = "Defer until this datetime (suppresses readiness)")
-    val on by option(ArgType.String, "on", description = "External requirement text (stored as waiting_on)")
-    override fun run() = emit(Workspace.discover(root).waitTask(id, until, on, exportOnSuccess))
+    // ADR-018: the external requirement is independent of status; --req here is
+    // sugar (set it in one call while parking to waiting). `set --req` sets it in
+    // any status. --on is kept as a hidden back-compat alias for existing scripts.
+    val req by option(ArgType.String, "req", description = "External requirement text (independent of status)")
+    val on by option(ArgType.String, "on", description = "Deprecated alias for --req")
+    override fun run() = emit(Workspace.discover(root).waitTask(id, until, req ?: on, exportOnSuccess))
 }
 
 /** `link <id> --depends <dep>` — add a dependency edge; cycle-checked (PRD §10.6). */
@@ -363,21 +371,25 @@ private class UnlinkCmd : MutationCommand("unlink", "Remove a dependency edge (<
 }
 
 /** `set <id> [--<field> …] [--clear <field>…]` — atomic multi-field edit (PRD §10.4). */
-private class SetCmd : MutationCommand("set", "Edit metadata fields (title/thread/due/defer/priority)") {
+private class SetCmd : MutationCommand("set", "Edit metadata fields (title/thread/status/req/due/defer/priority)") {
     val id by argument(ArgType.String, description = "Task id")
     val title by option(ArgType.String, "title", description = "Set title")
     val thread by option(ArgType.String, "thread", "t", description = "Set thread (empty clears)")
+    val status by option(ArgType.String, "status", "s", description = "Set status open|waiting|done|dropped")
+    val req by option(ArgType.String, "req", description = "Set external requirement (empty clears); independent of status")
     val due by option(ArgType.String, "due", description = "Set due datetime (empty clears)")
     val defer by option(ArgType.String, "defer", description = "Set defer datetime (empty clears)")
     val priority by option(ArgType.String, "priority", "p", description = "Set priority low|normal|high")
     val clear by option(ArgType.String, "clear", description = "Field to unset (repeatable)").multiple()
 
     override fun run() {
-        if (title == null && thread == null && due == null && defer == null && priority == null && clear.isEmpty()) {
+        if (title == null && thread == null && status == null && req == null &&
+            due == null && defer == null && priority == null && clear.isEmpty()
+        ) {
             throw TkError(ExitCode.USAGE, "set needs at least one field to change")
         }
         val ws = Workspace.discover(root)
-        emit(ws.setFields(id, SetArgs(title, thread, due, defer, priority, clear), exportOnSuccess))
+        emit(ws.setFields(id, SetArgs(title, thread, status, req, due, defer, priority, clear), exportOnSuccess))
     }
 }
 

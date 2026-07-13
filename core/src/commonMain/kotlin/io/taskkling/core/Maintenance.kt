@@ -47,7 +47,8 @@ public data class RestoreResult(
  * `restore <id>` (PRD §9.5, §10.5) — move a task from `trash/` (preferred) or
  * `archive/` back into the active set. Clears `closed`; a task that was
  * `done`/`dropped` returns as `open` (so it is actionable again and `cleanup`
- * won't immediately re-sweep it), which also clears `waiting_on`. Severed
+ * won't immediately re-sweep it). The external requirement (`waiting_on`/`req`)
+ * is independent of status (ADR-018) and is preserved across the reopen. Severed
  * inbound edges are **not** re-added (git history is the only full undo); and any
  * of the task's own `depends` whose target is neither active nor archived
  * (graph-neutral archive, ADR-014) is dropped and reported, keeping the active
@@ -67,7 +68,6 @@ public fun Workspace.restoreTask(id: String, exportAfter: Boolean = false): Rest
     val reopen = task.status == Status.DONE || task.status == Status.DROPPED
     val restored = task.copy(
         status = if (reopen) Status.OPEN else task.status,
-        waitingOn = if (reopen) null else task.waitingOn,
         closed = null,
         depends = keep,
     )

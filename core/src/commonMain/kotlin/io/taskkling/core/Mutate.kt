@@ -51,17 +51,18 @@ public fun Workspace.updateTask(
 }
 
 /**
- * Preventive write-path validation (PRD §7.5): the `waiting_on ⇒ waiting`
- * invariant, no self/dangling `depends`, and no dependency cycles. Run on every
- * mutation except `delete` (M2). Valid `depends` targets are the active set
- * *plus* `archive/` — the archive stays a graph node source (graph-neutral
- * archive, ADR-014), so sweeping a done dependency never invalidates its
- * dependents. `trash/` ids stay invalid (deletion cascade-pruned the edges).
+ * Preventive write-path validation (PRD §7.5): no self/dangling `depends`, and no
+ * dependency cycles. Run on every mutation except `delete` (M2). Valid `depends`
+ * targets are the active set *plus* `archive/` — the archive stays a graph node
+ * source (graph-neutral archive, ADR-014), so sweeping a done dependency never
+ * invalidates its dependents. `trash/` ids stay invalid (deletion cascade-pruned
+ * the edges).
+ *
+ * The external requirement (`waiting_on`/`req`) is **independent** of status
+ * (ADR-018): it may be set in any status, so there is no longer a
+ * `waiting_on ⇒ waiting` invariant to enforce here.
  */
 public fun Workspace.validateInvariants(t: Task) {
-    if (t.waitingOn != null && t.status != Status.WAITING) {
-        throw TkError(ExitCode.VALIDATION, "waiting_on may be set only when status=waiting")
-    }
     val known = activeIds() + idsInDir(archiveDir)
     for (d in t.depends) {
         if (d == t.id) throw TkError(ExitCode.VALIDATION, "task cannot depend on itself ($d)")
@@ -100,28 +101,41 @@ internal fun Workspace.detectCycle(updated: Task) {
     }
 }
 
-/** `done` — status=done, stamp `closed`, clear `waiting_on` (PRD §10.5). */
+/**
+ * Apply a status transition with the shared `closed`-stamp rule (ADR-018): entering
+ * a closed state (`done`/`dropped`) stamps `closed` fresh on every close; entering
+ * an open state (`open`/`waiting`) clears it. The external requirement
+ * (`waiting_on`/`req`) is **independent** of status and is deliberately left
+ * untouched — it persists across every transition until explicitly cleared.
+ */
+internal fun Task.withStatus(next: Status): Task = copy(
+    status = next,
+    closed = if (next == Status.DONE || next == Status.DROPPED) nowUtc() else null,
+)
+
+/** `done` — status=done, stamp `closed`; the external requirement persists (PRD §10.5, ADR-018). */
 public fun Workspace.markDone(id: String, exportAfter: Boolean = false): MutationResult =
-    updateTask(id, exportAfter) { it.copy(status = Status.DONE, closed = nowUtc(), waitingOn = null) }
+    updateTask(id, exportAfter) { it.withStatus(Status.DONE) }
 
-/** `drop` — status=dropped, stamp `closed`, clear `waiting_on` (PRD §10.5). */
+/** `drop` — status=dropped, stamp `closed`; the external requirement persists (PRD §10.5, ADR-018). */
 public fun Workspace.markDropped(id: String, exportAfter: Boolean = false): MutationResult =
-    updateTask(id, exportAfter) { it.copy(status = Status.DROPPED, closed = nowUtc(), waitingOn = null) }
+    updateTask(id, exportAfter) { it.withStatus(Status.DROPPED) }
 
-/** `reopen` — back to open, clear `closed` and `waiting_on` (PRD §10.5). */
+/** `reopen` — back to open, clear `closed`; the external requirement persists (PRD §10.5, ADR-018). */
 public fun Workspace.reopenTask(id: String, exportAfter: Boolean = false): MutationResult =
-    updateTask(id, exportAfter) { it.copy(status = Status.OPEN, closed = null, waitingOn = null) }
+    updateTask(id, exportAfter) { it.withStatus(Status.OPEN) }
 
 /**
- * `wait` — status=waiting; optionally set `defer` (`--until`) and/or `waiting_on`
- * (`--on`), each preserved when its flag is omitted (PRD §10.5).
+ * `wait` — status=waiting; optionally set `defer` (`--until`) and/or the external
+ * requirement (`--req`), each preserved when its flag is omitted (PRD §10.5).
+ * Sugar over the shared status path (ADR-018): `--req` may equally be set on any
+ * status via `set --req`, independent of the waiting transition.
  */
-public fun Workspace.waitTask(id: String, until: String?, on: String?, exportAfter: Boolean = false): MutationResult =
+public fun Workspace.waitTask(id: String, until: String?, req: String?, exportAfter: Boolean = false): MutationResult =
     updateTask(id, exportAfter) { t ->
-        t.copy(
-            status = Status.WAITING,
+        t.withStatus(Status.WAITING).copy(
             defer = until?.let { normalizeDateTime(it) } ?: t.defer,
-            waitingOn = on ?: t.waitingOn,
+            waitingOn = req?.trim()?.ifEmpty { null } ?: t.waitingOn,
         )
     }
 
@@ -135,13 +149,17 @@ public fun Workspace.unlinkDepends(id: String, deps: List<String>, exportAfter: 
 
 /**
  * Inputs for `set` (PRD §10.4). Each non-null field is applied; an empty string
- * unsets the (optional) field, equivalent to naming it in [clear]. Status and
- * `depends` are intentionally absent — they are owned by the lifecycle and
- * link/unlink verbs, not `set`.
+ * unsets the (optional) field, equivalent to naming it in [clear]. `depends` is
+ * intentionally absent — it is owned by the link/unlink verbs. `status` and the
+ * external requirement (`req`) are now first-class editable fields (ADR-018),
+ * independent of one another; the lifecycle verbs (`done`/`drop`/…) remain as
+ * sugar over the same status path.
  */
 public data class SetArgs(
     val title: String? = null,
     val thread: String? = null,
+    val status: String? = null,
+    val req: String? = null,
     val due: String? = null,
     val defer: String? = null,
     val priority: String? = null,
@@ -151,8 +169,11 @@ public data class SetArgs(
 /**
  * `set <id> [--<field> …] [--clear <field>…]` — atomic multi-field metadata edit
  * (PRD §10.4). Runs the validated write path: `due`/`defer` are normalized,
- * `priority` is enum-checked, and a `title` change re-slugs the filename. `title`
- * cannot be cleared; clearing `priority` resets it to `normal`.
+ * `priority`/`status` are enum-checked, and a `title` change re-slugs the
+ * filename. A `status` change applies the shared `closed`-stamp rule
+ * ([withStatus]); the external requirement (`req`) is set independently. `title`
+ * cannot be cleared; clearing `priority` resets it to `normal`; `status` cannot
+ * be cleared (there is no null status).
  */
 public fun Workspace.setFields(id: String, args: SetArgs, exportAfter: Boolean = false): MutationResult =
     updateTask(id, exportAfter) { t ->
@@ -162,17 +183,21 @@ public fun Workspace.setFields(id: String, args: SetArgs, exportAfter: Boolean =
             x = x.copy(title = v.trim())
         }
         args.thread?.let { v -> x = x.copy(thread = v.trim().ifEmpty { null }) }
+        args.status?.let { v -> x = x.withStatus(Status.from(v.trim())) }
+        args.req?.let { v -> x = x.copy(waitingOn = v.trim().ifEmpty { null }) }
         args.due?.let { v -> x = x.copy(due = v.trim().ifEmpty { null }?.let { normalizeDateTime(it) }) }
         args.defer?.let { v -> x = x.copy(defer = v.trim().ifEmpty { null }?.let { normalizeDateTime(it) }) }
         args.priority?.let { v -> x = x.copy(priority = if (v.isBlank()) Priority.NORMAL else Priority.from(v)) }
         for (f in args.clear) {
             x = when (f) {
                 "thread" -> x.copy(thread = null)
+                "req" -> x.copy(waitingOn = null)
                 "due" -> x.copy(due = null)
                 "defer" -> x.copy(defer = null)
                 "priority" -> x.copy(priority = Priority.NORMAL)
                 "title" -> throw TkError(ExitCode.USAGE, "title cannot be cleared")
-                else -> throw TkError(ExitCode.USAGE, "cannot clear '$f' (clearable: thread, due, defer, priority)")
+                "status" -> throw TkError(ExitCode.USAGE, "status cannot be cleared (set --status open|waiting|done|dropped)")
+                else -> throw TkError(ExitCode.USAGE, "cannot clear '$f' (clearable: thread, req, due, defer, priority)")
             }
         }
         x
