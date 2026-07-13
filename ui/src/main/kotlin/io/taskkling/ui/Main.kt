@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -30,8 +31,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -137,6 +146,13 @@ private fun App(client: CliClient) {
     var busy by remember { mutableStateOf(false) }
     // The open settings dialog (archive/prune), session-only like the pin.
     var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
+    // t-aq99: the card currently in link mode (its → handles shown), the toast
+    // queue, the edge selected for unlinking, and the one-shot undo memory — all
+    // session-only UI state, like the pin; the CLI stays the single write path.
+    var linkModeId by remember { mutableStateOf<String?>(null) }
+    val toasts = remember { ToastState() }
+    var selectedEdge by remember { mutableStateOf<Edge?>(null) }
+    var lastOp by remember { mutableStateOf<LinkOp?>(null) }
     // The user-dragged detail-panel width in dp (t-q8i2). Session-only — like the pin, it never
     // persists and resets to the default on relaunch. Held as a raw dp Float and re-clamped
     // against the live window width at layout time (see the BoxWithConstraints below), so the
@@ -175,6 +191,12 @@ private fun App(client: CliClient) {
         error = null
         if (selectedId != null && next.tasks.none { it.id == selectedId }) selectedId = null
         if (pinnedId != null && next.tasks.none { it.id == pinnedId }) pinnedId = null
+        if (linkModeId != null && next.tasks.none { it.id == linkModeId }) linkModeId = null
+        // A selected edge that no longer exists (unlinked, task gone) drops its selection.
+        selectedEdge?.let { e ->
+            val dependent = next.tasks.firstOrNull { it.id == e.to }
+            if (dependent == null || e.from !in dependent.depends) selectedEdge = null
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -234,7 +256,84 @@ private fun App(client: CliClient) {
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    // t-aq99: one link/unlink edge mutation. Result lands as a toast either
+    // way — success carries the Ctrl+Z hint and arms the one-shot undo; failure
+    // carries the CLI's own reason (cycle, unknown id, …). Both no-op directions are
+    // pre-checked here against the LIVE export because the CLI treats them as silent
+    // exit-0 no-ops (link `distinct()`s, unlink filters a missing edge away): without
+    // these, a re-link would toast "already linked" only by luck and a re-unlink would
+    // falsely toast success. The edge is present iff `dependent` lists `blocker`.
+    fun performEdgeOp(dependent: String, blocker: String, link: Boolean, isUndo: Boolean = false) {
+        if (busy) {
+            toasts.show("busy — try again in a moment", ToastKind.INFO)
+            return
+        }
+        val current = export ?: return
+        val edgeExists = current.tasks.firstOrNull { it.id == dependent }?.depends?.contains(blocker) == true
+        if (link && edgeExists) {
+            toasts.show("already linked: $blocker → $dependent", ToastKind.INFO)
+            return
+        }
+        if (!link && !edgeExists) {
+            toasts.show("not linked: $blocker → $dependent", ToastKind.INFO)
+            return
+        }
+        val verb = if (link) "link" else "unlink"
+        busy = true
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching { client.mutate(listOf(verb, dependent, "--depends", blocker)) }
+            }
+                .onSuccess {
+                    refresh(it)
+                    if (isUndo) {
+                        lastOp = null
+                        toasts.show("undid ${if (link) "unlink" else "link"}: $blocker → $dependent", ToastKind.SUCCESS)
+                    } else {
+                        lastOp = LinkOp(dependent, blocker, wasLink = link)
+                        toasts.show("${if (link) "linked" else "unlinked"} $blocker → $dependent (Ctrl+Z to undo)", ToastKind.SUCCESS)
+                    }
+                }
+                .onFailure { toasts.show("$verb failed: ${it.message ?: it}", ToastKind.ERROR) }
+            busy = false
+        }
+    }
+
+    // One-shot inverse-command undo (the t-aq99 leaning) — no general undo stack.
+    fun undoLast() {
+        val op = lastOp
+        if (op == null) {
+            toasts.show("nothing to undo", ToastKind.INFO)
+            return
+        }
+        performEdgeOp(op.dependent, op.blocker, link = !op.wasLink, isUndo = true)
+    }
+
+    // t-aq99: the root claims focus so canvas-level keys work before any click;
+    // events from focused descendants (cards, text fields) bubble through here, and a
+    // text field consumes its own editing keys before this sees them.
+    val rootFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { rootFocus.requestFocus() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .focusRequester(rootFocus)
+            .focusable()
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                when {
+                    event.key == Key.Z && event.isCtrlPressed -> {
+                        undoLast()
+                        true
+                    }
+                    (event.key == Key.Delete || event.key == Key.Backspace) && selectedEdge != null -> {
+                        selectedEdge?.let { performEdgeOp(it.to, it.from, link = false) }
+                        true
+                    }
+                    else -> false
+                }
+            },
+    ) {
         Column(Modifier.fillMaxSize()) {
             Header(
                 export,
@@ -269,7 +368,18 @@ private fun App(client: CliClient) {
                                 // Highlight source: the pin wins; without one, selection highlights.
                                 highlightedId = pinnedId ?: selectedId,
                                 pinnedId = pinnedId,
-                                onSelect = { selectedId = it },
+                                linkModeId = linkModeId,
+                                selectedEdge = selectedEdge,
+                                onSelectEdge = { selectedEdge = it },
+                                onLink = { dependent, blocker -> performEdgeOp(dependent, blocker, link = true) },
+                                onUnlink = { dependent, blocker -> performEdgeOp(dependent, blocker, link = false) },
+                                // Link mode is single, session-only like the pin: toggling one card off,
+                                // or transferring it to another. Handles show on whichever card holds it.
+                                onLinkModeToggle = { id -> linkModeId = if (linkModeId == id) null else id },
+                                onSelect = {
+                                    selectedId = it
+                                    selectedEdge = null
+                                },
                                 // Pinning selects too (one click = full focus); a second click on
                                 // the pinned card's pin unpins and leaves selection untouched.
                                 onPinToggle = { id ->
@@ -281,7 +391,10 @@ private fun App(client: CliClient) {
                                     }
                                 },
                                 // Background click clears the selection, never the pin (§5).
-                                onClearSelection = { selectedId = null },
+                                onClearSelection = {
+                                    selectedId = null
+                                    selectedEdge = null
+                                },
                                 hScroll = hScroll,
                                 vScroll = vScroll,
                                 cardRects = cardRects,
@@ -304,8 +417,11 @@ private fun App(client: CliClient) {
                     )
                 }
             }
-            Legend()
+            Legend(hint = "link toggle (id row) → edge handles · drag links + unlinks")
         }
+
+        // t-aq99: toasts overlay everything, bottom-centre, above the legend.
+        ToastHost(toasts, Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp))
 
         // Settings dialogs overlay the whole app (scrim + centred card, DESIGN §9).
         val current = export
@@ -538,9 +654,9 @@ private val LEGEND_ITEMS: List<Pair<Color, String>> = listOf(
     Tk.open to "open",
 )
 
-/** Legend (DESIGN §9): a swatch + label per state. */
+/** Legend (DESIGN §9): a swatch + label per state; [hint] shows an optional usage hint at the right edge. */
 @Composable
-private fun Legend() {
+private fun Legend(hint: String? = null) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -558,6 +674,10 @@ private fun Legend() {
                 Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(color))
                 Text(label, fontSize = 11.sp, color = Tk.muted)
             }
+        }
+        if (hint != null) {
+            Spacer(Modifier.weight(1f))
+            Text(hint, fontSize = 10.sp, color = Tk.faint)
         }
     }
 }
