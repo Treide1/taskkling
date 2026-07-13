@@ -68,7 +68,7 @@ class MaintenanceCleanupTest {
         val ws = tempWorkspace()
         val open = ws.addReturningId(AddArgs(title = "still open"))
         val waiting = ws.addReturningId(AddArgs(title = "on hold"))
-        ws.waitTask(waiting, until = null, on = "someone")
+        ws.waitTask(waiting, until = null, req = "someone")
 
         val result = ws.cleanup(deleteBefore = null, includeArchive = false)
 

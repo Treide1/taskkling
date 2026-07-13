@@ -32,10 +32,12 @@ class ValidateTest {
     }
 
     @Test
-    fun waitingOnRequiresWaitingStatus() {
+    fun externalRequirementIsIndependentOfStatus() {
+        // ADR-018: the `waiting_on ⇒ waiting` invariant is gone — an OPEN task may
+        // carry an external requirement, so validation must accept it.
         val ws = tempWorkspace()
         val t = Task(id = "t-xxxx", title = "x", status = Status.OPEN, waitingOn = "reason", created = "2026-01-01T00:00:00Z")
-        assertFailsWith<TkError> { ws.validateInvariants(t) }
+        ws.validateInvariants(t) // must not throw
     }
 
     @Test

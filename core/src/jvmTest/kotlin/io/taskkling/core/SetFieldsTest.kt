@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -123,9 +124,51 @@ class SetFieldsTest {
     fun unknownClearFieldIsUsageError() {
         val ws = tempWorkspace()
         val id = ws.addReturningId(AddArgs(title = "t"))
+        val err = assertFailsWith<TkError> { ws.setFields(id, SetArgs(clear = listOf("bogus"))) }
+        assertEquals(ExitCode.USAGE, err.exit)
+        assertTrue("bogus" in (err.message ?: ""), "message should name the offending field")
+    }
+
+    @Test
+    fun statusCannotBeCleared() {
+        // There is no null status; --clear status is a usage error (ADR-018).
+        val ws = tempWorkspace()
+        val id = ws.addReturningId(AddArgs(title = "t"))
         val err = assertFailsWith<TkError> { ws.setFields(id, SetArgs(clear = listOf("status"))) }
         assertEquals(ExitCode.USAGE, err.exit)
-        assertTrue("status" in (err.message ?: ""), "message should name the offending field")
+        assertTrue("status" in (err.message ?: ""), "message should mention status")
+        assertEquals(Status.OPEN, ws.loadTask(id)!!.status, "failed clear must not have mutated the status")
+    }
+
+    // --- status + external requirement as independent set fields (ADR-018) --
+
+    @Test
+    fun setStatusDoneStampsClosedAndKeepsRequirement() {
+        val ws = tempWorkspace()
+        val id = ws.addReturningId(AddArgs(title = "gated", req = "legal sign-off"))
+        ws.setFields(id, SetArgs(status = "done"))
+        val t = ws.loadTask(id)!!
+        assertEquals(Status.DONE, t.status)
+        assertNotNull(t.closed, "entering done stamps closed")
+        assertEquals("legal sign-off", t.waitingOn, "the external requirement persists across the status change")
+    }
+
+    @Test
+    fun setRequirementOnOpenTaskSucceedsWithoutChangingStatus() {
+        val ws = tempWorkspace()
+        val id = ws.addReturningId(AddArgs(title = "still open"))
+        ws.setFields(id, SetArgs(req = "waiting on a callback"))
+        val t = ws.loadTask(id)!!
+        assertEquals(Status.OPEN, t.status, "setting req does not flip status (ADR-018)")
+        assertEquals("waiting on a callback", t.waitingOn)
+    }
+
+    @Test
+    fun clearRequirementUnsetsIt() {
+        val ws = tempWorkspace()
+        val id = ws.addReturningId(AddArgs(title = "t", req = "some reason"))
+        ws.setFields(id, SetArgs(clear = listOf("req")))
+        assertNull(ws.loadTask(id)!!.waitingOn, "--clear req unsets the external requirement")
     }
 
     @Test

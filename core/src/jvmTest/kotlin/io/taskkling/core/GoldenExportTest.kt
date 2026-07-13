@@ -213,7 +213,8 @@ class GoldenExportTest {
                         },
                         "body": null
                     }
-                ]
+                ],
+                "defaultThread": ""
             }
         """.trimIndent()
     }

@@ -156,6 +156,82 @@ class CliSubprocessTest {
         assertTrue(computed["ready"]!!.jsonPrimitive.boolean, "a lone open task is ready")
     }
 
+    // --- status + external requirement are independent create/edit fields (ADR-018) --------
+
+    @Test
+    fun addStatusWaitingWithReqCreatesAWaitingTaskCarryingTheRequirement() {
+        val ws = newWorkspace()
+        val add = runCli("--root", ws, "add", "Gated", "--status", "waiting", "--req", "legal sign-off")
+        assertEquals(0, add.exit, "stderr=${add.stderr}")
+        val id = add.stdout.trim()
+
+        val got = runCli("--root", ws, "get", id, "-f", "status", "-f", "req", "-f", "waiting_on")
+        assertEquals(0, got.exit, "stderr=${got.stderr}")
+        assertEquals(listOf("waiting", "legal sign-off", "legal sign-off"), got.stdout.trim().lines())
+    }
+
+    @Test
+    fun addStatusDoneStampsClosedOnCreation() {
+        val ws = newWorkspace()
+        val add = runCli("--root", ws, "add", "Born done", "--status", "done")
+        assertEquals(0, add.exit, "stderr=${add.stderr}")
+        val id = add.stdout.trim()
+
+        val got = runCli("--root", ws, "get", id, "-f", "status", "-f", "closed")
+        val (status, closed) = got.stdout.trim().lines()
+        assertEquals("done", status)
+        assertTrue(closed.isNotEmpty(), "creating straight into done stamps a closed timestamp; got '$closed'")
+    }
+
+    @Test
+    fun setStatusDoneKeepsTheExternalRequirement() {
+        val ws = newWorkspace()
+        val add = runCli("--root", ws, "add", "Open but gated", "--req", "a callback")
+        val id = add.stdout.trim()
+
+        val set = runCli("--root", ws, "set", id, "--status", "done")
+        assertEquals(0, set.exit, "stderr=${set.stderr}")
+
+        val got = runCli("--root", ws, "get", id, "-f", "status", "-f", "req")
+        assertEquals(listOf("done", "a callback"), got.stdout.trim().lines(), "req persists across a status change")
+    }
+
+    @Test
+    fun setReqOnAnOpenTaskDoesNotChangeStatus() {
+        val ws = newWorkspace()
+        val id = addTask(ws, "Still open")
+
+        val set = runCli("--root", ws, "set", id, "--req", "waiting on a callback")
+        assertEquals(0, set.exit, "stderr=${set.stderr}")
+
+        val got = runCli("--root", ws, "get", id, "-f", "status", "-f", "req")
+        assertEquals(listOf("open", "waiting on a callback"), got.stdout.trim().lines(), "set --req must not flip status")
+    }
+
+    @Test
+    fun clearReqUnsetsTheRequirement() {
+        val ws = newWorkspace()
+        val add = runCli("--root", ws, "add", "Had a reason", "--req", "some reason")
+        val id = add.stdout.trim()
+
+        runCli("--root", ws, "set", id, "--clear", "req")
+        val got = runCli("--root", ws, "get", id, "-f", "req")
+        assertEquals("", got.stdout.trim(), "--clear req unsets the external requirement")
+    }
+
+    @Test
+    fun waitOnIsADeprecatedAliasForReq() {
+        val ws = newWorkspace()
+        val id = addTask(ws, "Parked")
+
+        // Legacy scripts still pass --on; it must set the same field as --req.
+        val wait = runCli("--root", ws, "wait", id, "--on", "the mail")
+        assertEquals(0, wait.exit, "stderr=${wait.stderr}")
+
+        val got = runCli("--root", ws, "get", id, "-f", "status", "-f", "req")
+        assertEquals(listOf("waiting", "the mail"), got.stdout.trim().lines())
+    }
+
     // --- `--version` fast path (offline, non-interactive) ----------------------------------
 
     @Test

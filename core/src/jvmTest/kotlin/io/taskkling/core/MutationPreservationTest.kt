@@ -11,14 +11,14 @@ import kotlin.test.assertNull
  * The mutation verbs make quiet *preservation* promises in their docs that no
  * test guarded until now (PRD §10.5):
  *   - [waitTask] leaves an existing `defer`/`waiting_on` untouched when its
- *     `--until`/`--on` flag is omitted (each field is independently sticky);
+ *     `--until`/`--req` flag is omitted (each field is independently sticky);
  *   - [deleteTask] keeps an already-present `closed` stamp instead of re-minting
  *     one (`closed ?: nowUtc()`);
  *   - [restoreTask] works from `archive/` (not just `trash/`), and its
- *     `done`/`dropped` -> `open` reopen also clears `waiting_on`, while a task
- *     that was NOT closed keeps its status and `waiting_on`;
- *   - [reopenTask] returns a closed task to `open`, clearing both `closed` and
- *     `waiting_on`.
+ *     `done`/`dropped` -> `open` reopen preserves `waiting_on` (independent of
+ *     status, ADR-018), as does a task that was NOT closed;
+ *   - [reopenTask] returns a closed task to `open`, clearing `closed` but
+ *     preserving `waiting_on` (ADR-018).
  * These are the branches a naive rewrite would silently drop.
  */
 class MutationPreservationTest {
@@ -46,9 +46,9 @@ class MutationPreservationTest {
         val ws = tempWorkspace()
         val id = ws.addReturningId(AddArgs(title = "on hold"))
         // Seed both fields through the verb itself, then re-wait with no flags.
-        ws.waitTask(id, until = "2026-08-01", on = "alice")
+        ws.waitTask(id, until = "2026-08-01", req = "alice")
 
-        val again = ws.waitTask(id, until = null, on = null).task
+        val again = ws.waitTask(id, until = null, req = null).task
 
         assertEquals(Status.WAITING, again.status)
         assertEquals("2026-08-01T00:00:00Z", again.defer, "defer survives a flag-less re-wait")
@@ -59,23 +59,23 @@ class MutationPreservationTest {
     fun waitUpdatesOnlyUntilLeavingWaitingOnIntact() {
         val ws = tempWorkspace()
         val id = ws.addReturningId(AddArgs(title = "on hold"))
-        ws.waitTask(id, until = "2026-08-01", on = "alice")
+        ws.waitTask(id, until = "2026-08-01", req = "alice")
 
-        val moved = ws.waitTask(id, until = "2026-09-15", on = null).task
+        val moved = ws.waitTask(id, until = "2026-09-15", req = null).task
 
         assertEquals("2026-09-15T00:00:00Z", moved.defer, "--until replaces the defer")
-        assertEquals("alice", moved.waitingOn, "waiting_on is left untouched when --on is omitted")
+        assertEquals("alice", moved.waitingOn, "waiting_on is left untouched when --req is omitted")
     }
 
     @Test
     fun waitUpdatesOnlyWaitingOnLeavingDeferIntact() {
         val ws = tempWorkspace()
         val id = ws.addReturningId(AddArgs(title = "on hold"))
-        ws.waitTask(id, until = "2026-08-01", on = "alice")
+        ws.waitTask(id, until = "2026-08-01", req = "alice")
 
-        val moved = ws.waitTask(id, until = null, on = "bob").task
+        val moved = ws.waitTask(id, until = null, req = "bob").task
 
-        assertEquals("bob", moved.waitingOn, "--on replaces waiting_on")
+        assertEquals("bob", moved.waitingOn, "--req replaces waiting_on")
         assertEquals("2026-08-01T00:00:00Z", moved.defer, "defer is left untouched when --until is omitted")
     }
 
@@ -126,10 +126,10 @@ class MutationPreservationTest {
     }
 
     @Test
-    fun restoreReopenClearsWaitingOn() {
+    fun restoreReopenPreservesWaitingOn() {
         val ws = tempWorkspace()
-        // A dropped task carrying waiting_on is invariant-illegal, so plant it directly:
-        // the reopen path must null waiting_on as it flips the status to open.
+        // A dropped task carrying waiting_on: the reopen flips status to open but the
+        // external requirement is independent of status (ADR-018) and rides through.
         ws.plant(
             ws.archiveDir,
             Task(
@@ -145,7 +145,7 @@ class MutationPreservationTest {
         val restored = ws.restoreTask("t-wo").task
 
         assertEquals(Status.OPEN, restored.status, "dropped reopens to open")
-        assertNull(restored.waitingOn, "reopen clears waiting_on")
+        assertEquals("someone", restored.waitingOn, "reopen preserves waiting_on (ADR-018)")
     }
 
     @Test
@@ -172,14 +172,14 @@ class MutationPreservationTest {
         assertNull(restored.closed, "restore always clears closed")
     }
 
-    // --- reopenTask verb: closed -> open, clearing closed + waiting_on ----------
+    // --- reopenTask verb: closed -> open, clearing closed, preserving waiting_on -
 
     @Test
-    fun reopenReturnsADoneTaskToOpenClearingClosedAndWaitingOn() {
+    fun reopenReturnsADoneTaskToOpenClearingClosedButKeepingWaitingOn() {
         val ws = tempWorkspace()
         val id = ws.addReturningId(AddArgs(title = "finished"))
-        // Plant a done task that also carries waiting_on (invariant-illegal, so bypass
-        // the validated path) to prove reopen clears BOTH fields in one shot.
+        // Plant a done task that also carries waiting_on to prove reopen clears the
+        // closed stamp but leaves the (status-independent, ADR-018) requirement alone.
         ws.overwriteOnDisk(
             ws.loadTask(id)!!.copy(status = Status.DONE, closed = "2026-02-02T00:00:00Z", waitingOn = "ghost"),
         )
@@ -188,7 +188,7 @@ class MutationPreservationTest {
 
         assertEquals(Status.OPEN, reopened.status)
         assertNull(reopened.closed, "reopen clears the closed stamp")
-        assertNull(reopened.waitingOn, "reopen clears waiting_on")
+        assertEquals("ghost", reopened.waitingOn, "reopen preserves waiting_on (ADR-018)")
     }
 
     @Test
