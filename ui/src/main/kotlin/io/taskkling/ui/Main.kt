@@ -654,7 +654,7 @@ private val LEGEND_ITEMS: List<Pair<Color, String>> = listOf(
     Tk.open to "open",
 )
 
-/** Legend (DESIGN §9): a swatch + label per state; [hint] names the active t-aq99 hint at the right edge. */
+/** Legend (DESIGN §9): a swatch + label per state; [hint] shows an optional usage hint at the right edge. */
 @Composable
 private fun Legend(hint: String? = null) {
     Row(

@@ -508,6 +508,7 @@ private suspend fun AwaitPointerEventScope.awaitTapCompletion(id: PointerId, slo
 private fun LinkHandle(
     side: HandleSide,
     cardHover: MutableInteractionSource,
+    alpha: Float,
     onStart: (HandleSide) -> Unit,
     onMove: (Offset) -> Unit,
     onEnd: () -> Unit,
@@ -528,6 +529,7 @@ private fun LinkHandle(
     Box(
         modifier
             .size(24.dp)
+            .graphicsLayer { this.alpha = alpha }
             .hoverable(cardHover)
             .hoverable(own)
             .pointerHoverIcon(HANDLE_CURSOR)
@@ -680,16 +682,18 @@ private fun NodeCard(
         Modifier
             // The parent Layout fixes this card's (x, y) slot; the hover lift is a pure
             // draw-layer translation (§6, §11) so animating it never re-measures the graph.
+            // The Star dim (alpha) is deliberately NOT here: an alpha layer on this outer
+            // box would rasterise to the box's bounds and crop the edge handles that
+            // overflow it by 12dp (visible only when the card is de-highlighted, alpha<1).
+            // Instead the card surface and each handle carry their own alpha below.
             .width(CARD_W.dp)
-            .graphicsLayer {
-                this.alpha = alpha
-                translationY = lift.toPx()
-            },
+            .graphicsLayer { translationY = lift.toPx() },
     ) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = CARD_MIN_H.dp)
+                .graphicsLayer { this.alpha = alpha }
                 .shadow(elevation, shape, clip = false)
                 .clip(shape)
                 .background(Tk.panel)
@@ -737,9 +741,13 @@ private fun NodeCard(
             CardContent(task, state, pinned, linkMode, hovered, onPinToggle, onLinkModeToggle)
         }
         if (showHandles) {
+            // Handles carry the same [alpha] as the card surface so they dim in step with
+            // a de-highlighted card — but each on its OWN layer, bounded to its own 24dp
+            // box, so the dim never clips them the way the outer box did.
             LinkHandle(
                 side = HandleSide.LEFT,
                 cardHover = interaction,
+                alpha = alpha,
                 onStart = onHandleDragStart,
                 onMove = onHandleDrag,
                 onEnd = onHandleDragEnd,
@@ -749,6 +757,7 @@ private fun NodeCard(
             LinkHandle(
                 side = HandleSide.RIGHT,
                 cardHover = interaction,
+                alpha = alpha,
                 onStart = onHandleDragStart,
                 onMove = onHandleDrag,
                 onEnd = onHandleDragEnd,

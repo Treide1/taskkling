@@ -4,21 +4,23 @@ import androidx.compose.ui.geometry.Offset
 import io.taskkling.contract.TaskDto
 
 /**
- * t-aq99, round 2 — the two-handle variant won the 2026-07-12 comparison; the
- * one-handle/drop-side variant is gone: inferring direction from cursor orientation
- * felt janky AND was semantically wrong — a card laid out further right may
- * legitimately become the BLOCKER of a further-left one when no cycle forms (layout
- * position is an effect of the edges, never a constraint on them).
+ * t-aq99: authoring dependency edges directly on the canvas.
  *
- * Reveal model (round 3, 2026-07-13): the frequent hover/unhover flicker of the
- * edge handles was distracting, so they no longer track hover. Instead each card's
- * id row carries a link-mode TOGGLE (a chain glyph beside the pin, same gentle
- * reveal). Toggling it on shows that card's two edge handles — drawn as → arrows so
- * ingoing (left) vs outgoing (right) reads at a glance — and they stay put until the
- * toggle is turned off. A handle drag still authors BOTH directions: dropping on an
- * unlinked card links (green), on an already-linked card unlinks (red); impossible
- * targets (self, would-cycle) are muted. Cards of EVERY status can author links —
- * linking closed tasks is legal and useful for organizing.
+ * Each card carries two edge handles that fix direction — left = "this task is
+ * blocked by (drag to the blocker)", right = "this task blocks (drag to the
+ * dependent)". A single handle would force the direction to be inferred from where
+ * the drop lands, which is both ambiguous and wrong: a card laid out further right
+ * may legitimately block a further-left one whenever no cycle forms (layout position
+ * is an effect of the edges, never a constraint on them).
+ *
+ * The handles don't track hover (that flickered on every card); each card's id row
+ * instead carries a link-mode TOGGLE (a chain glyph beside the pin, same gentle
+ * reveal). Toggling it on shows that card's two handles — drawn as → arrows so
+ * ingoing (left) vs outgoing (right) reads at a glance — until it is turned off. A
+ * handle drag authors BOTH directions: dropping on an unlinked card links (green), on
+ * an already-linked card unlinks (red); impossible targets (self, would-cycle) are
+ * muted. Cards of EVERY status can author links — linking closed tasks is legal and
+ * useful for organizing.
  */
 public enum class HandleSide { LEFT, RIGHT }
 
