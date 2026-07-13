@@ -136,4 +136,41 @@ class CliClientTest {
             client(stdout = """{"generatedAt":"T","counts":{"ready":1}""").export()
         }
     }
+
+    // --- Body normalization: `get --body` stdout → clean editor text --------------------------
+    //
+    // The native binary's stdout is text-mode on Windows, so `println` turns every `\n` into
+    // `\r\n`. Read back as raw bytes, a trailing `\r` used to survive and render as a stray
+    // trailing space in the panel's body well; internal lines carried `\r` too. normalizeBodyText
+    // must fold all CR variants to `\n` and leave no trailing newline, so the loaded text equals
+    // the CLI's own fully-trimmed stored body.
+
+    @Test
+    fun bodyStripsTheTrailingCarriageReturnFromWindowsCrlfOutput() {
+        // `println("abc")` on the native Windows binary → bytes `abc\r\n`.
+        assertEquals("abc", normalizeBodyText("abc\r\n"))
+    }
+
+    @Test
+    fun bodyFoldsInternalCrlfLineEndingsToLf() {
+        // A two-line body round-trips as `foo\r\nbar\r\n`; the editor wants plain `foo\nbar`.
+        assertEquals("foo\nbar", normalizeBodyText("foo\r\nbar\r\n"))
+    }
+
+    @Test
+    fun bodyDropsTrailingBlankLinesAndCarriageReturns() {
+        assertEquals("a\n\nb", normalizeBodyText("a\r\n\r\nb\r\n\r\n"))
+    }
+
+    @Test
+    fun bodyStripsALoneTrailingCarriageReturn() {
+        assertEquals("abc", normalizeBodyText("abc\r"))
+    }
+
+    @Test
+    fun bodyLeavesCleanLfTextUntouched() {
+        assertEquals("foo\nbar", normalizeBodyText("foo\nbar\n"))
+        assertEquals("no-newline", normalizeBodyText("no-newline"))
+        assertEquals("", normalizeBodyText(""))
+    }
 }

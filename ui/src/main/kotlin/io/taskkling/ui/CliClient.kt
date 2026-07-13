@@ -72,6 +72,19 @@ public object CliDiscovery {
 public class CliException(public val code: Int, message: String) : RuntimeException(message)
 
 /**
+ * Normalize the CLI's `get --body` stdout for display/editing. The native binary's stdout is
+ * text-mode on Windows, so `println` translates every `\n` to `\r\n`; read back as raw bytes,
+ * a trailing `\r` would otherwise survive [trimEnd]`('\n')` and render as a stray space at the
+ * body's end (and internal lines would carry `\r`). Fold every `\r\n`/`\r`/`\n` variant to a
+ * single `\n`, then drop trailing blank lines so the loaded text equals the CLI's own
+ * fully-trimmed stored body.
+ */
+internal fun normalizeBodyText(raw: String): String = raw
+    .replace("\r\n", "\n")
+    .replace("\r", "\n")
+    .trimEnd('\n')
+
+/**
  * Thin subprocess wrapper around the `taskkling` [binary] (PRD §6.3). Reads run
  * `export`; mutations append `--export-on-success` so the post-mutation export
  * comes back in the same call (a TOCTOU-free read-after-write, PRD §7.3) and the
@@ -98,8 +111,29 @@ public class CliClient(
         return json.decodeFromString(ExportDto.serializer(), run(full).stdout)
     }
 
-    /** `taskkling get <id> --body` → the task's body text. */
-    public fun body(id: String): String = run(listOf("get", id, "--body")).stdout.trimEnd('\n')
+    /** `taskkling get <id> --body` → the task's body text, newline-normalized ([normalizeBodyText]). */
+    public fun body(id: String): String = normalizeBodyText(run(listOf("get", id, "--body")).stdout)
+
+    /**
+     * `taskkling write <id> -` — replace the task's body, feeding [text] on stdin
+     * rather than as an argv value. Arbitrary body text (newlines, non-ASCII) round-trips
+     * cleanly through the pipe, sidestepping the platform's argv quoting/encoding (the
+     * umlaut-argv class of bugs). Body edits don't touch the graph, so this deliberately
+     * skips `--export-on-success`: the panel already holds the text it just saved.
+     */
+    public fun writeBody(id: String, text: String) {
+        val proc = ProcessBuilder(listOf(binary, "write", id, "-"))
+            .directory(workdir)
+            .redirectErrorStream(false)
+            .start()
+        // The CLI reads stdin to EOF before it emits anything, so write-all-then-close
+        // ahead of any read is deadlock-free (the tiny id echo can't fill the pipe).
+        proc.outputStream.bufferedWriter().use { it.write(text) }
+        proc.inputStream.bufferedReader().readText()
+        val err = proc.errorStream.bufferedReader().readText()
+        val code = proc.waitFor()
+        if (code != 0) throw CliException(code, err.ifBlank { "taskkling exited $code" }.trim())
+    }
 
     private data class Output(val stdout: String, val stderr: String)
 
