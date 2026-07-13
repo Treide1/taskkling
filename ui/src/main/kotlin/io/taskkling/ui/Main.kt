@@ -221,6 +221,25 @@ private fun App(client: CliClient) {
         }
     }
 
+    // The selected card's body (its markdown notes) is fetched on demand — the graph
+    // export omits it, so the panel pulls it per selection off the UI thread. Returns
+    // empty on any failure so the well still renders (the error surfaces on save, the
+    // path the user cares about).
+    suspend fun loadBody(id: String): String =
+        withContext(Dispatchers.IO) { runCatching { client.body(id) }.getOrDefault("") }
+
+    // Save the body straight through `write` (stdin), OUTSIDE the busy gate: a
+    // focus-loss auto-save must never be dropped because a refresh happened to be in
+    // flight, and the CLI's own file lock serializes it safely. No refresh — a body
+    // edit changes nothing the graph draws, and the panel already holds the text.
+    fun saveBody(id: String, text: String) {
+        scope.launch {
+            withContext(Dispatchers.IO) { runCatching { client.writeBody(id, text) } }
+                .onSuccess { error = null }
+                .onFailure { error = "write: ${it.message ?: it}" }
+        }
+    }
+
     // The header refresh button: a plain re-export through the same busy gate as
     // mutations, so a refresh can't race a mutation's read-after-write.
     fun reload() {
@@ -301,6 +320,8 @@ private fun App(client: CliClient) {
                         onWidthDrag = { deltaDp -> panelWidth = clampPanelWidth(panelWidth - deltaDp.value, windowWidth) },
                         onMutate = ::mutate,
                         onNavigate = ::navigateTo,
+                        onLoadBody = ::loadBody,
+                        onSaveBody = ::saveBody,
                     )
                 }
             }

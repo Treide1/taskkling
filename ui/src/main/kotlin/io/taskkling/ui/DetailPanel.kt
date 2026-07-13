@@ -3,10 +3,12 @@ package io.taskkling.ui
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.hoverable
@@ -23,12 +25,16 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -37,6 +43,7 @@ import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -51,7 +58,10 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
@@ -62,8 +72,10 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -104,6 +116,8 @@ internal fun DetailPane(
     onWidthDrag: (Dp) -> Unit,
     onMutate: (args: List<String>) -> Unit,
     onNavigate: (String) -> Unit,
+    onLoadBody: suspend (String) -> String,
+    onSaveBody: (id: String, text: String) -> Unit,
 ) {
     Box(
         Modifier
@@ -142,7 +156,7 @@ internal fun DetailPane(
                     }
                 }
             } else {
-                TaskDetails(task, pinnedId, error, busy, onMutate, onNavigate)
+                TaskDetails(task, pinnedId, error, busy, onMutate, onNavigate, onLoadBody, onSaveBody)
             }
         }
         // Left-edge resize handle (t-q8i2): a slim full-height hit zone over the panel's left
@@ -252,10 +266,23 @@ private fun TaskDetails(
     busy: Boolean,
     onMutate: (args: List<String>) -> Unit,
     onNavigate: (String) -> Unit,
+    onLoadBody: suspend (String) -> String,
+    onSaveBody: (id: String, text: String) -> Unit,
 ) {
+    // A tap on inert panel space clears focus, so clicking the panel itself (not just the
+    // canvas) commits + closes the body editor. Focusable children — the body well, editable
+    // fields, dropdowns, buttons — consume their own taps first, so only bare panel taps reach
+    // this detector.
+    val focusManager = LocalFocusManager.current
     // key(task.id): switching the selection discards any open inline editor
     // (DESIGN §9) instead of leaking its draft into the next task's fields.
-    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+            .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) },
+    ) {
         if (error != null) {
             Text("error: $error", color = Tk.blocked, fontSize = 12.sp)
             Spacer(Modifier.height(8.dp))
@@ -340,8 +367,135 @@ private fun TaskDetails(
 
             RefField("blocked by", task.depends, onNavigate, resolved = task.depends.toSet() - c.blockers.toSet())
             RefField("blocker of", c.dependents, onNavigate)
+
+            Spacer(Modifier.height(5.dp))
+            BodySection(taskId = task.id, enabled = !busy, onLoadBody = onLoadBody, onSaveBody = onSaveBody)
         }
     }
+}
+
+/**
+ * The selected task's body (its markdown notes) as an editable well pressed into the
+ * panel (DESIGN §9 free-text). Unlike the metadata [EditableField]s there is no read/edit
+ * toggle and no save button: the well is always a live text field — click in and type,
+ * and losing focus (a click anywhere outside) auto-saves through [onSaveBody]. The body
+ * export omits this, so [onLoadBody] pulls it once per selection off the UI thread.
+ *
+ * The [TextFieldState] is [remember]ed against [taskId], so its built-in undo history
+ * (Ctrl+Z / Ctrl+Shift+Z) survives losing and regaining focus and the auto-save
+ * round-trip — nothing here resets the text after the initial load, so no user edit is
+ * ever dropped from the undo stack. Switching tasks remounts with a fresh load.
+ *
+ * Visually it reads as a card that fell into the panel: a surface darker than the panel,
+ * a soft inner shadow down the top and left inner edges, and a faint lower lip catching
+ * light — negative elevation, the opposite of the [PinReturn] button's lift.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun BodySection(
+    taskId: String,
+    enabled: Boolean,
+    onLoadBody: suspend (String) -> String,
+    onSaveBody: (id: String, text: String) -> Unit,
+) {
+    val state = remember(taskId) { TextFieldState() }
+    // null until the initial load lands — gates editing so an early keystroke can't be
+    // clobbered by the load, and marks the baseline the dirty check compares against.
+    var lastSaved by remember(taskId) { mutableStateOf<String?>(null) }
+    var focused by remember(taskId) { mutableStateOf(false) }
+
+    LaunchedEffect(taskId) {
+        val loaded = onLoadBody(taskId)
+        state.setTextAndPlaceCursorAtEnd(loaded)
+        // The programmatic load is the baseline, not an undoable edit — drop it so the
+        // first Ctrl+Z can't erase the stored body back to empty.
+        state.undoState.clearHistory()
+        lastSaved = loaded
+    }
+
+    fun saveIfDirty() {
+        val baseline = lastSaved ?: return // never loaded → nothing to compare or save
+        val text = state.text.toString()
+        if (text != baseline) {
+            onSaveBody(taskId, text)
+            lastSaved = text
+        }
+    }
+
+    // Backstop for switching tasks (or deselecting) while the field still holds focus:
+    // the well leaves composition before an unfocus event can arrive, so flush here too.
+    // Guarded by the same dirty check, so a focus-loss save already made is a no-op.
+    DisposableEffect(taskId) { onDispose { saveIfDirty() } }
+
+    val shape = RoundedCornerShape(6.dp)
+    FieldLabel("body")
+    Spacer(Modifier.height(3.dp))
+    DisableSelection {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 92.dp)
+                .clip(shape)
+                .background(Tk.bg)
+                // Inner shadow: painted after the fill but behind the text (drawBehind),
+                // and clipped to the rounded shape by the clip above — so the well looks
+                // recessed without darkening the glyphs.
+                .drawBehind {
+                    val top = 11.dp.toPx()
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.Black.copy(alpha = 0.38f),
+                            1f to Color.Transparent,
+                            startY = 0f,
+                            endY = top,
+                        ),
+                        size = Size(size.width, top),
+                    )
+                    val left = 9.dp.toPx()
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            0f to Color.Black.copy(alpha = 0.22f),
+                            1f to Color.Transparent,
+                            startX = 0f,
+                            endX = left,
+                        ),
+                        size = Size(left, size.height),
+                    )
+                    // Faint lower lip: the far wall of the well catching light.
+                    val lip = 1.dp.toPx()
+                    drawRect(
+                        color = Tk.line.copy(alpha = 0.5f),
+                        topLeft = Offset(0f, size.height - lip),
+                        size = Size(size.width, lip),
+                    )
+                }
+                .border(1.dp, if (focused) Tk.line else Tk.line.copy(alpha = 0.7f), shape)
+                .onFocusChanged { fs ->
+                    if (focused && !fs.isFocused) saveIfDirty()
+                    focused = fs.isFocused
+                }
+                .padding(horizontal = 11.dp, vertical = 10.dp),
+        ) {
+            BasicTextField(
+                state = state,
+                enabled = enabled && lastSaved != null,
+                textStyle = TextStyle(fontFamily = Mono, fontSize = 13.sp, lineHeight = 19.5.sp, color = Tk.txt),
+                lineLimits = TextFieldLineLimits.MultiLine(),
+                cursorBrush = SolidColor(Tk.accent),
+                modifier = Modifier.fillMaxWidth(),
+                decorator = { inner ->
+                    // Overlay so the placeholder sits under the cursor, not above the field.
+                    Box {
+                        if (state.text.isEmpty()) {
+                            Text("Add a description…", fontSize = 13.sp, color = Tk.faint)
+                        }
+                        inner()
+                    }
+                },
+            )
+        }
+    }
+    Spacer(Modifier.height(9.dp))
 }
 
 /**
