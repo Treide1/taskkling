@@ -147,5 +147,5 @@ public fun Workspace.buildExport(includeBody: Boolean, includeArchived: Boolean)
         waiting = tasks.count { it.status == Status.WAITING },
         done = tasks.count { it.status == Status.DONE },
     )
-    return ExportDto(generatedAt = nowUtc(), counts = counts, tasks = dtos)
+    return ExportDto(generatedAt = nowUtc(), counts = counts, tasks = dtos, defaultThread = config.defaultThread)
 }

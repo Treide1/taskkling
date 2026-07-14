@@ -327,9 +327,11 @@ private fun TaskDetails(
                 label = "external requirement",
                 value = task.waitingOn,
                 enabled = !busy,
-                // The CLI's own coupling: --on flips status to waiting; clearing
-                // happens only through status transitions (DESIGN §9 table).
-                saveArgs = { listOf("wait", task.id, "--on", it) },
+                // Independent of status now (ADR-018): editing the requirement is a
+                // plain `set --req`, no longer flipping the task to waiting, and it
+                // clears through `set --clear req` like the other optional fields.
+                saveArgs = { listOf("set", task.id, "--req", it) },
+                clearArgs = listOf("set", task.id, "--clear", "req"),
                 onMutate = onMutate,
             )
             EditableField(

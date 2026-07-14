@@ -54,6 +54,8 @@ public fun initWorkspace(rootOverride: String?, demoLayout: Boolean = false): In
 public data class AddArgs(
     val title: String,
     val thread: String? = null,
+    val status: String? = null,
+    val req: String? = null,
     val depends: List<String> = emptyList(),
     val due: String? = null,
     val defer: String? = null,
@@ -74,6 +76,8 @@ public fun Workspace.addTask(args: AddArgs, exportAfter: Boolean = false): Mutat
 
     val priority = args.priority?.let { Priority.from(it) } ?: Priority.NORMAL
     val thread = (args.thread?.trim()?.ifEmpty { null }) ?: config.defaultThread.ifEmpty { null }
+    val status = args.status?.trim()?.ifEmpty { null }?.let { Status.from(it) } ?: Status.OPEN
+    val req = args.req?.trim()?.ifEmpty { null }
     val due = args.due?.let { normalizeDateTime(it) }
     val defer = args.defer?.let { normalizeDateTime(it) }
     val depends = args.depends.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
@@ -88,12 +92,16 @@ public fun Workspace.addTask(args: AddArgs, exportAfter: Boolean = false): Mutat
         id = id,
         title = title,
         thread = thread,
-        status = Status.OPEN,
+        // Status is a first-class create field (ADR-018); creating straight into
+        // a closed state stamps `closed` under the same rule as a later transition.
+        status = status,
+        waitingOn = req,
         depends = depends,
         due = due,
         defer = defer,
         priority = priority,
         created = nowUtc(),
+        closed = if (status == Status.DONE || status == Status.DROPPED) nowUtc() else null,
         body = args.body?.stripLeadingBom()?.trim().orEmpty(),
     )
     writeFileAtomic(tasksDir / task.fileName(), task.toMarkdown())

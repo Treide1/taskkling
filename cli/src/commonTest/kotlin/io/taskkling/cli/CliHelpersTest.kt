@@ -296,7 +296,7 @@ class CliHelpersTest {
         // then computed.
         assertEquals(
             listOf(
-                "id", "title", "thread", "status", "waiting_on", "depends", "due", "defer",
+                "id", "title", "thread", "status", "req", "waiting_on", "depends", "due", "defer",
                 "priority", "created", "closed", "ready", "blocked", "deferred", "overdue",
                 "resurfaced", "blockers", "dependents",
             ),
@@ -304,6 +304,7 @@ class CliHelpersTest {
         )
         assertEquals("t-1", map["id"])
         assertEquals("waiting", map["status"])
+        assertEquals("review", map["req"], "req aliases the external requirement (ADR-018)")
         assertEquals("review", map["waiting_on"])
         assertEquals("t-a,t-b", map["depends"])
         assertEquals("high", map["priority"])
@@ -316,6 +317,7 @@ class CliHelpersTest {
     fun fieldMapRendersAbsentOptionalsAsEmptyStrings() {
         val map = fieldMap(task(id = "t-1", title = "bare"), computed())
         assertEquals("", map["thread"])
+        assertEquals("", map["req"])
         assertEquals("", map["waiting_on"])
         assertEquals("", map["due"])
         assertEquals("", map["defer"])

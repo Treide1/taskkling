@@ -67,7 +67,7 @@ public fun Workspace.seedDemoTasks(): Int {
             Try things:
             - `taskkling list --ready`, or open the graph with `taskkling ui`
             - mark something done (`taskkling done <id>`) and watch dependents unblock
-            - `taskkling wait <id> --on "an excuse"`, `link`/`unlink`, `set`, `reopen`
+            - `taskkling wait <id> --req "an excuse"`, `link`/`unlink`, `set`, `reopen`
 
             Every state is on display: done, dropped, waiting (one resurfaced), deferred,
             blocked and ready, plus priorities and due dates (one overdue). Dates were
@@ -122,9 +122,9 @@ public fun Workspace.seedDemoTasks(): Int {
     markDone(tunnel)
     markDone(moss)
     markDropped(beehive)
-    waitTask(mushrooms, until = null, on = "the autumn rains")
+    waitTask(mushrooms, until = null, req = "the autumn rains")
     // defer already elapsed -> the waiting task shows up resurfaced (PRD §11).
-    waitTask(shelves, until = day(-1), on = "squirrel-post parcel #ss-427")
+    waitTask(shelves, until = day(-1), req = "squirrel-post parcel #ss-427")
 
     return count
 }

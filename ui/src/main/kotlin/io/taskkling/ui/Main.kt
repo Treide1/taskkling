@@ -146,6 +146,12 @@ private fun App(client: CliClient) {
     var busy by remember { mutableStateOf(false) }
     // The open settings dialog (archive/prune), session-only like the pin.
     var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
+    // The add-card dialog (t-rjna): visibility, its in-flight flag, and its OWN
+    // error slot — create failures surface inside the dialog, never on the panel
+    // error line, so the dialog can stay open and re-enable for a retry.
+    var showCreate by remember { mutableStateOf(false) }
+    var creating by remember { mutableStateOf(false) }
+    var createError by remember { mutableStateOf<String?>(null) }
     // t-aq99: the card currently in link mode (its → handles shown), the toast
     // queue, the edge selected for unlinking, and the one-shot undo memory — all
     // session-only UI state, like the pin; the CLI stays the single write path.
@@ -215,6 +221,34 @@ private fun App(client: CliClient) {
             withContext(Dispatchers.IO) { runCatching { client.mutate(args) } }
                 .onSuccess { refresh(it) }
                 .onFailure { error = "${args.firstOrNull() ?: "cli"}: ${it.message ?: it}" }
+            busy = false
+        }
+    }
+
+    // Create a task from the add-card dialog (t-rjna): the same busy gate and
+    // read-after-write refresh as mutate, but success also closes the dialog and
+    // selects the minted task — found by diffing task ids against the pre-call
+    // export (`add` prints the id on stdout, but that channel already carries the
+    // piggybacked export). The pan is best-effort: the new card's rect isn't
+    // measured until the next layout pass, so navigateTo may only select.
+    fun createTask(args: List<String>) {
+        if (busy) return
+        val before = export?.tasks?.map { it.id }?.toSet() ?: emptySet()
+        busy = true
+        creating = true
+        createError = null
+        scope.launch {
+            withContext(Dispatchers.IO) { runCatching { client.mutate(args) } }
+                .onSuccess { next ->
+                    refresh(next)
+                    showCreate = false
+                    creating = false
+                    next.tasks.firstOrNull { it.id !in before }?.id?.let(::navigateTo)
+                }
+                .onFailure {
+                    createError = "add: ${it.message ?: it}"
+                    creating = false
+                }
             busy = false
         }
     }
@@ -358,6 +392,7 @@ private fun App(client: CliClient) {
                 export,
                 busy = busy,
                 onRefresh = ::reload,
+                onAddCard = { showCreate = true },
                 onArchive = { dialog = SettingsDialog.ARCHIVE },
                 onPrune = { dialog = SettingsDialog.PRUNE },
             )
@@ -483,6 +518,22 @@ private fun App(client: CliClient) {
                 onDismiss = { dialog = null },
             )
         }
+        // The add-card dialog (t-rjna), same overlay family. defaultThread prefills
+        // the thread field from config via the export (pure-CLI UI, ADR-010 spirit).
+        if (showCreate) {
+            CreateCardDialog(
+                defaultThread = export?.defaultThread ?: "",
+                submitting = creating,
+                error = createError,
+                onCreate = ::createTask,
+                onDismiss = {
+                    if (!creating) {
+                        showCreate = false
+                        createError = null
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -497,6 +548,7 @@ private fun Header(
     export: ExportDto?,
     busy: Boolean,
     onRefresh: () -> Unit,
+    onAddCard: (() -> Unit)?,
     onArchive: (() -> Unit)?,
     onPrune: (() -> Unit)?,
 ) {
@@ -531,6 +583,7 @@ private fun Header(
                 export,
                 busy = busy,
                 onRefresh = onRefresh,
+                onAddCard = onAddCard,
                 onArchive = onArchive,
                 onPrune = onPrune,
                 modifier = Modifier.weight(1f),
@@ -578,6 +631,7 @@ private fun HeaderLadder(
     export: ExportDto,
     busy: Boolean,
     onRefresh: () -> Unit,
+    onAddCard: (() -> Unit)?,
     onArchive: (() -> Unit)?,
     onPrune: (() -> Unit)?,
     modifier: Modifier = Modifier,
@@ -592,7 +646,7 @@ private fun HeaderLadder(
         var winner = HEADER_STAGES.lastIndex
         for (i in 0 until HEADER_STAGES.lastIndex) {
             val natural = subcompose("probe-$i") {
-                HeaderStageRow(export, HEADER_STAGES[i], busy, onRefresh, onArchive, onPrune)
+                HeaderStageRow(export, HEADER_STAGES[i], busy, onRefresh, onAddCard, onArchive, onPrune)
             }.maxOf { it.measure(Constraints()).width }
             if (natural <= constraints.maxWidth) {
                 winner = i
@@ -604,7 +658,7 @@ private fun HeaderLadder(
         // remeasured — this time with the real bounded constraints, so its weighted gap
         // expands and the chip block + cog sit flush at the header's right edge.
         val placeables = subcompose("stage-$winner") {
-            HeaderStageRow(export, HEADER_STAGES[winner], busy, onRefresh, onArchive, onPrune)
+            HeaderStageRow(export, HEADER_STAGES[winner], busy, onRefresh, onAddCard, onArchive, onPrune)
         }.map { it.measure(constraints) }
         val width = placeables.maxOf { it.width }
         val height = placeables.maxOf { it.height }
@@ -628,6 +682,7 @@ private fun HeaderStageRow(
     stage: HeaderStage,
     busy: Boolean,
     onRefresh: () -> Unit,
+    onAddCard: (() -> Unit)?,
     onArchive: (() -> Unit)?,
     onPrune: (() -> Unit)?,
 ) {
@@ -644,7 +699,7 @@ private fun HeaderStageRow(
         }
         Spacer(Modifier.width(18.dp))
         Spacer(Modifier.weight(1f))
-        CountChipRow(export, compact = stage.compactChips, busy = busy, onArchive = onArchive, onPrune = onPrune)
+        CountChipRow(export, compact = stage.compactChips, busy = busy, onAddCard = onAddCard, onArchive = onArchive, onPrune = onPrune)
     }
 }
 
@@ -653,6 +708,7 @@ private fun CountChipRow(
     export: ExportDto,
     compact: Boolean,
     busy: Boolean,
+    onAddCard: (() -> Unit)?,
     onArchive: (() -> Unit)?,
     onPrune: (() -> Unit)?,
 ) {
@@ -661,6 +717,16 @@ private fun CountChipRow(
         CountChip(Tk.blocked, export.counts.blocked, "blocked", compact)
         CountChip(Tk.waiting, export.counts.waiting, "waiting", compact)
         CountChip(Tk.done, export.counts.done, "done", compact)
+        // The add-card + (t-rjna), immediately left of the settings gear. Opening the
+        // dialog is read-only, so the busy gate here is a courtesy — the create submit
+        // itself respects busy.
+        QuietIconButton(
+            icon = UiIcons.Plus,
+            contentDescription = "add task",
+            enabled = !busy && onAddCard != null,
+            onClick = { onAddCard?.invoke() },
+            iconSize = 14.dp,
+        )
         SettingsMenu(enabled = !busy, onArchive = onArchive, onPrune = onPrune)
     }
 }

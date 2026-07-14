@@ -51,14 +51,15 @@ class ContractWireTest {
         generatedAt = "2026-01-02T00:00:00Z",
         counts = CountsDto(ready = 1, blocked = 2, waiting = 3, done = 4),
         tasks = listOf(fullTask()),
+        defaultThread = "main",
     )
 
     // --- Field names: the ADR-008 vocabulary boundary ----------------------------------------
 
     @Test
-    fun exportWireKeysAreExactlyGeneratedAtCountsTasks() {
+    fun exportWireKeysAreExactlyGeneratedAtCountsTasksDefaultThread() {
         val obj = writer.encodeToJsonElement(ExportDto.serializer(), fullExport()).jsonObject
-        assertEquals(setOf("generatedAt", "counts", "tasks"), obj.keys)
+        assertEquals(setOf("generatedAt", "counts", "tasks", "defaultThread"), obj.keys)
     }
 
     @Test

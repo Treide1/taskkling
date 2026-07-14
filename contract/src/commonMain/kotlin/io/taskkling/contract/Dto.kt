@@ -15,6 +15,13 @@ public data class ExportDto(
     val generatedAt: String,
     val counts: CountsDto,
     val tasks: List<TaskDto>,
+    /**
+     * The workspace config's `default_thread` (PRD §14), surfaced so a pure-CLI
+     * reader (the UI's create popup) can prefill the thread field without reading
+     * config itself. Empty string when unset. Defaulted so older exports still
+     * deserialize (ADR-008 boundary).
+     */
+    val defaultThread: String = "",
 )
 
 /** Aggregate counts surfaced alongside the task list (PRD §12). */

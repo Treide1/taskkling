@@ -155,6 +155,33 @@ internal object UiIcons {
         }.build()
     }
 
+    /** Plus glyph (header add-a-card button): a centred cross, NonZero fill. */
+    val Plus: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "plus",
+            defaultWidth = 16.dp,
+            defaultHeight = 16.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.White), pathFillType = PathFillType.NonZero) {
+                moveTo(11f, 4f)
+                horizontalLineTo(13f)
+                verticalLineTo(11f)
+                horizontalLineTo(20f)
+                verticalLineTo(13f)
+                horizontalLineTo(13f)
+                verticalLineTo(20f)
+                horizontalLineTo(11f)
+                verticalLineTo(13f)
+                horizontalLineTo(4f)
+                verticalLineTo(11f)
+                horizontalLineTo(11f)
+                close()
+            }
+        }.build()
+    }
+
     /** Cogwheel glyph (header settings menu, DESIGN §9). Even-odd: the second subpath hollows the hub. */
     val Gear: ImageVector by lazy {
         ImageVector.Builder(
