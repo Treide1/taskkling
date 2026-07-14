@@ -36,8 +36,9 @@ mutation flow, discovery), see PRD §6.3 and §13.
    textual state pill, dropped titles are struck through, done/dropped titles are de-emphasized.
 8. **CLI-editable is UI-editable.** Every stored, CLI-editable attribute value is editable in
    the UI, through the same CLI verbs — the UI renders and forwards, it never grows its own
-   write path (PRD §13). Graph-shaped interactions are explicitly excluded: `link`/`unlink`
-   (the `depends` edges) stay CLI-only; the UI never edits the graph. Stamps (`created`,
+   write path (PRD §13). Graph-shaped interactions are no exception: the `depends` edges are
+   authored on the canvas (link mode → edge handles → drag, §7), forwarded as the same
+   `link`/`unlink` verbs. Stamps (`created`,
    `closed`), `id`, and `computed.*` are not editable anywhere. The concrete field↔verb
    mapping lives in §9 — the one place to update when the CLI attribute surface changes
    (e.g. the task-store-v2 overhaul).
@@ -48,6 +49,11 @@ mutation flow, discovery), see PRD §6.3 and §13.
    When the affordance is directly available in place (a click with no mouse travel), its
    hint may appear on hover — revealed exactly when it becomes relevant, invisible
    otherwise (e.g. the id's copy glyph fades in on hover).
+   **Prose is not an affordance.** A hint must be *bound* to what it describes — a tooltip on
+   the control, a label inside it — never *ambient* (legend footers, status-bar copy,
+   onboarding walls), where the reader must hold a sentence in memory and map it onto an
+   element that still looks inert. An interaction needing a sentence needs a better
+   affordance: a handle, a cursor, an icon. Redesign it; don't describe it harder.
 
 ## 2. Primary state & precedence
 
@@ -132,7 +138,8 @@ whose fill is too dark: it uses light text (`#c9d1d9`).
 - **Panning**: an LMB drag that starts on the background (not on a card) pans the canvas —
   pointer delta = scroll delta (1:1), no inertia, clamped to the same bounds as wheel
   scrolling. Cursor: grab (hand) over the background at rest, grabbing (move) while
-  dragging. Drags that start on a card do nothing; card click/hover is untouched.
+  dragging. Drags that start on a card do nothing; card click/hover is untouched. (A drag from
+  an edge handle authors a dependency instead — §7.)
 - Clicking empty canvas clears the selection — never the pin (a background drag past the
   ~3px slop is a pan, not a click).
 
@@ -187,7 +194,28 @@ Edges point **from a blocker to the task it blocks** (upstream → downstream, l
   pinned card if any, else the selected one): stroke `accent`, width **2.4**, arrowhead
   `accent`.
 - While a card is highlighted, non-highlighted edges drop to **20% opacity**.
-- Edges render *under* cards and never capture pointer input.
+- Edges render *under* cards. A tap within the hit slop of an edge selects it; Del or its
+  midpoint (×) chip unlinks the selected edge.
+
+### Authoring edges on the canvas
+
+Edges are authored here, not only in the CLI (principle 8). Every affordance is visible chrome —
+no legend copy explains any of this (principle 9).
+
+- **Link mode** is a per-card toggle (a chain glyph on the id row, beside the pin, same gentle
+  hover reveal). Toggling it on reveals that card's two **edge handles** until it is toggled off.
+  The handles never track hover — that flickered across every card the pointer crossed.
+- **Two handles fix the direction**, drawn as → arrows so ingoing vs outgoing reads at a glance:
+  left = "blocked by" (drag to the blocker), right = "blocks" (drag to the dependent). Direction
+  is never inferred from where the drop lands — layout position is an *effect* of the edges, never
+  a constraint on them, so a right-hand card may legitimately block a left-hand one.
+- **A drag authors both directions**: dropping on an unlinked card links (green ring), on an
+  already-linked card unlinks (red ring). Invalid targets — self, or a drop that would close a
+  cycle — are muted and inert. Targets are classified once at drag start; a drop on empty canvas
+  evaporates.
+- Cards of **every status** can author links — linking closed tasks is legal and useful for
+  organizing.
+- Results land as a toast carrying a one-shot Ctrl+Z (inverse command, no general undo stack).
 
 ## 8. Tags, pills, chips
 
@@ -289,7 +317,7 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
       | title | text; cannot be emptied | `set --title <text>` |
       | thread, due, defer | text; empty clears | `set --thread/--due/--defer` (`--clear`) |
       | external requirement | text | `wait <id> --on <text>` — sets `status=waiting` (the CLI's own coupling); cleared only by status transitions |
-      | depends ("blocked by") | **not editable** (principle 8) | `link`/`unlink` stay CLI-only |
+      | depends ("blocked by") | drag an edge handle on the canvas (§7); not edited in the panel | `link`/`unlink` |
       | id, created, closed, computed | not editable | — |
 
     - While a mutation is in flight every editing affordance renders disabled (0.4 alpha, no

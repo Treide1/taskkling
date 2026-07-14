@@ -516,7 +516,7 @@ private fun App(client: CliClient) {
                     )
                 }
             }
-            Legend(hint = "link toggle (id row) → edge handles · drag links + unlinks")
+            Legend()
         }
 
         // t-aq99: toasts overlay everything, bottom-centre, above the legend.
@@ -798,9 +798,10 @@ private val LEGEND_ITEMS: List<Pair<Color, String>> = listOf(
     Tk.open to "open",
 )
 
-/** Legend (DESIGN §9): a swatch + label per state; [hint] shows an optional usage hint at the right edge. */
+/** Legend (DESIGN §9): a swatch + label per state. Legend rows read state, never narrate
+ *  interactions — an interaction earns a visible affordance instead (§1 principle 9). */
 @Composable
-private fun Legend(hint: String? = null) {
+private fun Legend() {
     Row(
         Modifier
             .fillMaxWidth()
@@ -818,10 +819,6 @@ private fun Legend(hint: String? = null) {
                 Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(color))
                 Text(label, fontSize = 11.sp, color = Tk.muted)
             }
-        }
-        if (hint != null) {
-            Spacer(Modifier.weight(1f))
-            Text(hint, fontSize = 10.sp, color = Tk.faint)
         }
     }
 }
