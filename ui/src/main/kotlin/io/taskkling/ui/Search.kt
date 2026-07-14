@@ -97,7 +97,7 @@ internal data class SearchBridge(
 private val SEARCH_W = 300.dp
 private val RESULT_ROW_H = 24.dp
 private const val VISIBLE_ROWS = 8
-private val RESULT_FADE_H = 16.dp
+private val RESULT_FADE_H = 24.dp
 
 /**
  * The header magnifier + its anchored search popup (t-tm10). Mirrors [SettingsMenu]
