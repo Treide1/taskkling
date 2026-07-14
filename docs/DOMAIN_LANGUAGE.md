@@ -135,6 +135,12 @@ Vocabulary of the rendered surface (visual spec: `docs/DESIGN.md`):
   a pure presentation choice, not a domain concept.
 - **state pill / tag / flag chip / count chip / legend** — per DESIGN §8/§9.
 - **selection / dimming / pan** — focus by dimming, never rearranging.
+- **not found** — of an upstream id: naming no task in the current export, because the
+  upstream was archived or the edge dangles. A UI-only word for a UI-only problem — the
+  panel can't render a link to a task it doesn't have. It describes the *id's* absence from
+  the export, never the task's existence: a "not found" blocker usually sits safe in the
+  archive. The domain word for that task is **archived** (§8); `blockers` keeps its own
+  reading of the same edge (a dangling reference counts as unmet, §3).
 
 Pinning & focus:
 
@@ -154,9 +160,10 @@ Label mapping (contract → UI), the render-time translation of §3/§4:
 
 | contract | UI label | rendering rule |
 |---------------------|--------------------------|----------------|
-| `depends` | **blocked by** | one list of all upstream ids; ids whose task is `done` render *resolved* (muted + strikethrough), unmet ones render hot. No separate unmet list. |
+| `depends`, in the export | **blocked by** | the upstream ids the export holds; ids whose task is `done` render *resolved* (muted + strikethrough), unmet ones render hot. No separate unmet list. |
+| `depends`, absent from the export | **not found** | the same field's leftovers: an indented subsection of "blocked by", never a peer. Uniformly muted and inert; hidden when empty. |
 | `computed.blockers` | — | not its own section; it is the *unmet* styling inside "blocked by". |
-| `computed.dependents` | **blocker of** | downstream ids. |
+| `computed.dependents` | **blocker of** | downstream ids. Never needs a "not found" split — dependents are computed from the active set. |
 | `waitingOn` | **external requirement** | free text field. |
 
 ## 8. Storage & lifecycle

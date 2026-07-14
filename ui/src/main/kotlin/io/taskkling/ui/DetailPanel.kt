@@ -93,7 +93,10 @@ import java.awt.Cursor
  * user-draggable via a left-edge resize gutter ([ResizeHandle] → [onWidthDrag]); the caller owns
  * the (session-only) width state and its clamping (t-q8i2).
  * Empty state is a centred hint; a selection shows styled fields (absent values
- * as a faint "—"), computed-flag chips, and clickable reference ids. Stored
+ * as a faint "—"), computed-flag chips, and clickable reference ids. [knownIds] is
+ * every id in the current export: a `depends` id outside it (archived upstream, or a
+ * dangling edge) has no card to navigate to, so it's listed inert under the "not found"
+ * subsection of "blocked by" rather than as a link (t-nt8t). Stored
  * fields are edited in place (DESIGN principle 8): enum values through
  * dropdowns, each edit forwarded as raw CLI args through [onMutate]. While a
  * mutation is in flight ([busy]) every editing affordance renders disabled so
@@ -109,6 +112,7 @@ import java.awt.Cursor
 @Composable
 internal fun DetailPane(
     task: TaskDto?,
+    knownIds: Set<String>,
     pinnedId: String?,
     error: String?,
     busy: Boolean,
@@ -156,7 +160,7 @@ internal fun DetailPane(
                     }
                 }
             } else {
-                TaskDetails(task, pinnedId, error, busy, onMutate, onNavigate, onLoadBody, onSaveBody)
+                TaskDetails(task, knownIds, pinnedId, error, busy, onMutate, onNavigate, onLoadBody, onSaveBody)
             }
         }
         // Left-edge resize handle (t-q8i2): a slim full-height hit zone over the panel's left
@@ -261,6 +265,7 @@ private fun statusArgs(id: String, status: String): List<String> = when (status)
 @Composable
 private fun TaskDetails(
     task: TaskDto,
+    knownIds: Set<String>,
     pinnedId: String?,
     error: String?,
     busy: Boolean,
@@ -367,7 +372,26 @@ private fun TaskDetails(
             }
             Spacer(Modifier.height(9.dp))
 
-            RefField("blocked by", task.depends, onNavigate, resolved = task.depends.toSet() - c.blockers.toSet())
+            // A depends id names no task in the export when its upstream was archived or
+            // the edge dangles (t-nt8t). Those ids can't be navigated to and don't belong
+            // among the accent links, so they split off into their own inert field.
+            // "blocker of" needs no such split: dependents are computed from the active
+            // set, so a non-exported id can never appear there.
+            val (inGraph, notFound) = task.depends.partition { it in knownIds }
+            RefField(
+                "blocked by",
+                inGraph,
+                onNavigate,
+                resolved = inGraph.toSet() - c.blockers.toSet(),
+                // Pull an existing "not found" subsection close, so the pair reads as one
+                // field split in two rather than as two peers.
+                bottomPad = if (notFound.isEmpty()) 9.dp else 5.dp,
+            )
+            // Indented under "blocked by": these are that field's leftovers, not a sibling
+            // of it. The only field that hides when empty instead of showing the faint dash —
+            // it reports an anomaly, and there's nothing to report for the common case of a
+            // task whose deps are all present.
+            if (notFound.isNotEmpty()) RefField("not found", notFound, onNavigate = null, indent = 12.dp)
             RefField("blocker of", c.dependents, onNavigate)
 
             Spacer(Modifier.height(5.dp))
@@ -711,16 +735,25 @@ private fun Field(label: String, value: String?) {
  * A field whose value is a comma-separated list of `accent` reference links (DESIGN §9).
  * Ids in [resolved] (upstream tasks already done — no longer blocking) render muted +
  * struck through instead of accent, but stay clickable.
+ *
+ * A null [onNavigate] makes the whole field inert (t-nt8t): every id renders muted, with
+ * no hand cursor and no click target — for ids that name no task in the export and so
+ * have nothing to navigate to.
+ *
+ * A non-zero [indent] renders the field as a subsection of the one above it; [bottomPad]
+ * tightens the gap a field leaves behind, so a parent can pull its subsection close.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RefField(
     label: String,
     ids: List<String>,
-    onNavigate: (String) -> Unit,
+    onNavigate: ((String) -> Unit)?,
     resolved: Set<String> = emptySet(),
+    indent: Dp = 0.dp,
+    bottomPad: Dp = 9.dp,
 ) {
-    Column(Modifier.padding(bottom = 9.dp)) {
+    Column(Modifier.padding(start = indent, bottom = bottomPad)) {
         FieldLabel(label)
         Spacer(Modifier.height(2.dp))
         if (ids.isEmpty()) {
@@ -733,9 +766,9 @@ private fun RefField(
                     Text(
                         id,
                         fontSize = 13.sp,
-                        color = if (isResolved) Tk.muted else Tk.accent,
+                        color = if (onNavigate == null || isResolved) Tk.muted else Tk.accent,
                         textDecoration = if (isResolved) TextDecoration.LineThrough else null,
-                        modifier = Modifier
+                        modifier = if (onNavigate == null) Modifier else Modifier
                             .pointerHoverIcon(PointerIcon.Hand)
                             .clickable { onNavigate(id) },
                     )

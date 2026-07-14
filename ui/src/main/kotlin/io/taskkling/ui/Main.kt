@@ -183,6 +183,12 @@ private fun App(client: CliClient) {
     // viewport, clamped to the scroll bounds, 150ms on both axes together. Plain card
     // clicks on the canvas select without panning (§1.4).
     fun navigateTo(id: String) {
+        // An id with no task in the current export (archived, or a dangling depends edge)
+        // is not a navigable target: selecting it would land the panel on its empty state
+        // and lose the user's place (t-nt8t). The guard sits here rather than at the call
+        // sites so the invariant is structural — no caller can clear the selection by
+        // navigating to a task that isn't there.
+        if (export?.tasks?.any { it.id == id } != true) return
         selectedId = id
         val rect = cardRects[id] ?: return
         scope.launch {
@@ -492,6 +498,9 @@ private fun App(client: CliClient) {
                     }
                     DetailPane(
                         task = export?.tasks?.firstOrNull { it.id == selectedId },
+                        // Which ids the panel may render as navigable links — absence from
+                        // the export is how it spots an archived or dangling dep (t-nt8t).
+                        knownIds = export?.tasks?.mapTo(HashSet()) { it.id } ?: emptySet(),
                         pinnedId = pinnedId,
                         error = error,
                         busy = busy,

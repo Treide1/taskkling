@@ -229,12 +229,24 @@ Small rounded capsules, radius 10, padding ~1×7, size 10.
 - **Detail panel** (right, **320 wide**, `panel`, 1px `line` left border, padding 16):
   - Empty state: centered `muted` hint ("Select a task to inspect…").
   - Selected: title → id → labeled fields (status, thread, priority, external requirement, due,
-    defer, created, closed) → computed flag chips → reference lists (blocked by / blocker of).
-    "blocked by" lists **every** upstream task; ids whose task is already `done` render
-    *resolved* — `muted` + struck through, still clickable — while unmet ones stay `accent`.
-    "blocker of" lists the downstream dependents. (UI labels are blocker-vocabulary
-    translations of the contract's `depends`/`blockers`/`dependents` — DOMAIN_LANGUAGE §7.)
+    defer, created, closed) → computed flag chips → reference lists (blocked by, with its
+    "not found" subsection / blocker of).
+    "blocked by" lists every upstream task **the graph holds**; ids whose task is already
+    `done` render *resolved* — `muted` + struck through, still clickable — while unmet ones
+    stay `accent`. "blocker of" lists the downstream dependents. (UI labels are
+    blocker-vocabulary translations of the contract's `depends`/`blockers`/`dependents` —
+    DOMAIN_LANGUAGE §7.)
+  - **"not found"** — a **subsection of "blocked by"**, not a peer: upstream ids naming no task
+    in the export, because the upstream was archived or the edge dangles. It is indented 12
+    under its parent, which tightens its own bottom gap to pull the pair together — they are
+    one field split by what the graph can still show. The ids have no card to navigate to, so
+    the field is wholly inert: `muted`, no strike, no hand cursor, no click target — one
+    uniform style, because with the task gone the UI can't tell a blocking id from a resolved
+    one. Navigating to an absent id is refused at the source, so a stray click can never clear
+    the selection.
   - Absent values render as `faint` "—" rather than disappearing, so the panel shape is stable.
+    "not found" is the one exception: it reports an anomaly, so it hides entirely when empty
+    rather than showing a dash on every healthy task.
   - **Header id — click to copy**: the id in the header row reads `faint`; hovering it
     sharpens it to `txt` under a hand cursor and fades in the overlapping-sheets copy glyph
     beside it (principle 9: the affordance announces itself before the click). Clicking
