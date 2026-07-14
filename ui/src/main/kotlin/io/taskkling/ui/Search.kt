@@ -28,8 +28,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -93,6 +97,7 @@ internal data class SearchBridge(
 private val SEARCH_W = 300.dp
 private val RESULT_ROW_H = 24.dp
 private const val VISIBLE_ROWS = 8
+private val RESULT_FADE_H = 16.dp
 
 /**
  * The header magnifier + its anchored search popup (t-tm10). Mirrors [SettingsMenu]
@@ -233,6 +238,34 @@ private fun SearchSurface(
                 Column(
                     Modifier
                         .heightIn(max = RESULT_ROW_H * VISIBLE_ROWS)
+                        // Edge fades: a scrim from the surface colour over whichever
+                        // edge content continues past — the ellipsis idea translated
+                        // to continuous scroll (direction-specific, honest at any
+                        // fractional position). Sits between heightIn and
+                        // verticalScroll so it draws in VIEWPORT space, over the
+                        // clipped rows, not inside the scrolled content.
+                        .drawWithContent {
+                            drawContent()
+                            val fade = RESULT_FADE_H.toPx()
+                            if (listScroll.value > 0) {
+                                drawRect(
+                                    Brush.verticalGradient(0f to Tk.panel2, 1f to Color.Transparent, endY = fade),
+                                    size = Size(size.width, fade),
+                                )
+                            }
+                            if (listScroll.value < listScroll.maxValue) {
+                                drawRect(
+                                    Brush.verticalGradient(
+                                        0f to Color.Transparent,
+                                        1f to Tk.panel2,
+                                        startY = size.height - fade,
+                                        endY = size.height,
+                                    ),
+                                    topLeft = Offset(0f, size.height - fade),
+                                    size = Size(size.width, fade),
+                                )
+                            }
+                        }
                         .verticalScroll(listScroll),
                 ) {
                     results.forEachIndexed { i, t ->
@@ -252,15 +285,19 @@ private fun SearchSurface(
     LaunchedEffect(Unit) { focus.requestFocus() }
     // Keep the cursored row visible while arrowing through an overflowing list. Rows
     // are fixed-height, so the target offset is plain math — no per-row geometry.
+    // Padded by the edge-fade height so the cursored row clears the scrim instead of
+    // sitting half-dimmed under it (animateScrollTo clamps, so the first/last rows
+    // still rest flush against their edge).
     LaunchedEffect(cursor, previewed) {
         if (!previewed) return@LaunchedEffect
         val rowPx = with(density) { RESULT_ROW_H.roundToPx() }
+        val fadePx = with(density) { RESULT_FADE_H.roundToPx() }
         val top = cursor * rowPx
         val bottom = top + rowPx
         when {
-            top < listScroll.value -> listScroll.animateScrollTo(top)
-            bottom > listScroll.value + listScroll.viewportSize ->
-                listScroll.animateScrollTo(bottom - listScroll.viewportSize)
+            top - fadePx < listScroll.value -> listScroll.animateScrollTo(top - fadePx)
+            bottom + fadePx > listScroll.value + listScroll.viewportSize ->
+                listScroll.animateScrollTo(bottom + fadePx - listScroll.viewportSize)
         }
     }
 }
