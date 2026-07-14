@@ -40,6 +40,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.res.painterResource
@@ -152,6 +153,10 @@ private fun App(client: CliClient) {
     var showCreate by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
     var createError by remember { mutableStateOf<String?>(null) }
+    // The find-task popup (t-tm10): only open/closed is hoisted — the root Ctrl+F
+    // capture below needs to open it — the query itself lives inside the popup and
+    // dies with it (transient, never restored). Session-only like the pin.
+    var searchOpen by remember { mutableStateOf(false) }
     // t-aq99: the card currently in link mode (its → handles shown), the toast
     // queue, the edge selected for unlinking, and the one-shot undo memory — all
     // session-only UI state, like the pin; the CLI stays the single write path.
@@ -372,6 +377,24 @@ private fun App(client: CliClient) {
             .fillMaxSize()
             .focusRequester(rootFocus)
             .focusable()
+            // t-tm10 focus contract: Ctrl+F is captured here in the PREVIEW (capture)
+            // phase — top-down, before any focused descendant — and consumed, so it
+            // opens search and steals focus from whatever holds it, including a
+            // detail-panel field mid-edit (whose draft the focus loss commits; see
+            // EditableField/BodySection). Suppressed while a modal dialog is up: the
+            // popup would fight the dialog's scrim and focus. While the search popup
+            // itself is open it owns focus, so this never fires — the popup handles
+            // its own Ctrl+F (re-select the query).
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.isCtrlPressed && event.key == Key.F &&
+                    export != null && dialog == null && !showCreate
+                ) {
+                    searchOpen = true
+                    true
+                } else {
+                    false
+                }
+            }
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                 when {
@@ -395,6 +418,17 @@ private fun App(client: CliClient) {
                 onAddCard = { showCreate = true },
                 onArchive = { dialog = SettingsDialog.ARCHIVE },
                 onPrune = { dialog = SettingsDialog.PRUNE },
+                search = SearchBridge(
+                    open = searchOpen,
+                    onOpen = { searchOpen = true },
+                    // Esc / Enter / click-away all land here: close and hand focus
+                    // back to the root so canvas-level keys work again (t-tm10).
+                    onClose = {
+                        searchOpen = false
+                        rootFocus.requestFocus()
+                    },
+                    onNavigate = ::navigateTo,
+                ),
             )
             // BoxWithConstraints exposes the live window width so the panel's dragged width can be
             // re-clamped against the 60% cap every layout pass — a Modifier-level clamp at measure
@@ -551,6 +585,7 @@ private fun Header(
     onAddCard: (() -> Unit)?,
     onArchive: (() -> Unit)?,
     onPrune: (() -> Unit)?,
+    search: SearchBridge,
 ) {
     Row(
         Modifier
@@ -586,6 +621,7 @@ private fun Header(
                 onAddCard = onAddCard,
                 onArchive = onArchive,
                 onPrune = onPrune,
+                search = search,
                 modifier = Modifier.weight(1f),
             )
         } else {
@@ -634,8 +670,15 @@ private fun HeaderLadder(
     onAddCard: (() -> Unit)?,
     onArchive: (() -> Unit)?,
     onPrune: (() -> Unit)?,
+    search: SearchBridge,
     modifier: Modifier = Modifier,
 ) {
+    // Probe compositions get the bridge with `open` forced off: a Popup composes its
+    // content into an overlay layer the moment it enters composition, placed or not,
+    // so an open search in a probe slot would spawn a SECOND popup beside the
+    // winner's (t-tm10). The magnifier icon itself still renders in probes — it's a
+    // fixed, non-degrading element, so every stage measures its true width.
+    val probeSearch = search.copy(open = false)
     SubcomposeLayout(modifier) { constraints ->
         // Walk the stages most-preferred first; a stage's NATURAL width is measured with
         // unbounded Constraints(), under which the weighted gap collapses to its 18dp
@@ -646,7 +689,7 @@ private fun HeaderLadder(
         var winner = HEADER_STAGES.lastIndex
         for (i in 0 until HEADER_STAGES.lastIndex) {
             val natural = subcompose("probe-$i") {
-                HeaderStageRow(export, HEADER_STAGES[i], busy, onRefresh, onAddCard, onArchive, onPrune)
+                HeaderStageRow(export, HEADER_STAGES[i], busy, onRefresh, onAddCard, onArchive, onPrune, probeSearch)
             }.maxOf { it.measure(Constraints()).width }
             if (natural <= constraints.maxWidth) {
                 winner = i
@@ -658,7 +701,7 @@ private fun HeaderLadder(
         // remeasured — this time with the real bounded constraints, so its weighted gap
         // expands and the chip block + cog sit flush at the header's right edge.
         val placeables = subcompose("stage-$winner") {
-            HeaderStageRow(export, HEADER_STAGES[winner], busy, onRefresh, onAddCard, onArchive, onPrune)
+            HeaderStageRow(export, HEADER_STAGES[winner], busy, onRefresh, onAddCard, onArchive, onPrune, search)
         }.map { it.measure(constraints) }
         val width = placeables.maxOf { it.width }
         val height = placeables.maxOf { it.height }
@@ -685,6 +728,7 @@ private fun HeaderStageRow(
     onAddCard: (() -> Unit)?,
     onArchive: (() -> Unit)?,
     onPrune: (() -> Unit)?,
+    search: SearchBridge,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         // Generated-note: the timestamp text is the ladder's first casualty — it shrinks
@@ -699,7 +743,7 @@ private fun HeaderStageRow(
         }
         Spacer(Modifier.width(18.dp))
         Spacer(Modifier.weight(1f))
-        CountChipRow(export, compact = stage.compactChips, busy = busy, onAddCard = onAddCard, onArchive = onArchive, onPrune = onPrune)
+        CountChipRow(export, compact = stage.compactChips, busy = busy, onAddCard = onAddCard, onArchive = onArchive, onPrune = onPrune, search = search)
     }
 }
 
@@ -711,15 +755,15 @@ private fun CountChipRow(
     onAddCard: (() -> Unit)?,
     onArchive: (() -> Unit)?,
     onPrune: (() -> Unit)?,
+    search: SearchBridge,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         CountChip(Tk.ready, export.counts.ready, "ready", compact)
         CountChip(Tk.blocked, export.counts.blocked, "blocked", compact)
         CountChip(Tk.waiting, export.counts.waiting, "waiting", compact)
         CountChip(Tk.done, export.counts.done, "done", compact)
-        // The add-card + (t-rjna), immediately left of the settings gear. Opening the
-        // dialog is read-only, so the busy gate here is a courtesy — the create submit
-        // itself respects busy.
+        // The add-card + (t-rjna). Opening the dialog is read-only, so the busy gate
+        // here is a courtesy — the create submit itself respects busy.
         QuietIconButton(
             icon = UiIcons.Plus,
             contentDescription = "add task",
@@ -727,6 +771,10 @@ private fun CountChipRow(
             onClick = { onAddCard?.invoke() },
             iconSize = 14.dp,
         )
+        // The find-task magnifier (t-tm10), immediately left of the settings gear.
+        // Fixed and non-degrading, like the refresh icon and the cog: constant size
+        // in every HeaderLadder stage — only the timestamp / chip labels degrade.
+        SearchControl(tasks = export.tasks, bridge = search)
         SettingsMenu(enabled = !busy, onArchive = onArchive, onPrune = onPrune)
     }
 }
