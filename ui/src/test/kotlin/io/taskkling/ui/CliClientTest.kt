@@ -278,4 +278,161 @@ class CliClientTest {
         assertEquals("no-newline", normalizeBodyText("no-newline"))
         assertEquals("", normalizeBodyText(""))
     }
+
+    // --- Windows argv encoding (t-ctbc) -------------------------------------------------
+    //
+    // The bug these cover: on Windows there is no argv, only a command line string the
+    // child's CRT re-splits, and `ProcessBuilder` used to build that string for us without
+    // escaping quotes inside an argument. A title like `Fix the "thing" now` was silently
+    // stored as `Fix the thing now`, and `quote " mid` failed with a bare exit 127.
+    //
+    // The honest test would be a real subprocess echoing its argv back, but the fake binary
+    // here is a `.cmd` on Windows, and cmd.exe re-parses the command line by its OWN rules
+    // before the script ever sees it — so it would measure the wrong parser and pass while
+    // the real (.exe) path stayed broken. Instead: encode, then decode with a reference
+    // implementation of the CRT's documented splitting rules, and assert the value survives.
+    // That pins the actual contract and runs identically on CI's Linux and this dev host.
+
+    /**
+     * Split a Windows command line the way the MS C runtime does, per its documented rules:
+     * `2n` backslashes before a `"` mean `n` literal backslashes and a quote toggle, `2n+1`
+     * mean `n` backslashes and a LITERAL quote, and unquoted whitespace separates arguments.
+     * Deliberately an independent implementation, not a mirror of [encodeArg] — a shared
+     * helper could agree with itself while both were wrong.
+     */
+    private fun crtSplit(cmdline: String): List<String> {
+        val args = mutableListOf<String>()
+        var i = 0
+        while (i < cmdline.length) {
+            while (i < cmdline.length && cmdline[i].isWhitespace()) i++
+            if (i >= cmdline.length) break
+            val cur = StringBuilder()
+            var inQuotes = false
+            while (i < cmdline.length) {
+                val c = cmdline[i]
+                when {
+                    c == '\\' -> {
+                        var n = 0
+                        while (i < cmdline.length && cmdline[i] == '\\') { n++; i++ }
+                        if (i < cmdline.length && cmdline[i] == '"') {
+                            repeat(n / 2) { cur.append('\\') }
+                            if (n % 2 == 1) { cur.append('"'); i++ } else { inQuotes = !inQuotes; i++ }
+                        } else {
+                            repeat(n) { cur.append('\\') }
+                        }
+                    }
+                    c == '"' -> { inQuotes = !inQuotes; i++ }
+                    !inQuotes && c.isWhitespace() -> break
+                    else -> { cur.append(c); i++ }
+                }
+            }
+            args += cur.toString()
+        }
+        return args
+    }
+
+    /** Encode [args] as the client would, join them as Windows does, and split them back. */
+    private fun roundTrip(vararg args: String): List<String> =
+        crtSplit(args.joinToString(" ") { encodeArg(it) })
+
+    @Test
+    fun theReferenceSplitterItselfMatchesDocumentedCrtBehaviour() {
+        // Guard the guard: if this drifted, every round-trip below would be meaningless.
+        assertEquals(listOf("a", "b"), crtSplit("""a b"""))
+        assertEquals(listOf("a b"), crtSplit(""""a b""""))
+        // `\"` is an escaped quote: one literal `"`, no toggle.
+        assertEquals(listOf("""a"b"""), crtSplit("""a\"b"""))
+        // Backslashes NOT followed by a quote are literal — they are NOT halved.
+        assertEquals(listOf("""a\\b"""), crtSplit("""a\\b"""))
+        // `\\"` is 2n before a quote: n=1 literal backslash, and the quote toggles.
+        assertEquals(listOf("""a\"""), crtSplit(""""a\\""""))
+    }
+
+    @Test
+    fun aTitleWithInteriorQuotesSurvivesTheCommandLine() {
+        // The exact input from the report: it used to arrive as `Fix the thing now`.
+        assertEquals(listOf("""Fix the "thing" now"""), roundTrip("""Fix the "thing" now"""))
+    }
+
+    @Test
+    fun aTitleWithOneUnpairedQuoteSurvivesInsteadOfSplittingInTwo() {
+        // This one used to exit 127: the CRT split it into `quote ` + `mid`, and the CLI
+        // reported "Too many arguments!".
+        assertEquals(listOf("""quote " mid"""), roundTrip("""quote " mid"""))
+    }
+
+    @Test
+    fun aFullyQuotedTitleSurvives() {
+        // The case that defeats -Djdk.lang.Process.allowAmbiguousCommands=false too: the
+        // JDK reads an arg that starts AND ends with a quote as already-quoted and strips.
+        assertEquals(listOf(""""fully quoted""""), roundTrip(""""fully quoted""""))
+        assertEquals(listOf(""""a" and "b""""), roundTrip(""""a" and "b""""))
+    }
+
+    @Test
+    fun backslashesSurviveIncludingTheRunsThatAbutAQuote() {
+        assertEquals(listOf("""back\slash"""), roundTrip("""back\slash"""))
+        assertEquals(listOf("""ends with backslash\"""), roundTrip("""ends with backslash\"""))
+        assertEquals(listOf("""C:\path\to\dir\"""), roundTrip("""C:\path\to\dir\"""))
+        // A backslash run directly before a quote is where the 2n/2n+1 rule bites.
+        assertEquals(listOf("""a\"b"""), roundTrip("""a\"b"""))
+        assertEquals(listOf("""a\\"b"""), roundTrip("""a\\"b"""))
+    }
+
+    @Test
+    fun theInnocentPunctuationFromTheReportWasNeverTheProblem() {
+        // `.,-` were blamed alongside `"`, but they round-trip untouched — worth pinning so
+        // nobody "fixes" them again.
+        assertEquals(listOf("""ok, plain. title-"""), roundTrip("""ok, plain. title-"""))
+        assertEquals(listOf("-leading"), roundTrip("-leading"))
+        assertEquals(listOf("trailing-"), roundTrip("trailing-"))
+    }
+
+    @Test
+    fun flagsAndValuesStayDistinctArguments() {
+        // The whole add invocation, as the dialog builds it: a quote-laden title must not
+        // bleed into the flags that follow it.
+        assertEquals(
+            listOf("add", """a "quoted" title""", "--status", "open", "--thread", "v0.6.4"),
+            roundTrip("add", """a "quoted" title""", "--status", "open", "--thread", "v0.6.4"),
+        )
+    }
+
+    @Test
+    fun awkwardArgumentsSurvive() {
+        assertEquals(listOf(""), roundTrip(""))
+        assertEquals(listOf(" "), roundTrip(" "))
+        assertEquals(listOf("\""), roundTrip("\""))
+        assertEquals(listOf("\"\""), roundTrip("\"\""))
+        assertEquals(listOf("tabs\there"), roundTrip("tabs\there"))
+        assertEquals(listOf("Grüße, Öl & Maß"), roundTrip("Grüße, Öl & Maß"))
+    }
+
+    @Test
+    fun everyEncodedArgumentIsQuotedSoTheJdkPassesItThroughVerbatim() {
+        // The encoding only reaches the child intact because ProcessImpl appends an arg
+        // verbatim when it already starts and ends with a quote. If encodeArg ever emitted
+        // a bare token, the JDK would re-quote it and the corruption would be back.
+        for (arg in listOf("plain", "", " ", """with "quotes"""", """trailing\""", "--status")) {
+            val encoded = encodeArg(arg)
+            assertTrue(encoded.startsWith("\"") && encoded.endsWith("\"") && encoded.length >= 2, "bare token for [$arg]: $encoded")
+        }
+    }
+
+    @Test
+    fun posixArgvIsPassedThroughUntouched() {
+        // execve takes a real string vector; quoting there would embed literal quotes.
+        assertEquals(
+            listOf("/usr/bin/taskkling", "add", """a "quoted" title""", "--status"),
+            commandLine("/usr/bin/taskkling", listOf("add", """a "quoted" title""", "--status"), windows = false),
+        )
+    }
+
+    @Test
+    fun windowsArgvIsEncodedButTheBinaryPathIsNot() {
+        // The binary path holds no user text, and the JDK quotes the executable itself.
+        val line = commandLine("""C:\bin\taskkling.exe""", listOf("add", "a b"), windows = true)
+        assertEquals("""C:\bin\taskkling.exe""", line[0])
+        assertEquals(listOf("add", "a b"), crtSplit(line.drop(1).joinToString(" ")))
+    }
 }

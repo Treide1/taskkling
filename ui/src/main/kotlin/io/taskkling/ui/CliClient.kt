@@ -71,6 +71,74 @@ public object CliDiscovery {
 /** A failed CLI invocation, carrying the process exit code and the CLI's own reason. */
 public class CliException(public val code: Int, message: String) : RuntimeException(message)
 
+/** True when this JVM will hand argv to a child through a Windows command line ([encodeArg]). */
+private val IS_WINDOWS: Boolean =
+    System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
+
+/**
+ * Quote one argument the way the Microsoft C runtime parses it back (t-ctbc).
+ *
+ * Windows has no argv: `CreateProcess` takes ONE command line string, and the child's CRT
+ * re-splits it. Java can't opt out — `ProcessBuilder` joins our list into that string
+ * itself, and its default "legacy" mode wraps an arg containing spaces in quotes without
+ * escaping the quotes INSIDE it. The CRT then re-splits at the wrong places, which is where
+ * the reported bug came from: a title like `Fix the "thing" now` silently stored as
+ * `Fix the thing now`, and `quote " mid` failing with a bare `add: taskkling exited 127`
+ * ("Too many arguments!" — the CRT had turned one title into two). Only `"` is affected;
+ * the `.`, `,` and `-` in the report are innocent.
+ *
+ * So encode the argument ourselves, per the CRT's documented rules:
+ *   - a `"` is escaped as `\"`,
+ *   - backslashes are literal EXCEPT in a run directly before a `"`, where each doubles,
+ *   - the whole thing is wrapped in quotes (unconditionally — harmless, and it is what
+ *     makes the pass-through below fire).
+ *
+ * The pass-through: `ProcessImpl` appends an argument verbatim when it already starts and
+ * ends with a quote (JDK 21 ProcessImpl.needsEscaping → `argIsQuoted`), so a fully-encoded
+ * token reaches the child untouched instead of being re-quoted. That legacy path is the
+ * default whenever there is no SecurityManager — always, on JDK 21+, where the
+ * SecurityManager is permanently disabled. `CliClientTest` pins the whole contract by
+ * decoding with a reference CRT splitter, so a JDK that changed this would fail loudly
+ * rather than quietly corrupt titles again.
+ *
+ * Not an option: `-Djdk.lang.Process.allowAmbiguousCommands=false`. It fixes interior
+ * quotes but still strips them from an argument that both starts AND ends with one
+ * (`"fully quoted"`), and throws `IllegalArgumentException` on `"a" and "b"`.
+ */
+internal fun encodeArg(arg: String): String {
+    val sb = StringBuilder(arg.length + 8).append('"')
+    var slashes = 0
+    for (c in arg) {
+        when (c) {
+            '\\' -> slashes++
+            '"' -> {
+                // This run of backslashes precedes a quote, so it must be doubled, and
+                // then one more escapes the quote itself.
+                repeat(slashes * 2 + 1) { sb.append('\\') }
+                slashes = 0
+                sb.append('"')
+            }
+            else -> {
+                repeat(slashes) { sb.append('\\') }
+                slashes = 0
+                sb.append(c)
+            }
+        }
+    }
+    // A trailing run abuts the closing quote, so it doubles for the same reason.
+    repeat(slashes * 2) { sb.append('\\') }
+    return sb.append('"').toString()
+}
+
+/**
+ * The argv to hand [ProcessBuilder]. On POSIX this is identity: `execve` takes a real
+ * string vector, nothing re-parses it, and quoting would embed literal quotes in the
+ * values. Only Windows needs [encodeArg]. The binary path is left alone either way —
+ * Java quotes the executable itself, and it holds no user text.
+ */
+internal fun commandLine(binary: String, args: List<String>, windows: Boolean = IS_WINDOWS): List<String> =
+    listOf(binary) + if (windows) args.map(::encodeArg) else args
+
 /** How much of a blank-stderr failure's stdout [cliFailureMessage] quotes. */
 private const val EXCERPT_LINES = 3
 private const val EXCERPT_CHARS = 300
@@ -170,7 +238,7 @@ public class CliClient(
      * skips `--export-on-success`: the panel already holds the text it just saved.
      */
     public fun writeBody(id: String, text: String) {
-        val proc = ProcessBuilder(listOf(binary, "write", id, "-"))
+        val proc = ProcessBuilder(commandLine(binary, listOf("write", id, "-")))
             .directory(workdir)
             .redirectErrorStream(false)
             .start()
@@ -195,7 +263,7 @@ public class CliClient(
     private data class Output(val stdout: String, val stderr: String)
 
     private fun run(args: List<String>): Output {
-        val proc = ProcessBuilder(listOf(binary) + args)
+        val proc = ProcessBuilder(commandLine(binary, args))
             .directory(workdir)
             .redirectErrorStream(false)
             .start()

@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +71,11 @@ internal const val CARD_MIN_H = 96
 internal const val COL_GAP = 110
 internal const val ROW_GAP = 24
 internal const val PAD = 28
+
+// How many frames pan-to-a-new-card waits for the graph to measure it (t-ctbc). A create
+// normally needs one or two; this is only the give-up bound for a card that never arrives,
+// generous enough to absorb a slow layout on a big graph without stranding a coroutine.
+private const val PAN_MEASURE_FRAME_BUDGET = 30
 
 /**
  * The desktop app (PRD §13): a pure CLI client. Reads `export`, lays the DAG out
@@ -203,6 +209,31 @@ private fun App(client: CliClient) {
         }
     }
 
+    /**
+     * Select and centre a card that does not exist on screen YET (t-ctbc). [navigateTo]
+     * reads a MEASURED rect, but a card created a moment ago has none until the graph's
+     * next layout pass, so calling it inline after a create silently skipped the pan and
+     * only selected — the reported "card is selected but not panned to". Select right
+     * away (the panel shouldn't wait), then pan once the card has been measured.
+     *
+     * The extra frame after the rect appears is not padding: the same layout pass grows
+     * the canvas and hence the scroll range, and [centerScrollOffset] clamps against
+     * `maxValue`. Reading it too early clamps the target against the OLD, shorter range
+     * and lands short of the new card. Bounded, so a target that never gets measured
+     * (filtered out of the graph, say) gives up instead of spinning forever.
+     */
+    suspend fun navigateToNew(id: String) {
+        navigateTo(id)
+        repeat(PAN_MEASURE_FRAME_BUDGET) {
+            if (cardRects.containsKey(id)) {
+                withFrameNanos { }
+                navigateTo(id)
+                return
+            }
+            withFrameNanos { }
+        }
+    }
+
     fun refresh(next: ExportDto) {
         export = next
         error = null
@@ -257,10 +288,10 @@ private fun App(client: CliClient) {
 
     // Create a task from the add-card dialog (t-rjna): the same busy gate and
     // read-after-write refresh as mutate, but success also closes the dialog and
-    // selects the minted task — found by diffing task ids against the pre-call
+    // navigates to the minted task — found by diffing task ids against the pre-call
     // export (`add` prints the id on stdout, but that channel already carries the
-    // piggybacked export). The pan is best-effort: the new card's rect isn't
-    // measured until the next layout pass, so navigateTo may only select.
+    // piggybacked export). The pan waits for the card to be measured (t-ctbc), so it
+    // no longer degrades to a bare selection; see navigateToNew.
     fun createTask(args: List<String>) {
         if (busy) return
         val before = export?.tasks?.map { it.id }?.toSet() ?: emptySet()
@@ -273,7 +304,7 @@ private fun App(client: CliClient) {
                     refresh(next)
                     showCreate = false
                     creating = false
-                    next.tasks.firstOrNull { it.id !in before }?.id?.let(::navigateTo)
+                    next.tasks.firstOrNull { it.id !in before }?.id?.let { navigateToNew(it) }
                 }
                 .onFailure {
                     createError = "add: ${it.message ?: it}"

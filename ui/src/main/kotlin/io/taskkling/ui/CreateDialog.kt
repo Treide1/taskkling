@@ -64,12 +64,13 @@ import androidx.compose.ui.unit.sp
  *
  * Title/status/thread are always visible; priority / external requirement / due /
  * defer / body sit in a collapsible, collapsed by default. While [submitting],
- * every affordance is inert (fields disabled, scrim + Escape ignored) and the
- * button row is a spinner — the dialog can only resolve through the CLI's answer:
- * success closes it, failure lands on the inline [error] line and re-enables.
+ * every affordance is inert (fields disabled, Escape ignored) and the button row is
+ * a spinner — the dialog can only resolve through the CLI's answer: success closes
+ * it, failure lands on the inline [error] line and re-enables.
  *
  * The keyboard never submits (user decision 2026-07-14): Enter types a newline in
  * the body field and is a no-op elsewhere; Escape (when not submitting) dismisses.
+ * Clicking the scrim does NOT dismiss (t-ctbc) — see the scrim below.
  */
 @Composable
 internal fun CreateCardDialog(
@@ -109,14 +110,16 @@ internal fun CreateCardDialog(
     }
 
     val shape = RoundedCornerShape(7.dp)
-    // Scrim: click-away dismisses (unless mid-flight); the card consumes its own clicks.
+    // Scrim: swallows clicks without dismissing (t-ctbc). A click-away used to close the
+    // dialog, which threw away a half-typed form on a stray click — the form is DRAFT
+    // state, so there is nothing to recover it from. Only the explicit outs close it now:
+    // "cancel" and Escape, both of which take deliberate aim. The click is still consumed
+    // so it can't fall through and select a card on the graph behind.
     Box(
         Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.45f))
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                if (!submitting) onDismiss()
-            },
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
         contentAlignment = Alignment.Center,
     ) {
         Column(
