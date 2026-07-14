@@ -182,6 +182,42 @@ internal object UiIcons {
         }.build()
     }
 
+    /** Magnifier glyph (t-tm10 header find-task button). Even-odd: the second subpath hollows the lens. */
+    val Search: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "search",
+            defaultWidth = 16.dp,
+            defaultHeight = 16.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.White), pathFillType = PathFillType.EvenOdd) {
+                // Lens outline + handle.
+                moveTo(15.5f, 14f)
+                horizontalLineToRelative(-0.79f)
+                lineToRelative(-0.28f, -0.27f)
+                curveTo(15.41f, 12.59f, 16f, 11.11f, 16f, 9.5f)
+                curveTo(16f, 5.91f, 13.09f, 3f, 9.5f, 3f)
+                reflectiveCurveTo(3f, 5.91f, 3f, 9.5f)
+                reflectiveCurveTo(5.91f, 16f, 9.5f, 16f)
+                curveToRelative(1.61f, 0f, 3.09f, -0.59f, 4.23f, -1.57f)
+                lineToRelative(0.27f, 0.28f)
+                verticalLineToRelative(0.79f)
+                lineToRelative(4.99f, 5f)
+                lineTo(20.49f, 19f)
+                lineToRelative(-4.99f, -5f)
+                close()
+                // Inner circle: hollows the lens under even-odd.
+                moveTo(9.5f, 14f)
+                curveTo(7.01f, 14f, 5f, 11.99f, 5f, 9.5f)
+                reflectiveCurveTo(7.01f, 5f, 9.5f, 5f)
+                reflectiveCurveTo(14f, 7.01f, 14f, 9.5f)
+                reflectiveCurveTo(11.99f, 14f, 9.5f, 14f)
+                close()
+            }
+        }.build()
+    }
+
     /** Cogwheel glyph (header settings menu, DESIGN §9). Even-odd: the second subpath hollows the hub. */
     val Gear: ImageVector by lazy {
         ImageVector.Builder(

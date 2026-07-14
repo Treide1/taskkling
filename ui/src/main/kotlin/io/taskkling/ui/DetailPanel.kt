@@ -567,6 +567,12 @@ private fun EnumField(
  * (a successful round-trip); a CLI rejection leaves it open with the error on
  * the panel's error line. Saving an unchanged value — or an emptied one when
  * [clearArgs] is null (not clearable) — is a local no-op close.
+ *
+ * Losing focus while editing ALSO commits (t-tm10, the BodySection contract):
+ * a focus-steal — Ctrl+F opening search, a click-away, a navigation remount —
+ * must never silently drop the draft. Escape wins over a subsequent focus-loss
+ * event because it clears `editing` first; a save-button click's own commit is
+ * absorbed by the busy gate / unchanged-value no-op after the focus-loss one.
  */
 @Composable
 private fun EditableField(
@@ -622,6 +628,14 @@ private fun EditableField(
             DisableSelection {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val focus = remember { FocusRequester() }
+                    // True once the field has actually held focus, so the initial
+                    // not-focused event on mount doesn't commit an untouched draft.
+                    var hadFocus by remember { mutableStateOf(false) }
+                    // Backstop for a remount that skips the focus event (panel
+                    // recomposition via key(task.id) on navigation), mirroring
+                    // BodySection's onDispose save. `editing` is already false on
+                    // every deliberate close (Escape, committed round-trip).
+                    DisposableEffect(Unit) { onDispose { if (editing) commit() } }
                     BasicTextField(
                         value = draft,
                         onValueChange = { draft = it },
@@ -641,6 +655,10 @@ private fun EditableField(
                             .border(1.dp, Tk.line, RoundedCornerShape(4.dp))
                             .padding(horizontal = 6.dp, vertical = 3.dp)
                             .focusRequester(focus)
+                            .onFocusChanged { fs ->
+                                if (hadFocus && !fs.isFocused && editing) commit()
+                                hadFocus = fs.isFocused
+                            }
                             .onPreviewKeyEvent { ev ->
                                 when {
                                     ev.type != KeyEventType.KeyDown -> false
