@@ -41,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -92,7 +93,8 @@ import kotlin.math.hypot
  * [hScroll]/[vScroll] are hoisted to the caller so wheel scrolling, drag
  * panning, and programmatic pan-to-card all mutate the same clamped state.
  * [cardRects] is hoisted for the same reason: the measure pass below fills it,
- * and the caller's pan-to-card (§9) reads a target card's centre from it.
+ * and the caller's pan-to-card (§9) reads a target card's centre from it — or, for a
+ * card this pass is about to measure for the first time, awaits it (see [CardRect]).
  *
  * t-aq99: dependency edges are authored here too — a card in link mode
  * ([linkModeId]) shows → edge handles; a drag from one spawns a live S-curve that
@@ -117,7 +119,7 @@ internal fun GraphPane(
     onUnlink: (dependent: String, blocker: String) -> Unit,
     hScroll: ScrollState,
     vScroll: ScrollState,
-    cardRects: HashMap<String, CardRect>,
+    cardRects: SnapshotStateMap<String, CardRect>,
     modifier: Modifier = Modifier,
 ) {
     val gl = remember(export) { layout(export.tasks) }
@@ -429,11 +431,17 @@ private class PlacedNode(val task: TaskDto, val pos: NodePos)
  * One card's measured geometry in canvas px, produced by [GraphPane]'s measure pass and
  * consumed by the edge underlay (§7), the pan hit-test (§5), and pan-to-card (§9).
  * [right]/[centerY] give an S-curve its source and target anchors: the right edge and
- * MEASURED vertical centre of a card (§10). The hoisted map holding these is a plain
- * (non-snapshot) HashMap deliberately: writing it during measure and reading it during
- * the same frame's draw needs no invalidation — draw always runs after measure, and any
- * re-measure re-runs the draw that reads the map. The caller's pan-to-card reads it from
- * a click handler, which likewise always runs after the frame that measured the cards.
+ * MEASURED vertical centre of a card (§10).
+ *
+ * The hoisted map holding these is snapshot state. Most readers would not need it to be:
+ * the draw and the gesture handlers all run after the measure pass that fills it, so they
+ * would see current values from a plain HashMap. The one reader that does is pan-to-a-JUST
+ * -CREATED card (§9, t-ctbc): its target has no rect until the next layout pass, so it has
+ * to WAIT for one, and waiting deterministically means observing the map rather than
+ * polling frames for it. Nothing reads this map during composition — only draw, gestures,
+ * and that suspending wait — so filling it from the measure pass below cannot invalidate
+ * composition, and the write-during-layout that would otherwise be a recomposition loop is
+ * merely the draw invalidation a re-measure implies anyway.
  */
 internal class CardRect(val left: Float, val top: Float, val width: Float, val height: Float) {
     val right: Float get() = left + width

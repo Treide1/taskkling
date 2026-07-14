@@ -23,11 +23,12 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,6 +60,8 @@ import io.taskkling.contract.ExportDto
 import java.awt.GraphicsEnvironment
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -71,11 +74,6 @@ internal const val CARD_MIN_H = 96
 internal const val COL_GAP = 110
 internal const val ROW_GAP = 24
 internal const val PAD = 28
-
-// How many frames pan-to-a-new-card waits for the graph to measure it (t-ctbc). A create
-// normally needs one or two; this is only the give-up bound for a card that never arrives,
-// generous enough to absorb a slow layout on a big graph without stranding a coroutine.
-private const val PAN_MEASURE_FRAME_BUDGET = 30
 
 /**
  * The desktop app (PRD §13): a pure CLI client. Reads `export`, lays the DAG out
@@ -180,10 +178,11 @@ private fun App(client: CliClient) {
     // The canvas scroll state lives here, above GraphPane, so wheel scrolling, drag
     // panning, and programmatic pan-to-card all share one clamped position. The measured
     // card rects are hoisted alongside: GraphPane's measure pass fills the map, pan-to-card
-    // below reads a target's centre from it.
+    // below reads a target's centre from it. Snapshot-backed so that pan-to-card can AWAIT
+    // a rect that does not exist yet (see navigateToNew) rather than poll for it.
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
-    val cardRects = remember { HashMap<String, CardRect>() }
+    val cardRects = remember { mutableStateMapOf<String, CardRect>() }
 
     // Ref-id navigation (DESIGN §9): select the target AND centre its card in the
     // viewport, clamped to the scroll bounds, 150ms on both axes together. Plain card
@@ -216,22 +215,27 @@ private fun App(client: CliClient) {
      * only selected — the reported "card is selected but not panned to". Select right
      * away (the panel shouldn't wait), then pan once the card has been measured.
      *
-     * The extra frame after the rect appears is not padding: the same layout pass grows
-     * the canvas and hence the scroll range, and [centerScrollOffset] clamps against
-     * `maxValue`. Reading it too early clamps the target against the OLD, shorter range
-     * and lands short of the new card. Bounded, so a target that never gets measured
-     * (filtered out of the graph, say) gives up instead of spinning forever.
+     * Waits for the rect itself rather than for a number of frames: [cardRects] is
+     * snapshot state, so this suspends until the layout pass that measures [id] publishes
+     * it, and resumes on exactly that event. No frame budget to tune, and nothing to
+     * re-tune on a slower machine or a bigger graph.
+     *
+     * The wait terminates: [navigateTo] has already established that [id] is in the
+     * current export, `GraphPane` lays out every task in the export unfiltered, and
+     * nothing can mutate the export between the create's refresh and the next layout
+     * pass — so the rect is guaranteed to arrive.
+     *
+     * Resuming off the rect also fixes the scroll range for free. The same layout pass
+     * grows the canvas, and the scroll node writes its new `maxValue` AFTER our measure
+     * block fills the map, both inside that one pass; [centerScrollOffset] clamps against
+     * `maxValue`, so a target computed before it settled would land short of the new card.
+     * Snapshot writes become visible together, once the pass has applied them.
      */
     suspend fun navigateToNew(id: String) {
         navigateTo(id)
-        repeat(PAN_MEASURE_FRAME_BUDGET) {
-            if (cardRects.containsKey(id)) {
-                withFrameNanos { }
-                navigateTo(id)
-                return
-            }
-            withFrameNanos { }
-        }
+        if (cardRects.containsKey(id)) return
+        snapshotFlow { cardRects[id] }.filterNotNull().first()
+        navigateTo(id)
     }
 
     fun refresh(next: ExportDto) {
