@@ -112,11 +112,116 @@ class CliClientTest {
 
     @Test
     fun nonZeroExitWithBlankStderrFallsBackToAGenericMessage() {
+        // Nothing on either stream: the exit code is genuinely all there is to report.
         val ex = assertFailsWith<CliException> {
             client(exit = 5).export()
         }
         assertEquals(5, ex.code)
         assertTrue(ex.message!!.contains("5"), "fallback message should name the exit code")
+    }
+
+    // --- t-eeze: a blank-stderr failure must still explain itself ----------------------------
+    //
+    // kotlinx-cli rejects bad arguments by printing the reason (plus a usage dump) to STDOUT
+    // and exiting 127 with stderr EMPTY. The old fallback discarded stdout, so a UI running
+    // against an older pinned binary could only say "taskkling exited 127". These pin the
+    // message-building rules; the multi-line cases go straight at the pure function, since a
+    // cross-platform fake binary can't emit multi-line stdout without shell-quoting games.
+
+    @Test
+    fun blankStderrFailureQuotesTheReasonFromStdout() {
+        val msg = cliFailureMessage(127, stdout = "Unknown option --status", stderr = "")
+        assertTrue(msg.contains("Unknown option --status"), "should carry the CLI's reason, was: $msg")
+        assertTrue(msg.contains("127"), "should still name the exit code, was: $msg")
+    }
+
+    @Test
+    fun blankStderrFailureStopsAtTheUsageDump() {
+        // The diagnosis comes FIRST and the usage block after it — quoting the whole dump
+        // would bury the one line that matters (and `--help` already prints it on demand).
+        val msg = cliFailureMessage(
+            127,
+            stdout = """
+                Unknown option --status
+                Usage: taskkling add options_list
+                Arguments:
+                    title -> Task title { String }
+            """.trimIndent(),
+            stderr = "",
+        )
+        assertTrue(msg.contains("Unknown option --status"), "should keep the reason, was: $msg")
+        assertTrue(!msg.contains("Usage:"), "should drop the usage boilerplate, was: $msg")
+        assertTrue(!msg.contains("Task title"), "should drop the usage boilerplate, was: $msg")
+    }
+
+    @Test
+    fun stderrWinsOverStdoutWhenBothArePresent() {
+        // The CLI's own errors go to stderr; stdout is only the fallback channel.
+        val msg = cliFailureMessage(2, stdout = "noise on stdout", stderr = "taskkling: unknown id 't-zzzz'")
+        assertTrue(msg.contains("unknown id 't-zzzz'"), "was: $msg")
+        assertTrue(!msg.contains("noise on stdout"), "stderr should win outright, was: $msg")
+    }
+
+    @Test
+    fun aVerboseStdoutIsTruncatedRatherThanDumpedWhole() {
+        // No usage marker to stop at: the excerpt's own line/char caps must bound it, so a
+        // chatty binary can't push a wall of text into a toast.
+        val msg = cliFailureMessage(1, stdout = (1..50).joinToString("\n") { "line $it padded out" }, stderr = "")
+        assertTrue(msg.contains("line 1 padded out"), "should keep the head, was: $msg")
+        assertTrue(!msg.contains("line 40"), "should not run to the end, was: $msg")
+        assertTrue(msg.length < 400, "should stay bounded, was ${msg.length} chars")
+    }
+
+    @Test
+    fun blankStderrFailureWithBlankStdoutStillNamesTheExitCode() {
+        assertEquals("taskkling exited 3", cliFailureMessage(3, stdout = "   \n\n", stderr = ""))
+    }
+
+    @Test
+    fun exit127WithReasonOnStdoutSurfacesThroughARealSubprocess() {
+        // The whole path end-to-end, reproducing the dogfood finding: exit 127, reason on
+        // stdout, stderr silent — the shape an older pinned binary hits a new flag with.
+        val ex = assertFailsWith<CliException> {
+            client(stdout = "Unknown option --status", exit = 127).export()
+        }
+        assertEquals(127, ex.code)
+        assertTrue(
+            ex.message!!.contains("Unknown option --status"),
+            "the CLI's stdout reason should reach the UI, was: ${ex.message}",
+        )
+    }
+
+    // --- t-eeze: the version probe behind the skew hint --------------------------------------
+
+    @Test
+    fun parseVersionReadsTheVersionLine() {
+        assertEquals("0.6.3", parseVersionOutput("taskkling 0.6.3\n"))
+        assertEquals("0.6.3", parseVersionOutput("taskkling 0.6.3\r\n")) // native stdout is text-mode on Windows
+    }
+
+    @Test
+    fun parseVersionSkipsAnyNotifierChatterAroundIt() {
+        // `--version`'s update notifier is TTY-gated so a subprocess shouldn't see it, but the
+        // parse shouldn't depend on that gate holding.
+        assertEquals("0.6.3", parseVersionOutput("A new version is available: 0.7.0\ntaskkling 0.6.3\n"))
+    }
+
+    @Test
+    fun parseVersionReturnsNullWhenThereIsNoVersionLine() {
+        // "don't know" — the caller must stay silent rather than guess at skew.
+        assertEquals(null, parseVersionOutput("Unknown option --version\nUsage: taskkling options_list\n"))
+        assertEquals(null, parseVersionOutput(""))
+    }
+
+    @Test
+    fun versionReadsItFromTheBinary() {
+        assertEquals("0.6.2", client(stdout = "taskkling 0.6.2").version())
+    }
+
+    @Test
+    fun versionIsNullWhenTheProbeFailsRatherThanThrowing() {
+        // An ancient binary that rejects --version must not break launch.
+        assertEquals(null, client(stdout = "Unknown option --version", exit = 127).version())
     }
 
     // --- Failure: malformed stdout surfaces as a parse error, not a CliException ------------

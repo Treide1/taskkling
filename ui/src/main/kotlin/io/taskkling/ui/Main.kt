@@ -222,6 +222,25 @@ private fun App(client: CliClient) {
             .onFailure { error = it.message ?: it.toString() }
     }
 
+    // Version-skew hint (t-eeze). `taskkling ui` fetches a UI pinned to the CLI's own
+    // version (ADR-010), so an installed setup matches by construction and this stays
+    // silent. It fires for the development configuration that produced the task: a UI
+    // built from a branch with new CLI flags, run against an older resolved binary —
+    // where the only symptom used to be an unexplained failure on the new flag. Any
+    // disagreement warrants the hint, in either direction: comparing for equality keeps
+    // semver logic out of the UI, which links only :contract and cannot reach :core's
+    // isNewerVersion. A null probe means "couldn't tell" and says nothing.
+    LaunchedEffect(Unit) {
+        val cliVersion = withContext(Dispatchers.IO) { client.version() }
+        if (cliVersion != null && cliVersion != BUILD_VERSION) {
+            toasts.show(
+                "version skew: UI $BUILD_VERSION, binary $cliVersion — " +
+                    "commands the binary doesn't know will fail. Rebuild the UI or repin the binary.",
+                ToastKind.ERROR,
+            )
+        }
+    }
+
     // Every mutation shells out OFF the UI thread — CliClient.run blocks on the
     // subprocess — then refreshes from the export the CLI returned (t-t36o). The
     // Result hops back to the UI thread before touching snapshot state.
