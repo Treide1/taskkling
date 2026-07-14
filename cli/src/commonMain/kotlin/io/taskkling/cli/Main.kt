@@ -5,38 +5,17 @@ package io.taskkling.cli
 import io.taskkling.contract.ExportDto
 import io.taskkling.contract.TaskDto
 import io.taskkling.core.AddArgs
-import io.taskkling.core.MutationResult
-import io.taskkling.core.Status
-import io.taskkling.core.Task
-import io.taskkling.core.TkError
-import io.taskkling.core.ExitCode
-import io.taskkling.core.Taskkling
-import io.taskkling.core.Workspace
 import io.taskkling.core.addTask
 import io.taskkling.core.appendBody
 import io.taskkling.core.buildExport
 import io.taskkling.core.cleanup
+import io.taskkling.core.CliOutput
 import io.taskkling.core.computeAll
-import io.taskkling.core.currentHostTarget
-import io.taskkling.core.deleteCacheHomeBestEffort
 import io.taskkling.core.deleteTask
-import io.taskkling.core.extractArchiveWithSystemTar
-import io.taskkling.core.headlessRefusalMessage
-import io.taskkling.core.HostArch
-import io.taskkling.core.HostOs
+import io.taskkling.core.ExitCode
+import io.taskkling.core.fetchLatestTag
 import io.taskkling.core.initWorkspace
 import io.taskkling.core.installLocalBin
-import io.taskkling.core.installNewExecutable
-import io.taskkling.core.seedDemoTasks
-import io.taskkling.core.installOtherExecutable
-import io.taskkling.core.currentReleaseAssetName
-import io.taskkling.core.findSha256
-import io.taskkling.core.GITHUB_API_LATEST_RELEASE
-import io.taskkling.core.globalInstallDirPath
-import io.taskkling.core.httpGetBytesBlocking
-import io.taskkling.core.httpGetTextBlocking
-import io.taskkling.core.InstallTier
-import io.taskkling.core.isNewerVersion
 import io.taskkling.core.isStdoutInteractive
 import io.taskkling.core.isUpdateCheckCacheFresh
 import io.taskkling.core.linkDepends
@@ -46,52 +25,40 @@ import io.taskkling.core.loadUserConfig
 import io.taskkling.core.markDone
 import io.taskkling.core.markDropped
 import io.taskkling.core.materializeUserConfig
-import io.taskkling.core.normalizeVersionTag
-import io.taskkling.core.parseLatestTagName
-import io.taskkling.core.planAfterLaunchFailure
-import io.taskkling.core.planUiCachePrune
-import io.taskkling.core.planUiRun
+import io.taskkling.core.MutationResult
+import io.taskkling.core.productionUiEffects
+import io.taskkling.core.productionUninstallEffects
+import io.taskkling.core.productionUpdateEffects
 import io.taskkling.core.rawFile
 import io.taskkling.core.readBody
-import io.taskkling.core.releaseDownloadBaseUrl
-import io.taskkling.core.removeFromWindowsUserPath
 import io.taskkling.core.reopenTask
-import io.taskkling.core.resolveInstallTier
 import io.taskkling.core.resolveUpdateCheckEnabled
-import io.taskkling.core.restampLocalBinVersionIfPresent
 import io.taskkling.core.restoreTask
-import io.taskkling.core.runningExecutablePath
+import io.taskkling.core.runUiVerb
+import io.taskkling.core.runUninstallVerb
+import io.taskkling.core.runUpdateVerb
 import io.taskkling.core.saveUpdateCheckCache
-import io.taskkling.core.setFields
+import io.taskkling.core.seedDemoTasks
 import io.taskkling.core.SetArgs
-import io.taskkling.core.Sha256
-import io.taskkling.core.spawnDetachedProcess
+import io.taskkling.core.setFields
+import io.taskkling.core.Status
 import io.taskkling.core.sweepStaleOldExecutableForRunningBinary
+import io.taskkling.core.SystemNet
+import io.taskkling.core.Task
+import io.taskkling.core.Taskkling
+import io.taskkling.core.TkError
 import io.taskkling.core.toDto
-import io.taskkling.core.uiAppCacheRoot
 import io.taskkling.core.uiAppDir
-import io.taskkling.core.uiExtractTempDir
-import io.taskkling.core.UiFailureCause
 import io.taskkling.core.uiFailureMessage
-import io.taskkling.core.uiFetchTempPath
-import io.taskkling.core.uiJarAssetName
-import io.taskkling.core.uiJarPath
-import io.taskkling.core.uiJavaLauncherPath
-import io.taskkling.core.uiLaunchEnvironment
-import io.taskkling.core.uiLogFilePath
-import io.taskkling.core.UiRunPlan
-import io.taskkling.core.uiRuntimeAssetName
-import io.taskkling.core.uiRuntimeCacheRoot
 import io.taskkling.core.uiRuntimeDir
-import io.taskkling.core.uninstallOtherBinary
-import io.taskkling.core.uninstallRunningBinary
-import io.taskkling.core.uninstallScopeCoversCacheHome
-import io.taskkling.core.userCacheDirPath
+import io.taskkling.core.UiVerbArgs
+import io.taskkling.core.UninstallVerbArgs
 import io.taskkling.core.unlinkDepends
-import io.taskkling.core.updateNotifierLine
 import io.taskkling.core.UpdateCheckCache
+import io.taskkling.core.updateNotifierLine
+import io.taskkling.core.UpdateVerbArgs
 import io.taskkling.core.waitTask
-import io.taskkling.core.windowsPathHasEntry
+import io.taskkling.core.Workspace
 import io.taskkling.core.writeBody
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
@@ -101,9 +68,6 @@ import kotlinx.cli.multiple
 import kotlinx.cli.ExperimentalCli
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.datetime.Clock
-import okio.FileSystem
-import okio.Path
-import okio.Path.Companion.toPath
 import platform.posix.fputs
 import platform.posix.stderr
 import kotlinx.serialization.builtins.ListSerializer
@@ -186,18 +150,25 @@ private abstract class MutationCommand(name: String, description: String) : TkCo
     ).default(false)
 
     /**
-     * Emit the mutation's result: the full export when `--export-on-success`, else the
-     * affected id. `--quiet` suppresses the id echo — except when [idIsEssential], the
-     * case where the id *is* the primary result (`add` mints a fresh id you can't know
-     * beforehand and capture to wire deps), so it prints even under `-q`.
+     * The shared emission rule (PRD §7.3): the full export when
+     * `--export-on-success`, else the terse [text] — which `--quiet` suppresses
+     * unless it is [essential]. [text] is lazy so the suppressed case never
+     * builds a summary nobody reads.
      */
-    fun emit(result: MutationResult, idIsEssential: Boolean = false) {
-        val export = result.export
+    fun emitExportOr(export: ExportDto?, essential: Boolean = false, text: () -> String) {
         when {
             export != null -> println(json.encodeToString(ExportDto.serializer(), export))
-            !quiet || idIsEssential -> println(result.task.id)
+            !quiet || essential -> println(text())
         }
     }
+
+    /**
+     * Emit the mutation's result: the export, else the affected id. [idIsEssential]
+     * marks the case where the id *is* the primary result (`add` mints a fresh id you
+     * can't know beforehand and capture to wire deps), so it prints even under `-q`.
+     */
+    fun emit(result: MutationResult, idIsEssential: Boolean = false): Unit =
+        emitExportOr(result.export, idIsEssential) { result.task.id }
 }
 
 /**
@@ -421,11 +392,7 @@ private class RestoreCmd : MutationCommand("restore", "Restore a task from trash
         if (result.droppedEdges.isNotEmpty() && !quiet) {
             eprintln("taskkling: dropped ${result.droppedEdges.size} dangling dependency edge(s): ${result.droppedEdges.joinToString(",")}")
         }
-        val export = result.export
-        when {
-            export != null -> println(json.encodeToString(ExportDto.serializer(), export))
-            !quiet -> println(result.task.id)
-        }
+        emitExportOr(result.export) { result.task.id }
     }
 }
 
@@ -437,13 +404,9 @@ private class CleanupCmd : MutationCommand("cleanup", "Sweep closed tasks to arc
 
     override fun run() {
         val result = Workspace.discover(root).cleanup(deleteBefore, includeArchive, exportOnSuccess, parseOnlyStatuses(only))
-        val export = result.export
-        when {
-            export != null -> println(json.encodeToString(ExportDto.serializer(), export))
-            !quiet -> {
-                val retained = if (result.retained > 0) ", retained ${result.retained} (still-referenced archive)" else ""
-                println("archived ${result.archived}, purged ${result.purged}$retained")
-            }
+        emitExportOr(result.export) {
+            val retained = if (result.retained > 0) ", retained ${result.retained} (still-referenced archive)" else ""
+            "archived ${result.archived}, purged ${result.purged}$retained"
         }
     }
 }
@@ -456,17 +419,14 @@ private class DoctorCmd : TkCommand("doctor", "Integrity + logical-resolution sc
 }
 
 /**
- * Best-effort GitHub `tag_name` lookup (ADR-002): a User-Agent is required
- * (GitHub 403s without one) and any failure — network, non-2xx, bad JSON —
- * silently yields null rather than throwing, so callers decide how loud to be.
+ * The process's own stdout/stderr, as the `:core` verb runners' output sink.
+ * The runners never print themselves — their wording is behavior, asserted in
+ * core's tests — so this is the one place their lines reach the terminal.
  */
-private fun fetchLatestTag(userAgent: String): String? =
-    try {
-        val (status, body) = httpGetTextBlocking(GITHUB_API_LATEST_RELEASE, userAgent)
-        if (status in 200..299) parseLatestTagName(body) else null
-    } catch (_: Exception) {
-        null
-    }
+private object StdCliOutput : CliOutput {
+    override fun out(line: String): Unit = println(line)
+    override fun err(line: String): Unit = eprintln(line)
+}
 
 /**
  * The opt-in notifier's cached "is a newer release known?" lookup (ADR-002 §3
@@ -479,7 +439,7 @@ private fun resolveLatestVersionCached(currentVersion: String): String? {
     val cache = loadUpdateCheckCache()
     val now = Clock.System.now().epochSeconds
     if (isUpdateCheckCacheFresh(cache, now)) return cache!!.latestVersion
-    val latest = fetchLatestTag("taskkling/$currentVersion") ?: return null
+    val latest = fetchLatestTag(SystemNet, "taskkling/$currentVersion") ?: return null
     saveUpdateCheckCache(UpdateCheckCache(now, latest))
     return latest
 }
@@ -532,104 +492,17 @@ private class UpdateCmd : TkCommand("update", "Self-update the running binary; -
         description = "Update to a specific release tag (e.g. v0.3.0), skipping the latest-version lookup",
     )
 
-    /**
-     * Resolve the binary `update` will replace (ADR-007). Default (no flag) is
-     * the running binary. `--global`/`--local` pick a tier explicitly and are
-     * UPDATE-ONLY: a targeted tier with no install is an error, never a silent
-     * new install (that's install.sh / `init --local-bin`'s job).
-     */
-    private fun resolveTarget(running: Path): Path {
-        val fs = FileSystem.SYSTEM
-        val basename = running.name
-        return when {
-            global -> {
-                val path = globalInstallDirPath() / basename
-                if (!fs.exists(path)) throw TkError(ExitCode.VALIDATION, "no global install found; install it with the install script")
-                path
-            }
-            local -> {
-                val ws = Workspace.discover(root) // explicit --local must resolve a real workspace
-                val path = ws.metaDir / "bin" / basename
-                if (!fs.exists(path)) throw TkError(ExitCode.VALIDATION, "no local-bin install here; run 'taskkling init --local-bin' first")
-                path
-            }
-            else -> running
-        }
-    }
-
     override fun run() {
         if (global && local) throw TkError(ExitCode.USAGE, "--global and --local are mutually exclusive")
-
-        val current = Taskkling.VERSION
-        val userAgent = "taskkling/$current"
-
-        if (check) {
-            // --check reports latest-vs-running and touches no binary, so a tier flag is meaningless here (ADR-007).
-            if (global || local) throw TkError(ExitCode.USAGE, "--check reports on the running binary and cannot be combined with --global/--local")
-            val latest = fetchLatestTag(userAgent)
-            if (latest != null) {
-                // Opportunistic cache warm (ADR-005): `update --check` always performs a
-                // LIVE lookup — it "ignores the flag" because invoking it IS the consent —
-                // but feeding its result into the shared ~24h cache lets a later opt-in
-                // `--version` notifier skip a redundant network round trip. Best-effort;
-                // never affects this command's own output.
-                saveUpdateCheckCache(UpdateCheckCache(Clock.System.now().epochSeconds, latest))
-            }
-            when {
-                latest == null -> eprintln("taskkling: could not check for updates (network error or rate-limited)")
-                isNewerVersion(current, latest) ->
-                    println("taskkling: update available: $current -> ${latest.removePrefix("v")} (run 'taskkling update')")
-                else -> println("taskkling: up to date ($current)")
-            }
-            return
+        // --check reports latest-vs-running and touches no binary, so a tier flag is meaningless here (ADR-007).
+        if (check && (global || local)) {
+            throw TkError(ExitCode.USAGE, "--check reports on the running binary and cannot be combined with --global/--local")
         }
-
-        // Resolve what we're replacing FIRST — it's cheap and local-only, so a tier
-        // flag that can't be satisfied fails before any network IO (t-6ouc), not
-        // after a full asset download.
-        val running = runningExecutablePath()
-        val target = resolveTarget(running)
-        val fs = FileSystem.SYSTEM
-        fun canon(p: Path): Path = try { fs.canonicalize(p) } catch (_: Exception) { p }
-        val isSelf = canon(target) == canon(running)
-
-        val targetTag = versionOverride
-            ?: fetchLatestTag(userAgent)
-            ?: throw TkError(
-                ExitCode.VALIDATION,
-                "could not resolve the latest release (network error or rate-limited) — pass --version vX.Y.Z to update without it",
-            )
-        val targetVersion = normalizeVersionTag(targetTag).removePrefix("v")
-
-        val assetName = currentReleaseAssetName()
-        val base = releaseDownloadBaseUrl(targetTag)
-        val assetUrl = "$base/$assetName"
-        val sumsUrl = "$base/SHA256SUMS"
-
-        if (!quiet) println("Downloading $assetName ($targetVersion) ...")
-        val (assetStatus, assetBytes) = httpGetBytesBlocking(assetUrl, userAgent)
-        if (assetStatus !in 200..299) throw TkError(ExitCode.VALIDATION, "download failed: HTTP $assetStatus for $assetUrl")
-        val (sumsStatus, sumsText) = httpGetTextBlocking(sumsUrl, userAgent)
-        if (sumsStatus !in 200..299) throw TkError(ExitCode.VALIDATION, "download failed: HTTP $sumsStatus for $sumsUrl")
-
-        val expected = findSha256(sumsText, assetName)
-            ?: throw TkError(ExitCode.VALIDATION, "no checksum entry for $assetName in SHA256SUMS")
-        val actualHash = Sha256.hashHex(assetBytes)
-        if (!expected.equals(actualHash, ignoreCase = true)) {
-            throw TkError(ExitCode.VALIDATION, "checksum mismatch for $assetName (expected $expected, got $actualHash) — aborting")
-        }
-        if (!quiet) println("Checksum OK ($actualHash)")
-
-        // Self vs other, forced by the OS (ADR-007): replacing the running image needs the
-        // Windows-safe self-replace dance ([installNewExecutable]); a different, unlocked
-        // tier's copy is a plain overwrite ([installOtherExecutable]).
-        if (isSelf) installNewExecutable(target, assetBytes) else installOtherExecutable(target, assetBytes)
-        restampLocalBinVersionIfPresent(target, targetVersion)
-
-        if (!quiet) {
-            if (isSelf) println("$current -> $targetVersion")
-            else println("updated $target to $targetVersion")
-        }
+        runUpdateVerb(
+            UpdateVerbArgs(check = check, global = global, local = local, versionOverride = versionOverride, quiet = quiet, root = root),
+            productionUpdateEffects(),
+            StdCliOutput,
+        )
     }
 }
 
@@ -656,152 +529,8 @@ private class UiCmd : TkCommand("ui", "Launch the desktop UI (fetched on first u
         description = "Download and verify the UI without launching (works headless; prefetch before going offline)",
     ).default(false)
 
-    private val fs = FileSystem.SYSTEM
-    private val version = Taskkling.VERSION
-    private val userAgent = "taskkling/$version"
-
     override fun run() {
-        val (os, arch) = currentHostTarget()
-        val cacheHome = userCacheDirPath()
-        val jarPath = uiJarPath(cacheHome, version, os, arch)
-        val runtimeDir = uiRuntimeDir(cacheHome)
-        val launcher = uiJavaLauncherPath(runtimeDir, os)
-        val logPath = uiLogFilePath(cacheHome)
-
-        if (fetchOnly) {
-            // No workspace, no display needed: this is the headless/offline-prep path (ADR-010 decision 5).
-            when (planUiRun(fs.exists(jarPath), fs.exists(launcher))) {
-                is UiRunPlan.Launch -> if (!quiet) println("taskkling: UI v$version already fetched and verified")
-                else -> {
-                    fetchUiAssets(os, arch, jarPath, runtimeDir, launcher, logPath)
-                    if (!quiet) println("taskkling: UI v$version fetched and verified — 'taskkling ui' will launch it")
-                }
-            }
-            return
-        }
-
-        // Workspace resolution FIRST (cheap, local, fails before any network — mirrors
-        // update's ordering): the UI never re-runs discovery, it receives the
-        // CLI-resolved root as its launch argument (ADR-010 decision 4).
-        val ws = Workspace.discover(root)
-
-        // Refuse headless BEFORE fetching or spawning (ADR-010 decision 6).
-        headlessRefusalMessage(os, uiLaunchEnvironment())?.let { throw TkError(ExitCode.VALIDATION, it) }
-
-        var refetched = false
-        while (true) {
-            when (planUiRun(fs.exists(jarPath), fs.exists(launcher))) {
-                is UiRunPlan.FetchThenLaunch -> fetchUiAssets(os, arch, jarPath, runtimeDir, launcher, logPath)
-                is UiRunPlan.Launch -> {
-                    logPath.parent?.let { fs.createDirectories(it) }
-                    val argv = buildList {
-                        add(launcher.toString())
-                        // macOS: name the plain-java process in the Dock (ADR-009's accepted identity
-                        // mitigation). -Xdock:icon is skipped: no .icns exists at runtime — the
-                        // in-window icon comes from the jar's own resources.
-                        if (os == HostOs.MACOS) add("-Xdock:name=taskkling")
-                        add("-jar")
-                        add(jarPath.toString())
-                        add(ws.root.toString())
-                    }
-                    if (spawnDetachedProcess(argv, logPath)) {
-                        pruneUiCache(cacheHome)
-                        if (!quiet) println("taskkling: UI v$version launched (log: $logPath)")
-                        return
-                    }
-                    when (val heal = planAfterLaunchFailure(refetched)) {
-                        is UiRunPlan.RefetchOnce -> {
-                            // Corrupt cache: drop both artifacts SILENTLY and loop into the one re-fetch.
-                            deleteCacheHomeBestEffort(uiAppDir(cacheHome, version), fs)
-                            deleteCacheHomeBestEffort(runtimeDir, fs)
-                            refetched = true
-                        }
-                        is UiRunPlan.Fail -> throw TkError(ExitCode.VALIDATION, uiFailureMessage(heal.cause, logPath))
-                        else -> error("unreachable self-heal plan: $heal")
-                    }
-                }
-                else -> error("unreachable entry plan")
-            }
-        }
-    }
-
-    /** Download + SHA256SUMS-verify + atomically install whichever of the two artifacts is missing (ADR-010 decision 6). */
-    private fun fetchUiAssets(os: HostOs, arch: HostArch, jarPath: Path, runtimeDir: Path, launcher: Path, logPath: Path) {
-        val logForMsg = if (fs.exists(logPath)) logPath else null
-        fun fail(cause: UiFailureCause): Nothing = throw TkError(ExitCode.VALIDATION, uiFailureMessage(cause, logForMsg))
-
-        val base = releaseDownloadBaseUrl(version) // pinning: the CLI's OWN tag, never "latest" (ADR-010 decision 2)
-        val (sumsStatus, sumsText) = try {
-            httpGetTextBlocking("$base/SHA256SUMS", userAgent)
-        } catch (_: Exception) {
-            fail(UiFailureCause.OFFLINE)
-        }
-        if (sumsStatus !in 200..299) fail(UiFailureCause.GITHUB_UNREACHABLE)
-
-        fun fetchVerified(assetName: String): ByteArray {
-            val expected = findSha256(sumsText, assetName) ?: throw TkError(
-                ExitCode.VALIDATION,
-                "release v$version publishes no UI asset '$assetName' — releases before v0.6.0 carry no UI; run 'taskkling update' and retry",
-            )
-            if (!quiet) println("Downloading $assetName (v$version) ...")
-            val (status, bytes) = try {
-                httpGetBytesBlocking("$base/$assetName", userAgent)
-            } catch (_: Exception) {
-                fail(UiFailureCause.OFFLINE)
-            }
-            if (status !in 200..299) fail(UiFailureCause.GITHUB_UNREACHABLE)
-            if (!Sha256.hashHex(bytes).equals(expected, ignoreCase = true)) fail(UiFailureCause.CHECKSUM_MISMATCH)
-            return bytes
-        }
-
-        if (!fs.exists(jarPath)) {
-            val bytes = fetchVerified(uiJarAssetName(os, arch))
-            jarPath.parent?.let { fs.createDirectories(it) }
-            val tmp = uiFetchTempPath(jarPath)
-            fs.delete(tmp, mustExist = false)
-            fs.write(tmp) { write(bytes) }
-            fs.atomicMove(tmp, jarPath) // presence of the final path is the only "exists" ever trusted
-        }
-
-        if (!fs.exists(launcher)) {
-            val assetName = uiRuntimeAssetName(os, arch)
-            val bytes = fetchVerified(assetName)
-            val runtimeRoot = runtimeDir.parent ?: error("runtime dir has no parent: $runtimeDir")
-            fs.createDirectories(runtimeRoot)
-            val archiveTmp = uiFetchTempPath(runtimeRoot / assetName)
-            val extractTmp = uiExtractTempDir(runtimeDir)
-            fs.delete(archiveTmp, mustExist = false)
-            fs.deleteRecursively(extractTmp, mustExist = false)
-            fs.write(archiveTmp) { write(bytes) }
-            fs.createDirectories(extractTmp)
-            // The CLI extracts the archive ITSELF — that's what keeps macOS quarantine off
-            // the runtime tree (ADR-009). Extraction is the non-atomic part, so it happens
-            // entirely under the temp name; the rename below is the atomic "install".
-            val extracted = extractArchiveWithSystemTar(archiveTmp, extractTmp)
-            fs.delete(archiveTmp, mustExist = false)
-            if (!extracted) throw TkError(ExitCode.VALIDATION, "could not extract $assetName — is 'tar' available on this system?")
-            // Release archives carry the image contents (bin/, lib/) at top level (t-6q6a's
-            // contract); tolerate one wrapping directory defensively.
-            val imageRoot = when {
-                fs.exists(extractTmp / "bin") -> extractTmp
-                else -> fs.list(extractTmp).singleOrNull()?.takeIf { fs.exists(it / "bin") }
-                    ?: throw TkError(ExitCode.VALIDATION, "unexpected runtime archive layout in $assetName (no bin/ directory)")
-            }
-            fs.deleteRecursively(runtimeDir, mustExist = false) // stale half-state only; the launcher was missing
-            fs.atomicMove(imageRoot, runtimeDir)
-            fs.deleteRecursively(extractTmp, mustExist = false)
-        }
-    }
-
-    /** After a successful launch: collect every stale cache entry, best-effort and SILENT (ADR-011 decision 2). */
-    private fun pruneUiCache(cacheHome: Path) {
-        try {
-            fun listOrEmpty(dir: Path): List<Path> = try { fs.list(dir) } catch (_: Exception) { emptyList() }
-            planUiCachePrune(version, listOrEmpty(uiAppCacheRoot(cacheHome)), listOrEmpty(uiRuntimeCacheRoot(cacheHome)))
-                .forEach { deleteCacheHomeBestEffort(it, fs) } // locked dirs abandoned; the next launch re-collects them
-        } catch (_: Exception) {
-            // Cleanup must never break a launch that already succeeded.
-        }
+        runUiVerb(UiVerbArgs(fetchOnly = fetchOnly, quiet = quiet, root = root), productionUiEffects(), StdCliOutput)
     }
 }
 
@@ -828,140 +557,13 @@ private class UninstallCmd : TkCommand("uninstall", "Remove the taskkling binary
     ).default(false)
     val yes by option(ArgType.Boolean, "yes", "y", description = "Run non-interactively (safe scope only unless --purge)").default(false)
 
-    private fun confirm(prompt: String): Boolean {
-        print("$prompt [y/N] ")
-        val answer = readlnOrNull()?.trim()?.lowercase()
-        return answer == "y" || answer == "yes"
-    }
-
-    /** What `uninstall` will act on: the binary, its local-bin version stamp / wrapper scripts (if any), and the tier. */
-    private data class Target(val tier: InstallTier, val path: Path, val versionStamp: Path?, val wrappers: List<Path>)
-
     override fun run() {
         if (global && local) throw TkError(ExitCode.USAGE, "--global and --local are mutually exclusive")
-
-        val running = runningExecutablePath()
-        val basename = running.name
-        val fs = FileSystem.SYSTEM
-
-        // Best-effort workspace discovery — uninstall is not necessarily run from inside a project
-        // (a --global removal in particular may have no workspace in scope at all).
-        fun discoverWorkspace(rootOverride: String?): Workspace? =
-            try { Workspace.discover(rootOverride) } catch (_: TkError) { null }
-
-        val target: Target
-        val workspace: Workspace?
-        when {
-            local -> {
-                val ws = Workspace.discover(root) // explicit --local: must resolve to a real workspace
-                val binDir = ws.metaDir / "bin"
-                target = Target(InstallTier.LOCAL, binDir / basename, binDir / ".version", listOf(ws.root / "taskkling", ws.root / "taskkling.cmd"))
-                workspace = ws
-            }
-            global -> {
-                target = Target(InstallTier.GLOBAL, globalInstallDirPath() / basename, null, emptyList())
-                workspace = discoverWorkspace(root)
-            }
-            else -> when (resolveInstallTier(running)) {
-                InstallTier.LOCAL -> {
-                    val binDir = running.parent ?: throw TkError(ExitCode.VALIDATION, "the running executable has no parent directory")
-                    val projectRoot = binDir.parent?.parent // bin/ -> .taskkling/ -> project root
-                    val wrappers = if (projectRoot != null) listOf(projectRoot / "taskkling", projectRoot / "taskkling.cmd") else emptyList()
-                    target = Target(InstallTier.LOCAL, running, binDir / ".version", wrappers)
-                    workspace = projectRoot?.let { discoverWorkspace(it.toString()) }
-                }
-                InstallTier.GLOBAL -> {
-                    target = Target(InstallTier.GLOBAL, running, null, emptyList())
-                    workspace = discoverWorkspace(root)
-                }
-            }
-        }
-
-        // Canonicalize before comparing — --global/--local may re-derive a path that refers to the
-        // same file as `running` through a different (but equivalent) string.
-        fun canon(p: Path): Path = try { fs.canonicalize(p) } catch (_: Exception) { p }
-        val isSelf = canon(target.path) == canon(running)
-
-        val pathEntryDir = if (target.tier == InstallTier.GLOBAL) target.path.parent?.toString() else null
-        val pathEntryPresent = pathEntryDir?.let { windowsPathHasEntry(it) } ?: false
-        // Cache home (ADR-011): part of the GLOBAL safe scope — machine-replaceable tool bytes
-        // (UI jars, runtime images, update-check state), nothing authored. A LOCAL uninstall
-        // never touches it: a surviving global install may still be using it.
-        val cacheHome = userCacheDirPath()
-        val cacheHomeInScope = uninstallScopeCoversCacheHome(target.tier) && fs.exists(cacheHome)
-        val taskCount = workspace?.allKnownIds()?.size ?: 0
-        // What --purge would erase (t-qoyn): the meta dir PLUS the default layout's
-        // root-level tasks dir. coversTasks=false flags a tasks_dir the plan refuses
-        // to touch (it resolves to the root itself, or escapes it) — the prompts
-        // below must not claim task deletion then.
-        val purgePlan = workspace?.purgePlan()
-
-        if (!yes) {
-            println("taskkling uninstall (${target.tier.name.lowercase()} tier):")
-            println("  binary:  ${target.path}")
-            if (pathEntryPresent) println("  PATH:    remove '$pathEntryDir' from your user PATH")
-            if (cacheHomeInScope) println("  cache:   $cacheHome — cached UI/runtime artifacts and update-check state (re-downloadable)")
-            if (workspace != null && purgePlan != null) {
-                if (purge) {
-                    val what = purgePlan.targets.joinToString(" + ")
-                    if (purgePlan.coversTasks) {
-                        println("  PURGE:   $what — PERMANENTLY DELETES $taskCount task(s), config, and caches")
-                    } else {
-                        println("  PURGE:   $what — PERMANENTLY DELETES config and caches (tasks_dir '${workspace.config.tasksDir}' does not resolve to a directory inside the workspace; tasks are NOT touched)")
-                    }
-                } else if (taskCount > 0) {
-                    println("  (kept)   ${workspace.metaDir} — $taskCount task(s) preserved; pass --purge to also delete them")
-                }
-            }
-            if (!confirm("Proceed with removing the binary" + (if (pathEntryPresent) " and PATH entry" else "") + "?")) {
-                if (!quiet) println("taskkling: uninstall aborted; nothing was changed")
-                return
-            }
-            if (purge && workspace != null && purgePlan != null) {
-                val consequence = if (purgePlan.coversTasks) {
-                    "This PERMANENTLY deletes $taskCount task(s) at ${purgePlan.targets.joinToString(" + ")} and cannot be undone. Continue?"
-                } else {
-                    "This PERMANENTLY deletes the workspace config and caches at ${workspace.metaDir} and cannot be undone. Continue?"
-                }
-                if (!confirm(consequence)) {
-                    if (!quiet) println("taskkling: uninstall aborted; workspace preserved")
-                    return
-                }
-            }
-        }
-
-        // Binary + local-bin sidecar removal.
-        if (isSelf) uninstallRunningBinary(target.path) else uninstallOtherBinary(target.path)
-        target.versionStamp?.let { fs.delete(it, mustExist = false) }
-        target.wrappers.forEach { fs.delete(it, mustExist = false) }
-
-        // PATH de-entry (global tier only; a true no-op on POSIX and whenever the entry was already absent).
-        val pathChanged = pathEntryDir?.let { removeFromWindowsUserPath(it) } ?: false
-
-        // Cache home (ADR-011, global safe scope): best-effort — locked files (a running UI)
-        // are skipped and reported below, never an error; no reboot scheduling.
-        val cacheLeftovers = if (cacheHomeInScope) deleteCacheHomeBestEffort(cacheHome) else emptyList()
-
-        // Purge — the ONLY path that touches the task graph, and only ever behind the explicit flag.
-        val purgedTargets = if (purge && purgePlan != null) purgePlan.targets else emptyList()
-        purgedTargets.forEach { fs.deleteRecursively(it, mustExist = false) }
-
-        if (!quiet) {
-            println("taskkling: removed ${target.path}")
-            if (isSelf && fs.exists("${target.path}.old".toPath())) {
-                println("taskkling: off PATH now; the locked file will clear on your next reboot")
-            }
-            if (pathChanged) println("taskkling: removed '$pathEntryDir' from your user PATH")
-            if (cacheHomeInScope) {
-                if (cacheLeftovers.isEmpty()) {
-                    println("taskkling: removed cache home $cacheHome")
-                } else {
-                    println("taskkling: cache home $cacheHome partially removed; still present (in use by a running UI?) — delete manually:")
-                    cacheLeftovers.forEach { println("  $it") }
-                }
-            }
-            if (purgedTargets.isNotEmpty()) println("taskkling: purged ${purgedTargets.joinToString(" + ")}")
-        }
+        runUninstallVerb(
+            UninstallVerbArgs(global = global, local = local, purge = purge, yes = yes, quiet = quiet, root = root),
+            productionUninstallEffects(),
+            StdCliOutput,
+        )
     }
 }
 

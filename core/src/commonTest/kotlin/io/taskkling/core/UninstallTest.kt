@@ -178,14 +178,6 @@ class UninstallTest {
         assertEquals(emptyList(), deleteCacheHomeBestEffort(cacheHome, FakeFileSystem()))
     }
 
-    /** Wraps [delegate] so deleting exactly [locked] throws — a running UI's file lock, deterministically. */
-    private class LockedFileFs(delegate: FileSystem, private val locked: Path) : ForwardingFileSystem(delegate) {
-        override fun delete(path: Path, mustExist: Boolean) {
-            if (path == locked) throw IOException("locked: $path")
-            super.delete(path, mustExist)
-        }
-    }
-
     @Test
     fun lockedFileIsSkippedReportedByPathAndEverythingElseStillGoes() {
         val lockedJava = cacheHome / "ui" / "runtime" / "jdk21" / "bin" / "java"
