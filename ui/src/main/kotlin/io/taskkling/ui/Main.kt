@@ -98,6 +98,12 @@ fun main(args: Array<String>) {
         return
     }
 
+    // Built ONCE, outside composition, and never rebuilt: App remembers its AppStore keyed on
+    // this instance, so constructing the client at the App() call site would hand `remember` a
+    // fresh identity on every recomposition of that scope — rebuilding the store and dropping
+    // the whole session (export, selection, pin) mid-use.
+    val client = binary?.let { CliClient(it, workRoot) }
+
     application {
         // Default window (t-9de2): ~85% of the screen's WORK area (excludes the taskbar,
         // unlike raw screen size), centred. Session-only — recomputed fresh each launch,
@@ -117,7 +123,7 @@ fun main(args: Array<String>) {
         ) {
             TaskklingTheme {
                 Box(Modifier.fillMaxSize().background(Tk.bg)) {
-                    if (binary == null) {
+                    if (client == null) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             SelectionContainer {
                                 Text(
@@ -128,7 +134,7 @@ fun main(args: Array<String>) {
                             }
                         }
                     } else {
-                        App(CliClient(binary, workRoot))
+                        App(client)
                     }
                 }
             }

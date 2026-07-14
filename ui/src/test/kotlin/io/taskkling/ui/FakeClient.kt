@@ -22,7 +22,9 @@ internal class FakeClient(seed: List<TaskDto> = emptyList()) : TaskklingClient {
     val tasks: MutableList<TaskDto> = seed.toMutableList()
     val calls: MutableList<List<String>> = mutableListOf()
     val writes: MutableList<Pair<String, String>> = mutableListOf()
-    private val bodies: MutableMap<String, String> = mutableMapOf()
+
+    /** Task bodies, seedable directly so a read can be tested without a write first. */
+    val bodies: MutableMap<String, String> = mutableMapOf()
 
     /** Return a message to make that invocation fail as the CLI would; null runs it. */
     var failOn: (List<String>) -> String? = { null }
@@ -45,7 +47,11 @@ internal class FakeClient(seed: List<TaskDto> = emptyList()) : TaskklingClient {
         return snapshot()
     }
 
-    override fun body(id: String): String = bodies[id] ?: ""
+    override fun body(id: String): String {
+        calls += listOf("get", id)
+        failOn(listOf("get", id))?.let { throw CliException(1, it) }
+        return bodies[id] ?: ""
+    }
 
     override fun writeBody(id: String, text: String) {
         failOn(listOf("write", id))?.let { throw CliException(1, it) }

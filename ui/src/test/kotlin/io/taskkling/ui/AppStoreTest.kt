@@ -328,8 +328,24 @@ class AppStoreTest {
     }
 
     @Test
+    fun `loadBody returns the stored body`() = runTest {
+        val client = seeded().apply { bodies["t-a"] = "the notes" }
+        val store = loaded(client)
+
+        assertEquals("the notes", store.loadBody("t-a"))
+    }
+
+    /**
+     * A body read that fails must NOT propagate: the panel still renders its well, and the
+     * error surfaces on save instead. The seeded body is what this would return if the
+     * failure were ignored, so "" is only reachable by swallowing the throw.
+     */
+    @Test
     fun `loadBody returns empty rather than failing the panel`() = runTest {
-        val client = seeded().apply { failOn = { if (it.first() == "write") "disk full" else null } }
+        val client = seeded().apply {
+            bodies["t-a"] = "the notes"
+            failOn = { if (it.first() == "get") "unknown id" else null }
+        }
         val store = loaded(client)
 
         assertEquals("", store.loadBody("t-a"))
