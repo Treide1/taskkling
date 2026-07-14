@@ -23,10 +23,12 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +60,8 @@ import io.taskkling.contract.ExportDto
 import java.awt.GraphicsEnvironment
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -174,10 +178,11 @@ private fun App(client: CliClient) {
     // The canvas scroll state lives here, above GraphPane, so wheel scrolling, drag
     // panning, and programmatic pan-to-card all share one clamped position. The measured
     // card rects are hoisted alongside: GraphPane's measure pass fills the map, pan-to-card
-    // below reads a target's centre from it.
+    // below reads a target's centre from it. Snapshot-backed so that pan-to-card can AWAIT
+    // a rect that does not exist yet (see navigateToNew) rather than poll for it.
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
-    val cardRects = remember { HashMap<String, CardRect>() }
+    val cardRects = remember { mutableStateMapOf<String, CardRect>() }
 
     // Ref-id navigation (DESIGN §9): select the target AND centre its card in the
     // viewport, clamped to the scroll bounds, 150ms on both axes together. Plain card
@@ -203,6 +208,36 @@ private fun App(client: CliClient) {
         }
     }
 
+    /**
+     * Select and centre a card that does not exist on screen YET (t-ctbc). [navigateTo]
+     * reads a MEASURED rect, but a card created a moment ago has none until the graph's
+     * next layout pass, so calling it inline after a create silently skipped the pan and
+     * only selected — the reported "card is selected but not panned to". Select right
+     * away (the panel shouldn't wait), then pan once the card has been measured.
+     *
+     * Waits for the rect itself rather than for a number of frames: [cardRects] is
+     * snapshot state, so this suspends until the layout pass that measures [id] publishes
+     * it, and resumes on exactly that event. No frame budget to tune, and nothing to
+     * re-tune on a slower machine or a bigger graph.
+     *
+     * The wait terminates: [navigateTo] has already established that [id] is in the
+     * current export, `GraphPane` lays out every task in the export unfiltered, and
+     * nothing can mutate the export between the create's refresh and the next layout
+     * pass — so the rect is guaranteed to arrive.
+     *
+     * Resuming off the rect also fixes the scroll range for free. The same layout pass
+     * grows the canvas, and the scroll node writes its new `maxValue` AFTER our measure
+     * block fills the map, both inside that one pass; [centerScrollOffset] clamps against
+     * `maxValue`, so a target computed before it settled would land short of the new card.
+     * Snapshot writes become visible together, once the pass has applied them.
+     */
+    suspend fun navigateToNew(id: String) {
+        navigateTo(id)
+        if (cardRects.containsKey(id)) return
+        snapshotFlow { cardRects[id] }.filterNotNull().first()
+        navigateTo(id)
+    }
+
     fun refresh(next: ExportDto) {
         export = next
         error = null
@@ -222,6 +257,25 @@ private fun App(client: CliClient) {
             .onFailure { error = it.message ?: it.toString() }
     }
 
+    // Version-skew hint (t-eeze). `taskkling ui` fetches a UI pinned to the CLI's own
+    // version (ADR-010), so an installed setup matches by construction and this stays
+    // silent. It fires for the development configuration that produced the task: a UI
+    // built from a branch with new CLI flags, run against an older resolved binary —
+    // where the only symptom used to be an unexplained failure on the new flag. Any
+    // disagreement warrants the hint, in either direction: comparing for equality keeps
+    // semver logic out of the UI, which links only :contract and cannot reach :core's
+    // isNewerVersion. A null probe means "couldn't tell" and says nothing.
+    LaunchedEffect(Unit) {
+        val cliVersion = withContext(Dispatchers.IO) { client.version() }
+        if (cliVersion != null && cliVersion != BUILD_VERSION) {
+            toasts.show(
+                "version skew: UI $BUILD_VERSION, binary $cliVersion — " +
+                    "commands the binary doesn't know will fail. Rebuild the UI or repin the binary.",
+                ToastKind.ERROR,
+            )
+        }
+    }
+
     // Every mutation shells out OFF the UI thread — CliClient.run blocks on the
     // subprocess — then refreshes from the export the CLI returned (t-t36o). The
     // Result hops back to the UI thread before touching snapshot state.
@@ -238,10 +292,10 @@ private fun App(client: CliClient) {
 
     // Create a task from the add-card dialog (t-rjna): the same busy gate and
     // read-after-write refresh as mutate, but success also closes the dialog and
-    // selects the minted task — found by diffing task ids against the pre-call
+    // navigates to the minted task — found by diffing task ids against the pre-call
     // export (`add` prints the id on stdout, but that channel already carries the
-    // piggybacked export). The pan is best-effort: the new card's rect isn't
-    // measured until the next layout pass, so navigateTo may only select.
+    // piggybacked export). The pan waits for the card to be measured (t-ctbc), so it
+    // no longer degrades to a bare selection; see navigateToNew.
     fun createTask(args: List<String>) {
         if (busy) return
         val before = export?.tasks?.map { it.id }?.toSet() ?: emptySet()
@@ -254,7 +308,7 @@ private fun App(client: CliClient) {
                     refresh(next)
                     showCreate = false
                     creating = false
-                    next.tasks.firstOrNull { it.id !in before }?.id?.let(::navigateTo)
+                    next.tasks.firstOrNull { it.id !in before }?.id?.let { navigateToNew(it) }
                 }
                 .onFailure {
                     createError = "add: ${it.message ?: it}"
