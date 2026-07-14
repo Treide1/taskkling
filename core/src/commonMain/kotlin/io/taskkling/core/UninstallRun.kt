@@ -32,7 +32,8 @@ public class UninstallEffects(
     public val findWorkspace: (String?) -> WorkspaceInfo?,
     public val resolveTier: (Path) -> InstallTier,
     public val pathHasEntry: (String) -> Boolean,
-    public val removePathEntry: (String) -> Boolean,
+    /** De-entry the install dir from the user's `PATH`; returns whether anything changed. NOT [removePathEntry], which is the pure string edit. */
+    public val removeFromUserPath: (String) -> Boolean,
     public val uninstallSelf: (Path) -> Unit,
     public val uninstallOther: (Path) -> Unit,
     /** Ask the user to confirm [String]; production prints the prompt and reads a line, tests script answers. */
@@ -49,7 +50,7 @@ public fun productionUninstallEffects(): UninstallEffects = UninstallEffects(
     findWorkspace = ::findWorkspaceInfo,
     resolveTier = ::resolveInstallTier,
     pathHasEntry = ::windowsPathHasEntry,
-    removePathEntry = ::removeFromWindowsUserPath,
+    removeFromUserPath = ::removeFromWindowsUserPath,
     uninstallSelf = ::uninstallRunningBinary,
     uninstallOther = ::uninstallOtherBinary,
     confirm = { prompt ->
@@ -161,7 +162,7 @@ public fun runUninstallVerb(args: UninstallVerbArgs, fx: UninstallEffects, out: 
     target.wrappers.forEach { fs.delete(it, mustExist = false) }
 
     // PATH de-entry (global tier only; a true no-op on POSIX and whenever the entry was already absent).
-    val pathChanged = pathEntryDir?.let { fx.removePathEntry(it) } ?: false
+    val pathChanged = pathEntryDir?.let { fx.removeFromUserPath(it) } ?: false
 
     // Cache home (ADR-011, global safe scope): best-effort — locked files (a running UI)
     // are skipped and reported below, never an error; no reboot scheduling.

@@ -1,5 +1,6 @@
 package io.taskkling.core
 
+import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
@@ -37,7 +38,7 @@ class UninstallRunTest {
     }
 
     private fun effects(
-        fs: FakeFileSystem,
+        fs: FileSystem,
         running: Path = globalExe,
         removals: Removals = Removals(),
         prompter: Prompter = Prompter(),
@@ -53,7 +54,7 @@ class UninstallRunTest {
         findWorkspace = { workspace },
         resolveTier = { tier },
         pathHasEntry = { pathEntryPresent },
-        removePathEntry = { dir -> removals.pathEntries += dir; pathEntryPresent },
+        removeFromUserPath = { dir -> removals.pathEntries += dir; pathEntryPresent },
         uninstallSelf = { removals.self += it },
         uninstallOther = { removals.other += it },
         confirm = prompter::confirm,
@@ -158,7 +159,7 @@ class UninstallRunTest {
         val fs = LockedFileFs(fsWith(globalExe, locked), locked)
         val out = RecordingOutput()
 
-        runUninstallVerb(UninstallVerbArgs(yes = true), effectsOn(fs), out)
+        runUninstallVerb(UninstallVerbArgs(yes = true), effects(fs), out)
 
         assertTrue(out.stdout.any { it.contains("partially removed; still present (in use by a running UI?)") })
         assertTrue(out.stdout.contains("  $locked"), "the leftover is named by its path so it can be removed by hand")
@@ -332,21 +333,4 @@ class UninstallRunTest {
         assertTrue(out.stdout.isEmpty())
         assertEquals(listOf(globalExe), removals.self)
     }
-
-    // --- Helpers for the forwarding-filesystem case -------------------------------------------------------------
-
-    private fun effectsOn(fs: okio.FileSystem) = UninstallEffects(
-        fs = fs,
-        runningExecutable = { globalExe },
-        globalInstallDir = { globalExe.parent!! },
-        userCacheDir = { cacheHome },
-        requireWorkspace = { throw TkError(ExitCode.VALIDATION, "no workspace found") },
-        findWorkspace = { null },
-        resolveTier = { InstallTier.GLOBAL },
-        pathHasEntry = { false },
-        removePathEntry = { false },
-        uninstallSelf = { },
-        uninstallOther = { },
-        confirm = { true },
-    )
 }
