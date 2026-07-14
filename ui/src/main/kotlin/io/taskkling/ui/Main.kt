@@ -59,11 +59,9 @@ import androidx.compose.ui.window.rememberWindowState
 import io.taskkling.contract.ExportDto
 import java.awt.GraphicsEnvironment
 import java.io.File
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 // Graph layout metrics (DESIGN §10). [layout] assigns each node a (layer, indexInLayer)
 // slot; the graph's custom Layout turns `layer` into an x column and stacks each column's
@@ -139,41 +137,21 @@ fun main(args: Array<String>) {
 }
 
 @Composable
-private fun App(client: CliClient) {
-    var export by remember { mutableStateOf<ExportDto?>(null) }
-    var selectedId by remember { mutableStateOf<String?>(null) }
-    // The pinned task (DESIGN §6): stays highlighted while selection moves freely.
-    // Session-only UI state — never persisted; the CLI stays the single write path.
-    var pinnedId by remember { mutableStateOf<String?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    // True while a CLI call is in flight; the panel's mutation buttons render disabled
-    // off it, so a double-click can't queue a second subprocess (t-t36o).
-    var busy by remember { mutableStateOf(false) }
-    // The open settings dialog (archive/prune), session-only like the pin.
-    var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
-    // The add-card dialog (t-rjna): visibility, its in-flight flag, and its OWN
-    // error slot — create failures surface inside the dialog, never on the panel
-    // error line, so the dialog can stay open and re-enable for a retry.
-    var showCreate by remember { mutableStateOf(false) }
-    var creating by remember { mutableStateOf(false) }
-    var createError by remember { mutableStateOf<String?>(null) }
-    // The find-task popup (t-tm10): only open/closed is hoisted — the root Ctrl+F
-    // capture below needs to open it — the query itself lives inside the popup and
-    // dies with it (transient, never restored). Session-only like the pin.
-    var searchOpen by remember { mutableStateOf(false) }
-    // t-aq99: the card currently in link mode (its → handles shown), the toast
-    // queue, the edge selected for unlinking, and the one-shot undo memory — all
-    // session-only UI state, like the pin; the CLI stays the single write path.
-    var linkModeId by remember { mutableStateOf<String?>(null) }
-    val toasts = remember { ToastState() }
-    var selectedEdge by remember { mutableStateOf<Edge?>(null) }
-    var lastOp by remember { mutableStateOf<LinkOp?>(null) }
+private fun App(client: TaskklingClient) {
+    val scope = rememberCoroutineScope()
+    // All app state and every CLI call live in the store; this composable owns only
+    // geometry (below) and renders/forwards intents. Keyed on the client so a swapped
+    // client can never keep a stale store.
+    val store = remember(client) { AppStore(client, scope) }
+    LaunchedEffect(store) {
+        store.start()
+        store.checkVersionSkew()
+    }
     // The user-dragged detail-panel width in dp (t-q8i2). Session-only — like the pin, it never
     // persists and resets to the default on relaunch. Held as a raw dp Float and re-clamped
     // against the live window width at layout time (see the BoxWithConstraints below), so the
     // panel never exceeds the 60% cap after a window resize.
     var panelWidth by remember { mutableStateOf(PANEL_DEFAULT_W) }
-    val scope = rememberCoroutineScope()
 
     // The canvas scroll state lives here, above GraphPane, so wheel scrolling, drag
     // panning, and programmatic pan-to-card all share one clamped position. The measured
@@ -186,15 +164,10 @@ private fun App(client: CliClient) {
 
     // Ref-id navigation (DESIGN §9): select the target AND centre its card in the
     // viewport, clamped to the scroll bounds, 150ms on both axes together. Plain card
-    // clicks on the canvas select without panning (§1.4).
+    // clicks on the canvas select without panning (§1.4). The store owns the selection
+    // and its t-nt8t guard; a refused target (archived, dangling dep) never pans either.
     fun navigateTo(id: String) {
-        // An id with no task in the current export (archived, or a dangling depends edge)
-        // is not a navigable target: selecting it would land the panel on its empty state
-        // and lose the user's place (t-nt8t). The guard sits here rather than at the call
-        // sites so the invariant is structural — no caller can clear the selection by
-        // navigating to a task that isn't there.
-        if (export?.tasks?.any { it.id == id } != true) return
-        selectedId = id
+        if (!store.select(id)) return
         val rect = cardRects[id] ?: return
         scope.launch {
             launch {
@@ -238,193 +211,14 @@ private fun App(client: CliClient) {
         navigateTo(id)
     }
 
-    fun refresh(next: ExportDto) {
-        export = next
-        error = null
-        if (selectedId != null && next.tasks.none { it.id == selectedId }) selectedId = null
-        if (pinnedId != null && next.tasks.none { it.id == pinnedId }) pinnedId = null
-        if (linkModeId != null && next.tasks.none { it.id == linkModeId }) linkModeId = null
-        // A selected edge that no longer exists (unlinked, task gone) drops its selection.
-        selectedEdge?.let { e ->
-            val dependent = next.tasks.firstOrNull { it.id == e.to }
-            if (dependent == null || e.from !in dependent.depends) selectedEdge = null
+    // A create selects the minted card in the store right away and publishes its id here;
+    // centring it is this composable's half, because only it holds the measured rects
+    // (t-ctbc). Consuming the id resets the slot, so the effect idles until the next create.
+    LaunchedEffect(store.newlyCreatedId) {
+        store.newlyCreatedId?.let {
+            navigateToNew(it)
+            store.pannedToNew()
         }
-    }
-
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) { runCatching { client.export() } }
-            .onSuccess { refresh(it) }
-            .onFailure { error = it.message ?: it.toString() }
-    }
-
-    // Version-skew hint (t-eeze). `taskkling ui` fetches a UI pinned to the CLI's own
-    // version (ADR-010), so an installed setup matches by construction and this stays
-    // silent. It fires for the development configuration that produced the task: a UI
-    // built from a branch with new CLI flags, run against an older resolved binary —
-    // where the only symptom used to be an unexplained failure on the new flag. Any
-    // disagreement warrants the hint, in either direction: comparing for equality keeps
-    // semver logic out of the UI, which links only :contract and cannot reach :core's
-    // isNewerVersion. A null probe means "couldn't tell" and says nothing.
-    LaunchedEffect(Unit) {
-        val cliVersion = withContext(Dispatchers.IO) { client.version() }
-        if (cliVersion != null && cliVersion != BUILD_VERSION) {
-            toasts.show(
-                "version skew: UI $BUILD_VERSION, binary $cliVersion — " +
-                    "commands the binary doesn't know will fail. Rebuild the UI or repin the binary.",
-                ToastKind.ERROR,
-            )
-        }
-    }
-
-    // Every mutation shells out OFF the UI thread — CliClient.run blocks on the
-    // subprocess — then refreshes from the export the CLI returned (t-t36o). The
-    // Result hops back to the UI thread before touching snapshot state.
-    fun mutate(args: List<String>) {
-        if (busy) return
-        busy = true
-        scope.launch {
-            withContext(Dispatchers.IO) { runCatching { client.mutate(args) } }
-                .onSuccess { refresh(it) }
-                .onFailure { error = "${args.firstOrNull() ?: "cli"}: ${it.message ?: it}" }
-            busy = false
-        }
-    }
-
-    // Create a task from the add-card dialog (t-rjna): the same busy gate and
-    // read-after-write refresh as mutate, but success also closes the dialog and
-    // navigates to the minted task — found by diffing task ids against the pre-call
-    // export (`add` prints the id on stdout, but that channel already carries the
-    // piggybacked export). The pan waits for the card to be measured (t-ctbc), so it
-    // no longer degrades to a bare selection; see navigateToNew.
-    fun createTask(args: List<String>) {
-        if (busy) return
-        val before = export?.tasks?.map { it.id }?.toSet() ?: emptySet()
-        busy = true
-        creating = true
-        createError = null
-        scope.launch {
-            withContext(Dispatchers.IO) { runCatching { client.mutate(args) } }
-                .onSuccess { next ->
-                    refresh(next)
-                    showCreate = false
-                    creating = false
-                    next.tasks.firstOrNull { it.id !in before }?.id?.let { navigateToNew(it) }
-                }
-                .onFailure {
-                    createError = "add: ${it.message ?: it}"
-                    creating = false
-                }
-            busy = false
-        }
-    }
-
-    // Prune runs one `delete` per selected task — the CLI has no batch delete
-    // (t-m0zn decision) — serialized off the UI thread behind the same busy
-    // flag. The graph refreshes from the last successful export; the first
-    // failure stops the loop and surfaces on the panel error line.
-    fun mutateAll(argsList: List<List<String>>) {
-        if (busy || argsList.isEmpty()) return
-        busy = true
-        scope.launch {
-            var last: ExportDto? = null
-            var failure: String? = null
-            withContext(Dispatchers.IO) {
-                for (args in argsList) {
-                    runCatching { client.mutate(args) }
-                        .onSuccess { last = it }
-                        .onFailure { failure = "${args.firstOrNull() ?: "cli"}: ${it.message ?: it}" }
-                    if (failure != null) break
-                }
-            }
-            last?.let { refresh(it) }
-            failure?.let { error = it } // after refresh: refresh() clears the error line
-            busy = false
-        }
-    }
-
-    // The selected card's body (its markdown notes) is fetched on demand — the graph
-    // export omits it, so the panel pulls it per selection off the UI thread. Returns
-    // empty on any failure so the well still renders (the error surfaces on save, the
-    // path the user cares about).
-    suspend fun loadBody(id: String): String =
-        withContext(Dispatchers.IO) { runCatching { client.body(id) }.getOrDefault("") }
-
-    // Save the body straight through `write` (stdin), OUTSIDE the busy gate: a
-    // focus-loss auto-save must never be dropped because a refresh happened to be in
-    // flight, and the CLI's own file lock serializes it safely. No refresh — a body
-    // edit changes nothing the graph draws, and the panel already holds the text.
-    fun saveBody(id: String, text: String) {
-        scope.launch {
-            withContext(Dispatchers.IO) { runCatching { client.writeBody(id, text) } }
-                .onSuccess { error = null }
-                .onFailure { error = "write: ${it.message ?: it}" }
-        }
-    }
-
-    // The header refresh button: a plain re-export through the same busy gate as
-    // mutations, so a refresh can't race a mutation's read-after-write.
-    fun reload() {
-        if (busy) return
-        busy = true
-        scope.launch {
-            withContext(Dispatchers.IO) { runCatching { client.export() } }
-                .onSuccess { refresh(it) }
-                .onFailure { error = "export: ${it.message ?: it}" }
-            busy = false
-        }
-    }
-
-    // t-aq99: one link/unlink edge mutation. Result lands as a toast either
-    // way — success carries the Ctrl+Z hint and arms the one-shot undo; failure
-    // carries the CLI's own reason (cycle, unknown id, …). Both no-op directions are
-    // pre-checked here against the LIVE export because the CLI treats them as silent
-    // exit-0 no-ops (link `distinct()`s, unlink filters a missing edge away): without
-    // these, a re-link would toast "already linked" only by luck and a re-unlink would
-    // falsely toast success. The edge is present iff `dependent` lists `blocker`.
-    fun performEdgeOp(dependent: String, blocker: String, link: Boolean, isUndo: Boolean = false) {
-        if (busy) {
-            toasts.show("busy — try again in a moment", ToastKind.INFO)
-            return
-        }
-        val current = export ?: return
-        val edgeExists = current.tasks.firstOrNull { it.id == dependent }?.depends?.contains(blocker) == true
-        if (link && edgeExists) {
-            toasts.show("already linked: $blocker → $dependent", ToastKind.INFO)
-            return
-        }
-        if (!link && !edgeExists) {
-            toasts.show("not linked: $blocker → $dependent", ToastKind.INFO)
-            return
-        }
-        val verb = if (link) "link" else "unlink"
-        busy = true
-        scope.launch {
-            withContext(Dispatchers.IO) {
-                runCatching { client.mutate(listOf(verb, dependent, "--depends", blocker)) }
-            }
-                .onSuccess {
-                    refresh(it)
-                    if (isUndo) {
-                        lastOp = null
-                        toasts.show("undid ${if (link) "unlink" else "link"}: $blocker → $dependent", ToastKind.SUCCESS)
-                    } else {
-                        lastOp = LinkOp(dependent, blocker, wasLink = link)
-                        toasts.show("${if (link) "linked" else "unlinked"} $blocker → $dependent (Ctrl+Z to undo)", ToastKind.SUCCESS)
-                    }
-                }
-                .onFailure { toasts.show("$verb failed: ${it.message ?: it}", ToastKind.ERROR) }
-            busy = false
-        }
-    }
-
-    // One-shot inverse-command undo (the t-aq99 leaning) — no general undo stack.
-    fun undoLast() {
-        val op = lastOp
-        if (op == null) {
-            toasts.show("nothing to undo", ToastKind.INFO)
-            return
-        }
-        performEdgeOp(op.dependent, op.blocker, link = !op.wasLink, isUndo = true)
     }
 
     // t-aq99: the root claims focus so canvas-level keys work before any click;
@@ -447,9 +241,9 @@ private fun App(client: CliClient) {
             // its own Ctrl+F (re-select the query).
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && event.isCtrlPressed && event.key == Key.F &&
-                    export != null && dialog == null && !showCreate
+                    store.canOpenSearch
                 ) {
-                    searchOpen = true
+                    store.openSearch()
                     true
                 } else {
                     false
@@ -459,11 +253,11 @@ private fun App(client: CliClient) {
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                 when {
                     event.key == Key.Z && event.isCtrlPressed -> {
-                        undoLast()
+                        store.undoLast()
                         true
                     }
-                    (event.key == Key.Delete || event.key == Key.Backspace) && selectedEdge != null -> {
-                        selectedEdge?.let { performEdgeOp(it.to, it.from, link = false) }
+                    (event.key == Key.Delete || event.key == Key.Backspace) && store.selectedEdge != null -> {
+                        store.unlinkSelectedEdge()
                         true
                     }
                     else -> false
@@ -472,19 +266,19 @@ private fun App(client: CliClient) {
     ) {
         Column(Modifier.fillMaxSize()) {
             Header(
-                export,
-                busy = busy,
-                onRefresh = ::reload,
-                onAddCard = { showCreate = true },
-                onArchive = { dialog = SettingsDialog.ARCHIVE },
-                onPrune = { dialog = SettingsDialog.PRUNE },
+                store.export,
+                busy = store.busy,
+                onRefresh = store::reload,
+                onAddCard = store::openCreate,
+                onArchive = { store.openDialog(SettingsDialog.ARCHIVE) },
+                onPrune = { store.openDialog(SettingsDialog.PRUNE) },
                 search = SearchBridge(
-                    open = searchOpen,
-                    onOpen = { searchOpen = true },
+                    open = store.searchOpen,
+                    onOpen = store::openSearch,
                     // Esc / Enter / click-away all land here: close and hand focus
                     // back to the root so canvas-level keys work again (t-tm10).
                     onClose = {
-                        searchOpen = false
+                        store.closeSearch()
                         rootFocus.requestFocus()
                     },
                     onNavigate = ::navigateTo,
@@ -498,12 +292,12 @@ private fun App(client: CliClient) {
                 val clampedPanelWidth = clampPanelWidth(panelWidth, windowWidth)
                 Row(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxHeight()) {
-                        val current = export
+                        val current = store.export
                         when {
-                            error != null && current == null ->
+                            store.error != null && current == null ->
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                     SelectionContainer {
-                                        Text("error: $error", color = Tk.blocked, fontSize = 13.sp)
+                                        Text("error: ${store.error}", color = Tk.blocked, fontSize = 13.sp)
                                     }
                                 }
                             current == null ->
@@ -512,37 +306,18 @@ private fun App(client: CliClient) {
                                 }
                             else -> GraphPane(
                                 export = current,
-                                selectedId = selectedId,
-                                // Highlight source: the pin wins; without one, selection highlights.
-                                highlightedId = pinnedId ?: selectedId,
-                                pinnedId = pinnedId,
-                                linkModeId = linkModeId,
-                                selectedEdge = selectedEdge,
-                                onSelectEdge = { selectedEdge = it },
-                                onLink = { dependent, blocker -> performEdgeOp(dependent, blocker, link = true) },
-                                onUnlink = { dependent, blocker -> performEdgeOp(dependent, blocker, link = false) },
-                                // Link mode is single, session-only like the pin: toggling one card off,
-                                // or transferring it to another. Handles show on whichever card holds it.
-                                onLinkModeToggle = { id -> linkModeId = if (linkModeId == id) null else id },
-                                onSelect = {
-                                    selectedId = it
-                                    selectedEdge = null
-                                },
-                                // Pinning selects too (one click = full focus); a second click on
-                                // the pinned card's pin unpins and leaves selection untouched.
-                                onPinToggle = { id ->
-                                    if (pinnedId == id) {
-                                        pinnedId = null
-                                    } else {
-                                        pinnedId = id
-                                        selectedId = id
-                                    }
-                                },
-                                // Background click clears the selection, never the pin (§5).
-                                onClearSelection = {
-                                    selectedId = null
-                                    selectedEdge = null
-                                },
+                                selectedId = store.selectedId,
+                                highlightedId = store.highlightedId,
+                                pinnedId = store.pinnedId,
+                                linkModeId = store.linkModeId,
+                                selectedEdge = store.selectedEdge,
+                                onSelectEdge = store::selectEdge,
+                                onLink = { dependent, blocker -> store.performEdgeOp(dependent, blocker, link = true) },
+                                onUnlink = { dependent, blocker -> store.performEdgeOp(dependent, blocker, link = false) },
+                                onLinkModeToggle = store::toggleLinkMode,
+                                onSelect = store::selectCard,
+                                onPinToggle = store::togglePin,
+                                onClearSelection = store::clearSelection,
                                 hScroll = hScroll,
                                 vScroll = vScroll,
                                 cardRects = cardRects,
@@ -551,22 +326,20 @@ private fun App(client: CliClient) {
                         }
                     }
                     DetailPane(
-                        task = export?.tasks?.firstOrNull { it.id == selectedId },
-                        // Which ids the panel may render as navigable links — absence from
-                        // the export is how it spots an archived or dangling dep (t-nt8t).
-                        knownIds = export?.tasks?.mapTo(HashSet()) { it.id } ?: emptySet(),
-                        pinnedId = pinnedId,
-                        error = error,
-                        busy = busy,
+                        task = store.selectedTask,
+                        knownIds = store.knownIds,
+                        pinnedId = store.pinnedId,
+                        error = store.error,
+                        busy = store.busy,
                         width = clampedPanelWidth.dp,
                         // Dragging the left-edge handle right (positive delta) shrinks the panel; the
                         // new raw width is re-clamped against the current window so a drag can't push
                         // it past the min or the 60% cap.
                         onWidthDrag = { deltaDp -> panelWidth = clampPanelWidth(panelWidth - deltaDp.value, windowWidth) },
-                        onMutate = ::mutate,
+                        onMutate = store::mutate,
                         onNavigate = ::navigateTo,
-                        onLoadBody = ::loadBody,
-                        onSaveBody = ::saveBody,
+                        onLoadBody = store::loadBody,
+                        onSaveBody = store::saveBody,
                     )
                 }
             }
@@ -574,18 +347,18 @@ private fun App(client: CliClient) {
         }
 
         // t-aq99: toasts overlay everything, bottom-centre, above the legend.
-        ToastHost(toasts, Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp))
+        ToastHost(store.toasts, Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp))
 
         // Settings dialogs overlay the whole app (scrim + centred card, DESIGN §9).
-        val current = export
-        if (current != null && dialog == SettingsDialog.ARCHIVE) {
+        val current = store.export
+        if (current != null && store.dialog == SettingsDialog.ARCHIVE) {
             ArchiveDialog(
                 doneCount = current.tasks.count { it.status == "done" },
                 droppedCount = current.tasks.count { it.status == "dropped" },
-                busy = busy,
+                busy = store.busy,
                 onConfirm = { done, dropped ->
-                    dialog = null
-                    mutate(
+                    store.closeDialog()
+                    store.mutate(
                         buildList {
                             add("cleanup")
                             // Both types = the verb's historical default; one type narrows.
@@ -596,39 +369,34 @@ private fun App(client: CliClient) {
                         },
                     )
                 },
-                onDismiss = { dialog = null },
+                onDismiss = store::closeDialog,
             )
         }
-        if (current != null && dialog == SettingsDialog.PRUNE) {
+        if (current != null && store.dialog == SettingsDialog.PRUNE) {
             PruneDialog(
                 doneCount = current.tasks.count { it.status == "done" },
                 droppedCount = current.tasks.count { it.status == "dropped" },
-                busy = busy,
+                busy = store.busy,
                 onConfirm = { done, dropped ->
-                    dialog = null
+                    store.closeDialog()
                     val statuses = buildSet {
                         if (done) add("done")
                         if (dropped) add("dropped")
                     }
-                    mutateAll(current.tasks.filter { it.status in statuses }.map { listOf("delete", it.id) })
+                    store.mutateAll(current.tasks.filter { it.status in statuses }.map { listOf("delete", it.id) })
                 },
-                onDismiss = { dialog = null },
+                onDismiss = store::closeDialog,
             )
         }
         // The add-card dialog (t-rjna), same overlay family. defaultThread prefills
         // the thread field from config via the export (pure-CLI UI, ADR-010 spirit).
-        if (showCreate) {
+        if (store.showCreate) {
             CreateCardDialog(
-                defaultThread = export?.defaultThread ?: "",
-                submitting = creating,
-                error = createError,
-                onCreate = ::createTask,
-                onDismiss = {
-                    if (!creating) {
-                        showCreate = false
-                        createError = null
-                    }
-                },
+                defaultThread = current?.defaultThread ?: "",
+                submitting = store.creating,
+                error = store.createError,
+                onCreate = store::createTask,
+                onDismiss = store::dismissCreate,
             )
         }
     }

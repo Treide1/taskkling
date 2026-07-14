@@ -76,6 +76,9 @@ dependencies {
     // kotlin-test runner mirrors :core; the module is plain kotlin-jvm, so the task is
     // `:ui:test` (not `:ui:jvmTest`, which is a KMP-only name).
     testImplementation(kotlin("test"))
+    // AppStoreTest drives the store's coroutines on a StandardTestDispatcher so the
+    // busy-flag sequencing is deterministic rather than timing-dependent (t-82d4).
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 compose.desktop {
