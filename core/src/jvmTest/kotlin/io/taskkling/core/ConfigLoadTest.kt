@@ -121,6 +121,7 @@ class ConfigLoadTest {
         KeyBinding("tasks_dir", "tasksDir", "custom_dir", { it.tasksDir }, "custom_dir"),
         KeyBinding("id_prefix", "idPrefix", "z-", { it.idPrefix }, "z-"),
         KeyBinding("default_thread", "defaultThread", "main", { it.defaultThread }, "main"),
+        KeyBinding("workspace_name", "workspaceName", "my-repo", { it.workspaceName }, "my-repo"),
         KeyBinding("lock_timeout", "lockTimeout", "99", { it.lockTimeout }, 99),
         KeyBinding("update_check", "updateCheck", "false", { it.updateCheck }, false),
     )

@@ -35,10 +35,11 @@ class GoldenExportTest {
     @Test
     fun exportMatchesGoldenDto() {
         val actual = fixture().buildExport(includeBody = false, includeArchived = false)
-            .copy(generatedAt = "T")
+            .copy(generatedAt = "T", workspaceName = "W")
 
         val expected = ExportDto(
             generatedAt = "T",
+            workspaceName = "W",
             counts = CountsDto(ready = 1, blocked = 0, waiting = 0, done = 1),
             tasks = listOf(
                 TaskDto(
@@ -76,13 +77,16 @@ class GoldenExportTest {
      * Wire-format regression guard: assert the *serialized* JSON string, not just
      * the DTO. A camelCase/field-rename that still maps to the same DTO would slip
      * past [exportMatchesGoldenDto] yet break the UI's CliClient (ADR-008); pinning
-     * the literal bytes catches it. `generatedAt` is neutralized (volatile).
+     * the literal bytes catches it. `generatedAt` and `workspaceName` are both
+     * neutralized (volatile — the latter resolves to the random temp dir's name;
+     * its resolution is pinned by [WorkspaceDisplayNameTest] instead).
      */
     @Test
     fun serializedWireGoldenIsStable() {
         val actual = json.encodeToString(
             ExportDto.serializer(),
-            fixture().buildExport(includeBody = false, includeArchived = false).copy(generatedAt = "T"),
+            fixture().buildExport(includeBody = false, includeArchived = false)
+                .copy(generatedAt = "T", workspaceName = "W"),
         )
         assertEquals(WIRE_GOLDEN, actual)
     }
@@ -214,7 +218,8 @@ class GoldenExportTest {
                         "body": null
                     }
                 ],
-                "defaultThread": ""
+                "defaultThread": "",
+                "workspaceName": "W"
             }
         """.trimIndent()
     }

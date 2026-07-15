@@ -488,6 +488,7 @@ tasks_dir       = "tasks"      # active-task directory (archive/ and trash/ are 
 id_prefix       = "t-"         # task id prefix
 granularity     = "minute"     # day | minute | second (display/working; deferred feature)
 default_thread  = ""           # applied by `add` when --thread omitted
+workspace_name  = ""           # UI header label; defaults to the workspace dir name
 lock_timeout    = 30           # seconds before a dead-PID lock is reclaimable
 binary_path     = ""           # optional explicit path the UI uses to find the CLI
 # update_check  = true         # newer-version notifier, on by default (ADR-006); set false to disable, or leave unset to inherit the user-level config
@@ -495,6 +496,14 @@ binary_path     = ""           # optional explicit path the UI uses to find the 
 
 The `update_check` key is also honoured in a **user-level** `config.toml` (so the global binary
 respects it outside any workspace; a workspace's value overrides it) — see §15 and `config init`.
+
+`workspace_name` is what the UI calls this workspace, in its header (`taskkling · my-repo`) and its
+window title. Empty or absent both mean **use the workspace directory's name** — so the key only
+needs setting when the directory name is a poor label. The fallback is resolved by the CLI and
+shipped on the export (§12), because discovery walks *up* from the cwd to find `.taskkling/` and so
+only the CLI knows the workspace root. The rule is deliberately literal: a workspace whose directory
+is itself named `taskkling` shows `taskkling · taskkling`, and `init --demo-mode` gets no special
+label. Long names are ellipsized in the header (never in the window title).
 
 ---
 

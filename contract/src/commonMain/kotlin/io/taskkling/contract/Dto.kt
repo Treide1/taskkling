@@ -22,6 +22,16 @@ public data class ExportDto(
      * deserialize (ADR-008 boundary).
      */
     val defaultThread: String = "",
+    /**
+     * The workspace's display name (PRD §14), already resolved: the config's
+     * `workspace_name`, or the workspace root's directory name when that key is
+     * empty or absent. Resolved writer-side because a pure-CLI reader can't do
+     * it — the UI's working directory is the process cwd, while discovery walks
+     * *up* from there to find `.taskkling/`, so only the writer knows the root.
+     * Empty string only in exports from a CLI predating this field, where the UI
+     * degrades to the bare wordmark (ADR-008 boundary).
+     */
+    val workspaceName: String = "",
 )
 
 /** Aggregate counts surfaced alongside the task list (PRD §12). */

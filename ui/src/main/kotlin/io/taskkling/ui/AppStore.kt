@@ -101,6 +101,15 @@ internal class AppStore(
     val highlightedId: String? get() = pinnedId ?: selectedId
 
     /**
+     * What to call this workspace, in the header and the OS window title (t-tlk0). The CLI
+     * resolves it — config `workspace_name`, else the workspace directory's name — because
+     * discovery walks *up* from the cwd, so this process can't derive the fallback itself.
+     * Empty until the first export lands, and for an export predating the field; both
+     * render as the bare wordmark rather than a dangling separator.
+     */
+    val workspaceName: String get() = export?.workspaceName.orEmpty()
+
+    /**
      * Which ids the panel may render as navigable links — absence from the export is
      * how it spots an archived or dangling dep (t-nt8t).
      */
