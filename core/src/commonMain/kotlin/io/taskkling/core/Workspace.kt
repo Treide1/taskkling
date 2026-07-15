@@ -19,6 +19,7 @@ public data class Config(
     val tasksDir: String = "tasks",
     val idPrefix: String = "t-",
     val defaultThread: String = "",
+    val workspaceName: String = "",
     val lockTimeout: Int = 30,
     val updateCheck: Boolean? = null,
 ) {
@@ -38,6 +39,7 @@ public data class Config(
                     "tasks_dir" -> c.copy(tasksDir = value)
                     "id_prefix" -> c.copy(idPrefix = value)
                     "default_thread" -> c.copy(defaultThread = value)
+                    "workspace_name" -> c.copy(workspaceName = value)
                     "lock_timeout" -> c.copy(lockTimeout = value.toIntOrNull() ?: c.lockTimeout)
                     "update_check" -> c.copy(updateCheck = value.toBooleanStrictOrNull() ?: c.updateCheck)
                     else -> c
@@ -57,6 +59,7 @@ public data class Config(
             id_prefix       = "t-"         # task id prefix
             granularity     = "minute"     # day | minute | second (display/working; deferred feature)
             default_thread  = ""           # applied by `add` when --thread omitted
+            workspace_name  = ""           # UI header label; defaults to the workspace dir name
             lock_timeout    = 30           # seconds before a dead-PID lock is reclaimable
             binary_path     = ""           # optional explicit path the UI uses to find the CLI
             # update_check  = true         # newer-version notifier, on by default (ADR-006); set false to disable, or leave unset to inherit the user-level config
@@ -87,6 +90,16 @@ public class Workspace(
     public val configFile: Path get() = metaDir / "config.toml"
     public val lockFile: Path get() = metaDir / "lock"
     public val tmpDir: Path get() = metaDir / "tmp"
+
+    /**
+     * What to call this workspace in a UI (PRD §14): the config's `workspace_name`,
+     * falling back to [root]'s directory name. Resolved here rather than reader-side
+     * because only the writer knows [root] — discovery walks up from the cwd, so a
+     * process that merely *runs inside* the workspace can't derive the fallback.
+     * Deliberately unfiltered: a workspace whose directory is itself named
+     * "taskkling" reports "taskkling", redundant wordmark and all.
+     */
+    public val displayName: String get() = config.workspaceName.ifEmpty { root.name }
 
     /** Ids parsed from the `.md` filenames in [dir] (the `<id>` before `--`). */
     public fun idsInDir(dir: Path): Set<String> {

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +48,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.TextUnit
@@ -73,6 +75,20 @@ internal const val COL_GAP = 110
 internal const val ROW_GAP = 24
 internal const val PAD = 28
 
+/** The wordmark in the header and the OS window title — the one spelling of the name. */
+internal const val WORDMARK = "taskkling"
+
+/**
+ * How much width the header's workspace name may take before it ellipsizes (t-tlk0).
+ * ~18 characters at 14.sp in the bundled font: enough for the overwhelming majority
+ * of directory names untruncated, and enough prefix to tell two workspaces apart
+ * when it does truncate, which is the label's whole job. The bound exists because
+ * the title block sits OUTSIDE [HeaderLadder] — every dp it takes is a fixed tax the
+ * ladder can never reclaim, and without a cap that tax would be set by the user's
+ * directory name.
+ */
+internal val WORKSPACE_NAME_MAX_WIDTH = 160.dp
+
 /**
  * The desktop app (PRD §13): a pure CLI client. Reads `export`, lays the DAG out
  * with [layout], renders a node-link graph with a detail panel, and performs
@@ -98,13 +114,20 @@ fun main(args: Array<String>) {
         return
     }
 
-    // Built ONCE, outside composition, and never rebuilt: App remembers its AppStore keyed on
-    // this instance, so constructing the client at the App() call site would hand `remember` a
-    // fresh identity on every recomposition of that scope — rebuilding the store and dropping
-    // the whole session (export, selection, pin) mid-use.
+    // Built ONCE, outside composition, and never rebuilt: the AppStore below is remembered
+    // keyed on this instance, so constructing the client at the call site would hand
+    // `remember` a fresh identity on every recomposition of that scope — rebuilding the
+    // store and dropping the whole session (export, selection, pin) mid-use.
     val client = binary?.let { CliClient(it, workRoot) }
 
     application {
+        val scope = rememberCoroutineScope()
+        // The store lives HERE rather than inside `App` because the window title reads it
+        // too (t-tlk0), and `title` is a Window argument evaluated at this level. Keeping
+        // one store above both readers is what lets the title and the header render the
+        // same workspace name off the same state, instead of `App` syncing a copy upward.
+        // Null only when no CLI was found, which is the error branch below.
+        val store = remember(client) { client?.let { AppStore(it, scope) } }
         // Default window (t-9de2): ~85% of the screen's WORK area (excludes the taskbar,
         // unlike raw screen size), centred. Session-only — recomputed fresh each launch,
         // never persisted, so it tracks whichever monitor/work-area the app starts on.
@@ -117,13 +140,13 @@ fun main(args: Array<String>) {
         )
         Window(
             onCloseRequest = ::exitApplication,
-            title = "taskkling",
+            title = windowTitle(store?.workspaceName.orEmpty()),
             icon = painterResource("icons/taskkling.png"),
             state = windowState,
         ) {
             TaskklingTheme {
                 Box(Modifier.fillMaxSize().background(Tk.bg)) {
-                    if (client == null) {
+                    if (store == null) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             SelectionContainer {
                                 Text(
@@ -134,7 +157,7 @@ fun main(args: Array<String>) {
                             }
                         }
                     } else {
-                        App(client)
+                        App(store)
                     }
                 }
             }
@@ -142,13 +165,19 @@ fun main(args: Array<String>) {
     }
 }
 
+/**
+ * The OS window title for a workspace called [workspaceName] (t-tlk0). Falls back
+ * to the bare wordmark while [workspaceName] is empty — which covers both the
+ * moment before the first export lands and an export from a CLI predating the
+ * field. Unlike the header label this is deliberately unbounded: the window
+ * manager does its own truncation, and a title bar has no ladder to protect.
+ */
+internal fun windowTitle(workspaceName: String): String =
+    if (workspaceName.isEmpty()) WORDMARK else "$WORDMARK · $workspaceName"
+
 @Composable
-private fun App(client: TaskklingClient) {
+private fun App(store: AppStore) {
     val scope = rememberCoroutineScope()
-    // All app state and every CLI call live in the store; this composable owns only
-    // geometry (below) and renders/forwards intents. Keyed on the client so a swapped
-    // client can never keep a stale store.
-    val store = remember(client) { AppStore(client, scope) }
     LaunchedEffect(store) {
         store.start()
         store.checkVersionSkew()
@@ -441,8 +470,24 @@ private fun Header(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Image(painterResource("icons/taskkling.svg"), contentDescription = null, modifier = Modifier.size(18.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("taskkling", fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, color = Tk.txt)
-                Text(" · graph", fontSize = 14.sp, color = Tk.faint)
+                Text(WORDMARK, fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, color = Tk.txt)
+                // The workspace this window is showing (t-tlk0), replacing a hardcoded
+                // "graph" that said nothing the rest of the window didn't. Absent until
+                // the first export lands, leaving the wordmark alone rather than a
+                // dangling separator. The name is bounded but the separator is not, so
+                // the ellipsis budget is the name's alone.
+                val workspaceName = export?.workspaceName.orEmpty()
+                if (workspaceName.isNotEmpty()) {
+                    Text(" · ", fontSize = 14.sp, color = Tk.faint)
+                    Text(
+                        workspaceName,
+                        fontSize = 14.sp,
+                        color = Tk.faint,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = WORKSPACE_NAME_MAX_WIDTH),
+                    )
+                }
             }
         }
         // The rest of the header — generated-note + refresh, the flexible gap, and the

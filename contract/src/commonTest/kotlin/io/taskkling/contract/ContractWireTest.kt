@@ -52,14 +52,15 @@ class ContractWireTest {
         counts = CountsDto(ready = 1, blocked = 2, waiting = 3, done = 4),
         tasks = listOf(fullTask()),
         defaultThread = "main",
+        workspaceName = "my-repo",
     )
 
     // --- Field names: the ADR-008 vocabulary boundary ----------------------------------------
 
     @Test
-    fun exportWireKeysAreExactlyGeneratedAtCountsTasksDefaultThread() {
+    fun exportWireKeysAreExactlyGeneratedAtCountsTasksDefaultThreadWorkspaceName() {
         val obj = writer.encodeToJsonElement(ExportDto.serializer(), fullExport()).jsonObject
-        assertEquals(setOf("generatedAt", "counts", "tasks", "defaultThread"), obj.keys)
+        assertEquals(setOf("generatedAt", "counts", "tasks", "defaultThread", "workspaceName"), obj.keys)
     }
 
     @Test
@@ -104,6 +105,24 @@ class ContractWireTest {
         val encoded = writer.encodeToString(ExportDto.serializer(), fullExport())
         val decoded = reader.decodeFromString(ExportDto.serializer(), encoded)
         assertEquals(fullExport(), decoded)
+    }
+
+    @Test
+    fun anExportPredatingTheConfigEchoFieldsStillDecodes() {
+        // Backward-compat (ADR-008): `defaultThread` and `workspaceName` were added to a
+        // shipped contract, so an export written before either existed must still decode,
+        // with both falling back to "". The UI leans on exactly this — an empty
+        // workspaceName is what makes its header degrade to the bare wordmark.
+        val legacy = """
+            {"generatedAt":"2026-01-02T00:00:00Z",
+             "counts":{"ready":1,"blocked":2,"waiting":3,"done":4},
+             "tasks":[]}
+        """.trimIndent()
+        val export = reader.decodeFromString(ExportDto.serializer(), legacy)
+
+        assertEquals("", export.defaultThread)
+        assertEquals("", export.workspaceName)
+        assertEquals(emptyList(), export.tasks)
     }
 
     @Test
