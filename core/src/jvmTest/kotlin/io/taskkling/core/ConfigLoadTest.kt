@@ -65,7 +65,6 @@ class ConfigLoadTest {
         val cfg = loadToml(
             """
             granularity = "minute"
-            binary_path = "/opt/tk"
             totally_made_up = 42
             id_prefix = "y-"
             """.trimIndent(),
@@ -123,6 +122,7 @@ class ConfigLoadTest {
         KeyBinding("default_thread", "defaultThread", "main", { it.defaultThread }, "main"),
         KeyBinding("lock_timeout", "lockTimeout", "99", { it.lockTimeout }, 99),
         KeyBinding("update_check", "updateCheck", "false", { it.updateCheck }, false),
+        KeyBinding("binary_path", "binaryPath", "/opt/tk", { it.binaryPath }, "/opt/tk"),
     )
 
     /** Instance (non-static) field names of the compiled [Config] data class. */
