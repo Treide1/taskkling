@@ -27,6 +27,24 @@ worktree or any other cwd, `taskkling --root C:/git/taskkling <verb> …` works 
 
 ## Running the UI for QA
 
-`gradlew :ui:run` launched as a background task exits 0 with no output and **no window** —
-useless for verification. Instead build the uberjar and launch it detached
-(`Start-Process` on Windows) so the window actually appears and can be driven/captured.
+`gradlew :ui:run` launched as a background task exits 0 with no output and **no window**. So for
+anything that needs a *visible* window (driving it, screenshots), build the uberjar and launch it
+detached (`Start-Process` on Windows) so the window actually appears and can be driven/captured.
+
+For **env-dependent QA `:ui:run` is fine**, and is the cheaper path. It forwards `TASKKLING_BINARY`
+and `TASKKLING_SMOKE` from your shell to the app JVM (pinned explicitly in `ui/build.gradle.kts`),
+and `TASKKLING_SMOKE=1` takes a headless smoke path that prints the resolved binary and exits
+without opening a window — so it needs no display and steals no focus:
+
+```
+TASKKLING_SMOKE=1 TASKKLING_BINARY=/path/to/taskkling gradlew :ui:run --args=<workspace-dir>
+# smoke ok: binary=/path/to/taskkling nodes=… layers=… edges=…
+```
+
+`--args=<workspace-dir>` is optional (it defaults to the cwd, then walks up); point it at a
+throwaway `init`-ed workspace to keep QA off the dogfood store.
+
+**Read the `binary=` line — never infer which binary the UI picked from behaviour.** If
+`TASKKLING_BINARY` names a path that isn't executable (typo, relative path, stale build),
+`CliDiscovery` silently falls back to an up-tree `.taskkling/bin/taskkling[.exe]`, and a UI
+pointed at the wrong binary looks exactly like a broken feature.
