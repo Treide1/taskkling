@@ -587,7 +587,12 @@ private class ConfigCmd : Subcommand("config", "Manage user-level configuration 
         // nested `init` rather than colliding with the top-level `init` (kotlinx-cli's
         // non-strict mode keeps scanning and would overwrite the selected subcommand).
         strictSubcommandOptionsOrder = true
-        subcommands(ConfigInitCmd(this))
+        val initCmd = ConfigInitCmd(this)
+        subcommands(initCmd)
+        // This grandchild is registered here, at construction, so main()'s per-verb pass never
+        // sees it — install its parse-failure hook (t-wezr) directly or `config init --bogus`
+        // would keep kotlinx-cli's exit 127.
+        initCmd.failLoudly("config init")
     }
 
     override fun execute() {
@@ -684,6 +689,46 @@ private class ListCmd : TkCommand("list", "List tasks (ls -la style); filters fo
     }
 }
 
+/**
+ * Route kotlinx-cli's own parse failures through taskkling's error contract (t-wezr).
+ *
+ * A parse failure (unknown flag, stray/misordered argument) happens INSIDE
+ * [ArgParser.parse], before any subcommand executes, so [TkCommand.execute]'s
+ * `TkError` → exit-code mapping never gets a chance to run. Left alone, kotlinx-cli
+ * prints `"<message>\n<usage dump>"` to **stdout** and exits **127** — a code that is
+ * in neither [ExitCode] nor PRD §10.1 (which makes anything uncaught a `1`), and that
+ * a shell reads as "command not found". The one line saying what actually went wrong
+ * is buried under ~20 lines of usage, so a failed mutation reads like a help dump.
+ *
+ * [ArgParser.outputAndTerminate] is the single sink BOTH the error path (exit 127) and
+ * `--help` (exit 0) funnel through, and the exit code it is handed is what tells the
+ * two apart — so this one hook fixes every verb without duplicating any verb's option
+ * schema. It is `internal` to kotlinx-cli, hence the suppression: the alternative,
+ * pre-validating argv ourselves, would mean re-implementing kotlinx-cli's tokenization
+ * (`--opt=value`, combined short flags, `--`), and a bug THERE would falsely reject
+ * *valid* commands — strictly worse than the bug being fixed. The suppressed access is
+ * pinned by black-box tests (CliSubprocessTest) that assert the real binary's real exit
+ * code, so if a toolchain bump ever breaks it, CI fails loudly rather than silently
+ * reverting to 127.
+ *
+ * [verb] names the command whose parser this is (null = the top-level parser), which is
+ * all [parseErrorLines] needs to phrase a suggestion.
+ */
+@Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")
+private fun ArgParser.failLoudly(verb: String?) {
+    outputAndTerminate = { message, exitCode ->
+        if (exitCode == 0) {
+            // `--help`: the usage dump IS the requested output. Byte-identical to
+            // kotlinx-cli's default (stdout, exit 0) — help is not an error.
+            println(message)
+            exitProcess(ExitCode.OK.code)
+        } else {
+            parseErrorLines(verb, message).forEach { eprintln("taskkling: $it") }
+            exitProcess(ExitCode.USAGE.code)
+        }
+    }
+}
+
 /** Entry point for the native `taskkling` binary (PRD §6.2, §10). */
 public fun main(rawArgs: Array<String>) {
     // Recover argv losslessly (t-jagq): on mingwX64, Kotlin/Native's own decode of
@@ -725,7 +770,12 @@ public fun main(rawArgs: Array<String>) {
     // also fixes a latent misparse where an argument value equal to a verb name (e.g.
     // `add list`) was consumed as a subcommand. Leading globals are already extracted above.
     val parser = ArgParser("taskkling", strictSubcommandOptionsOrder = true)
-    parser.subcommands(
+    // Install the parse-failure hook (t-wezr) BEFORE subcommands(): kotlinx-cli copies the
+    // parent's sink into each child AT REGISTRATION TIME, so a hook set afterwards would
+    // never reach the verbs. This top-level one carries verb=null — an unrecognised verb is
+    // the only parse failure the root parser can report.
+    parser.failLoudly(verb = null)
+    val verbs = arrayOf<Subcommand>(
         InitCmd(), AddCmd(), ListCmd(), ExportCmd(),
         GetCmd(),
         DoneCmd(), DropCmd(), ReopenCmd(), WaitCmd(),
@@ -734,5 +784,10 @@ public fun main(rawArgs: Array<String>) {
         DeleteCmd(), RestoreCmd(), CleanupCmd(), DoctorCmd(), UpdateCmd(), UiCmd(), UninstallCmd(),
         ConfigCmd(),
     )
+    parser.subcommands(*verbs)
+    // Now give each verb its own hook: the copies made above all captured verb=null, and a
+    // suggestion needs to know which verb failed. (ConfigCmd's nested `init` registers itself
+    // at construction, so it installs its own — see ConfigCmd.)
+    verbs.forEach { it.failLoudly(it.name) }
     parser.parse(rest)
 }
