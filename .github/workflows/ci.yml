@@ -31,6 +31,16 @@ jobs:
         # compiles main + test and runs the Layout/viewport math unit tests, subsuming the
         # previous compile-only check.
         run: ./gradlew :contract:jvmTest :core:jvmTest :ui:test --no-daemon --stacktrace
+      - name: Common (metadata) compilation
+        # Rot guard (t-x5ur). The task list above only ever compiles the *JVM leaf* of each
+        # KMP module, so the common/intermediate source sets were never forced green by CI —
+        # and they silently broke: `./gradlew build` failed on clean main with ~70 unresolved
+        # okio references in :core:compileCommonMainKotlinMetadata (plus a commonizer opt-in
+        # error in posixMain), which nothing caught because the metadata tasks are not in
+        # CI's graph. allMetadataJar is the narrow umbrella over exactly those compilations
+        # (commonMain + every shared source set) and nothing else — no native links, no tests.
+        # ~10 s added to this job, which is not CI's critical path (the MingwX64 leg is).
+        run: ./gradlew :contract:allMetadataJar :core:allMetadataJar :cli:allMetadataJar --no-daemon --stacktrace
       - name: UI packaging checks
         # ADR-016 decision 7: build all four per-target uberjars and run the cheap audits —
         # (b) jdeps module deps ⊆ curated jlink list, (c) each jar carries its own Skiko
