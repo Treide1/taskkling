@@ -211,6 +211,69 @@ class AppStoreTest {
         assertNull(store.createError)
     }
 
+    /**
+     * t-ctbc: the minted card has no measured rect yet, so the store selects it and publishes
+     * the id; centring it is the composable's half of the job. Losing this hand-off is how the
+     * pan silently degrades back to a bare selection.
+     */
+    @Test
+    fun `createTask publishes the minted id for the caller to centre`() = runTest {
+        val store = loaded()
+
+        store.createTask(listOf("add", "--title", "fresh"))
+        advanceUntilIdle()
+        assertEquals("t-new0", store.newlyCreatedId)
+
+        store.pannedToNew()
+        assertNull(store.newlyCreatedId)
+    }
+
+    @Test
+    fun `a failed create publishes no id to centre`() = runTest {
+        val client = seeded().apply { failOn = { if (it.first() == "add") "title must not be blank" else null } }
+        val store = loaded(client)
+
+        store.createTask(listOf("add", "--title", ""))
+        advanceUntilIdle()
+
+        assertNull(store.newlyCreatedId)
+    }
+
+    // --- version skew (t-eeze) -------------------------------------------------------------
+
+    @Test
+    fun `a binary on a different version than the UI warns once`() = runTest {
+        val client = seeded().apply { reportedVersion = "0.0.1-ancient" }
+        val store = loaded(client)
+
+        store.checkVersionSkew()
+        advanceUntilIdle()
+
+        assertEquals(ToastKind.ERROR, store.toasts.items.last().kind)
+        assertTrue("0.0.1-ancient" in lastToast(store), "the toast should name the binary's version")
+        assertTrue(BUILD_VERSION in lastToast(store), "the toast should name the UI's version")
+    }
+
+    @Test
+    fun `a matching binary stays silent`() = runTest {
+        val store = loaded() // FakeClient reports BUILD_VERSION by default
+        store.checkVersionSkew()
+        advanceUntilIdle()
+
+        assertTrue(store.toasts.items.isEmpty(), "no skew, no toast")
+    }
+
+    @Test
+    fun `an unreadable version says nothing rather than guessing`() = runTest {
+        val client = seeded().apply { reportedVersion = null }
+        val store = loaded(client)
+
+        store.checkVersionSkew()
+        advanceUntilIdle()
+
+        assertTrue(store.toasts.items.isEmpty(), "null means 'couldn't tell' — stay quiet")
+    }
+
     @Test
     fun `a create failure keeps the dialog open with its own error, sparing the panel's`() = runTest {
         val client = seeded().apply { failOn = { if (it.first() == "add") "title must not be blank" else null } }
