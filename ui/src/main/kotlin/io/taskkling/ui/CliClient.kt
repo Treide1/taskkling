@@ -201,6 +201,32 @@ internal fun normalizeBodyText(raw: String): String = raw
     .trimEnd('\n')
 
 /**
+ * The UI's entire dependency on the outside world (PRD §6.3): five blocking calls
+ * against a task store. [CliClient] is the real adapter — a `taskkling` subprocess;
+ * tests supply an in-memory one. Every method blocks, so callers ([AppStore]) hop to
+ * an IO dispatcher.
+ *
+ * This lives in `:ui`, not `:contract` — the contract stays DTO-only (ADR-008), and
+ * this interface describes how *this* client talks, not what crosses the wire.
+ */
+public interface TaskklingClient {
+    /** The current export; [includeBody] asks for each task's markdown body too. */
+    public fun export(includeBody: Boolean = false): ExportDto
+
+    /** Run a mutation verb with its arguments; returns the post-mutation export. */
+    public fun mutate(args: List<String>): ExportDto
+
+    /** One task's body text. */
+    public fun body(id: String): String
+
+    /** Replace one task's body. */
+    public fun writeBody(id: String, text: String)
+
+    /** The backing tool's version, or null when it can't be determined (t-eeze). */
+    public fun version(): String?
+}
+
+/**
  * Thin subprocess wrapper around the `taskkling` [binary] (PRD §6.3). Reads run
  * `export`; mutations append `--export-on-success` so the post-mutation export
  * comes back in the same call (a TOCTOU-free read-after-write, PRD §7.3) and the
@@ -209,11 +235,11 @@ internal fun normalizeBodyText(raw: String): String = raw
 public class CliClient(
     private val binary: String,
     private val workdir: File = File(System.getProperty("user.dir")),
-) {
+) : TaskklingClient {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = true }
 
     /** `taskkling export [--include-body]` → parsed [ExportDto]. */
-    public fun export(includeBody: Boolean = false): ExportDto {
+    override fun export(includeBody: Boolean): ExportDto {
         val args = buildList { add("export"); if (includeBody) add("--include-body") }
         return json.decodeFromString(ExportDto.serializer(), run(args).stdout)
     }
@@ -222,13 +248,13 @@ public class CliClient(
      * Run a mutation verb (e.g. `done`, `set`) with `--export-on-success` and
      * return the refreshed export. Caller passes the verb and its arguments.
      */
-    public fun mutate(args: List<String>): ExportDto {
+    override fun mutate(args: List<String>): ExportDto {
         val full = args + "--export-on-success"
         return json.decodeFromString(ExportDto.serializer(), run(full).stdout)
     }
 
     /** `taskkling get <id> --body` → the task's body text, newline-normalized ([normalizeBodyText]). */
-    public fun body(id: String): String = normalizeBodyText(run(listOf("get", id, "--body")).stdout)
+    override fun body(id: String): String = normalizeBodyText(run(listOf("get", id, "--body")).stdout)
 
     /**
      * `taskkling write <id> -` — replace the task's body, feeding [text] on stdin
@@ -237,7 +263,7 @@ public class CliClient(
      * umlaut-argv class of bugs). Body edits don't touch the graph, so this deliberately
      * skips `--export-on-success`: the panel already holds the text it just saved.
      */
-    public fun writeBody(id: String, text: String) {
+    override fun writeBody(id: String, text: String) {
         val proc = ProcessBuilder(commandLine(binary, listOf("write", id, "-")))
             .directory(workdir)
             .redirectErrorStream(false)
@@ -257,7 +283,7 @@ public class CliClient(
      * break launch, so this swallows rather than throws (t-eeze). The version notifier the
      * flag can print is TTY-gated, so this subprocess never triggers its network call.
      */
-    public fun version(): String? =
+    override fun version(): String? =
         runCatching { parseVersionOutput(run(listOf("--version")).stdout) }.getOrNull()
 
     private data class Output(val stdout: String, val stderr: String)
