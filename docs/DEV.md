@@ -86,15 +86,32 @@ to wire deps.
 
 ## Running the UI for QA
 
-`gradlew :ui:run` launched as a background task exits 0 with no output and **no window** —
-useless for verification. Instead build the uberjar and launch it detached
-(`Start-Process` on Windows) so the window actually appears and can be driven/captured.
+`gradlew :ui:run` launched as a background task exits 0 with no output and **no window**. So for
+anything that needs a *visible* window (driving it, screenshots), build the uberjar and launch it
+detached (`Start-Process` on Windows) so the window actually appears and can be driven/captured.
 
-`:ui:run` builds the host CLI too and points the UI at it (`TASKKLING_BINARY`), so the two
-halves can't skew. That wiring exists because the UI renders nothing of its own: it shells
-out to the CLI, so a fresh UI on a stale binary shows the OLD tool's data and looks like a
-broken feature rather than a stale binary. Export a `TASKKLING_BINARY` yourself to override
-it — that's how you point a from-source UI at an old binary to exercise the skew toast.
+For **env-dependent QA `:ui:run` is fine**, and is the cheaper path. It forwards `TASKKLING_BINARY`
+and `TASKKLING_SMOKE` from your shell to the app JVM (pinned explicitly in `ui/build.gradle.kts`),
+and `TASKKLING_SMOKE=1` takes a headless smoke path that prints the resolved binary and exits
+without opening a window — so it needs no display and steals no focus:
+
+```
+TASKKLING_SMOKE=1 TASKKLING_BINARY=/path/to/taskkling gradlew :ui:run --args=<workspace-dir>
+# smoke ok: binary=/path/to/taskkling nodes=… layers=… edges=…
+```
+
+`--args=<workspace-dir>` is optional (it defaults to the cwd, then walks up); point it at a
+throwaway `init`-ed workspace to keep QA off the dogfood store.
+
+**Read the `binary=` line — never infer which binary the UI picked from behaviour.** If
+`TASKKLING_BINARY` names a path that isn't executable (typo, relative path, stale build),
+`CliDiscovery` silently falls back to an up-tree `.taskkling/bin/taskkling[.exe]`, and a UI
+pointed at the wrong binary looks exactly like a broken feature.
+
+Absent that override, `:ui:run` builds the host CLI too and points the UI at it, so the two halves
+can't skew. That wiring exists because the UI renders nothing of its own: it shells out to the CLI,
+so a fresh UI on a stale binary shows the OLD tool's data. Exporting `TASKKLING_BINARY` yourself is
+therefore also how you point a from-source UI at an old binary to exercise the skew toast.
 
 Nothing rebuilds that binary for you outside `:ui:run`. The uberjar path above, the
 `./taskkling[.cmd]` wrappers, and `taskkling ui` all use whatever binary is already on disk
