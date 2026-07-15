@@ -190,6 +190,104 @@ class CliHelpersTest {
         assertEquals("-x", bodyArg("-x") { "STDIN" })
     }
 
+    // --- bodyArg: BOM hygiene at the stdin boundary (t-zsh6) ----------------------------
+
+    @Test
+    fun bodyArgStripsTheBomPowerShellPrependsToPipedStdin() {
+        // PS 5.1 prepends U+FEFF to every piped payload. Un-stripped it lands in the body —
+        // and for a `--batch` payload it makes the JSON parse fail outright.
+        assertEquals("piped body", bodyArg("-") { "﻿piped body" })
+    }
+
+    @Test
+    fun bodyArgStripsOnlyOneLeadingBomAndKeepsInteriorFeff() {
+        // A FEFF anywhere but the front is content (zero-width joiner in real text).
+        assertEquals("zero﻿width", bodyArg("-") { "﻿zero﻿width" })
+    }
+
+    @Test
+    fun bodyArgLeavesALiteralArgumentsBomAlone() {
+        // Only the pipe inserts a BOM; a BOM in an argv value was typed, so it is content.
+        assertEquals("﻿literal", bodyArg("﻿literal") { "STDIN" })
+    }
+
+    // --- decodeBatch: the `add --batch -` wire schema (t-zsh6) ---------------------------
+
+    @Test
+    fun decodeBatchReadsTheFullRecordSurfaceMirroringAddsFlags() {
+        val batch = decodeBatch(
+            """
+            [{"ref":"w1","title":"Work","thread":"dx","status":"waiting","req":"sign-off",
+              "depends":["t-aaaa"],"due":"2026-07-31","defer":"2026-07-01","priority":"high",
+              "body":"# Heading\n\nmulti-line"}]
+            """.trimIndent(),
+        )
+        val r = batch.single()
+        assertEquals("w1", r.ref)
+        assertEquals("Work", r.args.title)
+        assertEquals("dx", r.args.thread)
+        assertEquals("waiting", r.args.status)
+        assertEquals("sign-off", r.args.req)
+        assertEquals(listOf("t-aaaa"), r.args.depends)
+        assertEquals("2026-07-31", r.args.due)
+        assertEquals("2026-07-01", r.args.defer)
+        assertEquals("high", r.args.priority)
+        // The reason the format is JSON at all: a body with real newlines.
+        assertEquals("# Heading\n\nmulti-line", r.args.body)
+    }
+
+    @Test
+    fun decodeBatchDefaultsEveryFieldButTitle() {
+        val r = decodeBatch("""[{"title":"Bare"}]""").single()
+        assertEquals("Bare", r.args.title)
+        assertEquals(null, r.ref)
+        assertEquals(null, r.args.thread)
+        assertEquals(emptyList(), r.args.depends)
+        assertEquals(null, r.args.body)
+    }
+
+    @Test
+    fun decodeBatchPreservesRecordOrder() {
+        val batch = decodeBatch("""[{"title":"A"},{"title":"B"},{"title":"C"}]""")
+        assertEquals(listOf("A", "B", "C"), batch.map { it.args.title })
+    }
+
+    @Test
+    fun decodeBatchGivesDependsTheSameCommaGrammarAsTheDFlag() {
+        // `-d a,b` == `-d a -d b`, so ["a,b"] must mean ["a","b"] too (flattenDepends).
+        val r = decodeBatch("""[{"title":"A","depends":["t-a,t-b"," t-c "]}]""").single()
+        assertEquals(listOf("t-a", "t-b", "t-c"), r.args.depends)
+    }
+
+    @Test
+    fun decodeBatchRejectsMalformedJsonAsAUsageError() {
+        val e = assertFailsWith<TkError> { decodeBatch("[{\"title\":\"A\"") }
+        assertEquals(ExitCode.USAGE, e.exit, "an unparseable payload is a malformed argument")
+        assertTrue(e.message!!.contains("not valid JSON"), "message must name the problem: ${e.message}")
+    }
+
+    @Test
+    fun decodeBatchRejectsAnUnknownKeyRatherThanDroppingIt() {
+        // A typo'd `titel` would otherwise create a task silently missing the field the
+        // caller believed they set — the batch equivalent of a typo'd flag.
+        val e = assertFailsWith<TkError> { decodeBatch("""[{"title":"A","titel":"oops"}]""") }
+        assertEquals(ExitCode.USAGE, e.exit)
+        assertTrue(e.message!!.contains("titel"), "message must name the unknown key: ${e.message}")
+    }
+
+    @Test
+    fun decodeBatchRejectsARecordWithNoTitle() {
+        val e = assertFailsWith<TkError> { decodeBatch("""[{"thread":"dx"}]""") }
+        assertEquals(ExitCode.USAGE, e.exit)
+        assertTrue(e.message!!.contains("title"), "message must name the missing field: ${e.message}")
+    }
+
+    @Test
+    fun decodeBatchRejectsAJsonObjectThatIsNotAnArray() {
+        val e = assertFailsWith<TkError> { decodeBatch("""{"title":"A"}""") }
+        assertEquals(ExitCode.USAGE, e.exit)
+    }
+
     // --- buildAttrs: folded attrs column (PRD §10.2) ------------------------------------
 
     @Test

@@ -1,10 +1,15 @@
 package io.taskkling.cli
 
+import io.taskkling.core.AddArgs
+import io.taskkling.core.BatchAddArgs
 import io.taskkling.core.Computed
 import io.taskkling.core.ExitCode
 import io.taskkling.core.Status
 import io.taskkling.core.Task
 import io.taskkling.core.TkError
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 
 /**
  * Pure CLI helpers, extracted from Main.kt into a test seam (mirrors the `:ui`
@@ -22,12 +27,104 @@ internal fun readStdin(): String = buildString {
 }.trimEnd('\n')
 
 /**
- * Resolve body text: a literal `-` means "read the body from stdin" (t-gmb9). The stdin
- * reader is injectable so the `-` convention can be tested without a real pipe; production
- * callers use the default [readStdin].
+ * Strip one leading U+FEFF from a payload piped in on stdin: Windows PowerShell 5.1
+ * prepends a UTF-8 BOM to each piped payload (`.claude/ENVIRONMENT.md`). A FEFF anywhere
+ * else is content and survives.
+ *
+ * Deliberately duplicates `:core`'s one-line `String.stripLeadingBom()` (Mutate.kt), which
+ * is `internal` to that module and so unreachable here; widening core's public API for one
+ * `removePrefix` would be the worse trade. The two are independent by design anyway — core
+ * strips what it *stores* (a body), this strips what we *parse* (any stdin payload).
+ */
+internal fun stripLeadingBom(text: String): String = text.removePrefix("﻿")
+
+/**
+ * Resolve an argument that may be piped: a literal `-` means "read it from stdin"
+ * (t-gmb9). The stdin reader is injectable so the `-` convention can be tested without a
+ * real pipe; production callers use the default [readStdin].
+ *
+ * The stdin branch — and ONLY that branch — drops a leading BOM: on PS 5.1 every piped
+ * payload carries one, and unlike a body (which `:core` re-strips before storing) a piped
+ * `--batch` payload is JSON, where a leading BOM makes the parse fail outright with a
+ * message that names neither the BOM nor the fix. A BOM in a literal argv value, by
+ * contrast, is content nobody's shell inserted.
  */
 internal fun bodyArg(text: String, readStdin: () -> String = ::readStdin): String =
-    if (text == "-") readStdin() else text
+    if (text == "-") stripLeadingBom(readStdin()) else text
+
+// --- add --batch: the JSON batch record (t-zsh6) ----------------------------------------
+
+/** Lenient about nothing: an unknown key is a typo we must not silently drop (see [decodeBatch]). */
+private val batchJson = Json { ignoreUnknownKeys = false }
+
+/**
+ * One record of `add --batch -`'s JSON payload.
+ *
+ * The field names deliberately MIRROR `add`'s own flags (`title`, `thread`, `status`,
+ * `req`, `depends`, `due`, `defer`, `priority`, `body`) so there is one vocabulary to
+ * learn, and so v0.7.0's `milestone`/`tags` (t-xgzw) extend this by one field each rather
+ * than forcing a second schema to migrate. [ref] is the only addition with no flag
+ * counterpart: a local handle, meaningful only within a batch (see [io.taskkling.core.addTasks]).
+ *
+ * JSON rather than TSV because bodies are multi-line markdown — carrying them is the whole
+ * point of the batch path — and TSV cannot without an escaping scheme nobody wants to own.
+ */
+@Serializable
+internal data class BatchRecord(
+    val ref: String? = null,
+    val title: String,
+    val thread: String? = null,
+    val status: String? = null,
+    val req: String? = null,
+    val depends: List<String> = emptyList(),
+    val due: String? = null,
+    val defer: String? = null,
+    val priority: String? = null,
+    val body: String? = null,
+) {
+    /**
+     * Feed the record into the SAME [AddArgs] path a single `add` uses, so the batch
+     * inherits every validation rule and the body's BOM-strip/trim for free.
+     * `depends` gets `-d`'s exact grammar via [flattenDepends] — comma-separated entries
+     * work inside the array too, so `["a,b"]` and `["a","b"]` mean the same thing.
+     */
+    fun toBatchAddArgs(): BatchAddArgs = BatchAddArgs(
+        args = AddArgs(
+            title = title,
+            thread = thread,
+            status = status,
+            req = req,
+            depends = flattenDepends(depends),
+            due = due,
+            defer = defer,
+            priority = priority,
+            body = body,
+        ),
+        ref = ref,
+    )
+}
+
+/**
+ * Decode `add --batch`'s JSON array of [BatchRecord]s.
+ *
+ * A payload that will not parse is a malformed *argument*, not a semantically invalid one,
+ * so it exits [ExitCode.USAGE] — the same code kotlinx-cli's own parse failures now map to
+ * (t-wezr) — while a well-formed batch whose CONTENT is bad exits `VALIDATION` from
+ * `:core`, exactly as the equivalent single `add` would. kotlinx-serialization's message is
+ * kept verbatim (it names the offending path/index) and prefixed with the context it lacks.
+ *
+ * Unknown keys are rejected rather than ignored: silently dropping a mistyped `titel` would
+ * create a task missing the field the caller thought they set — the batch equivalent of a
+ * typo'd flag, which the argv path already refuses.
+ */
+internal fun decodeBatch(text: String): List<BatchAddArgs> {
+    val records = try {
+        batchJson.decodeFromString(ListSerializer(BatchRecord.serializer()), text)
+    } catch (e: Exception) {
+        throw TkError(ExitCode.USAGE, "--batch payload is not valid JSON: ${e.message}")
+    }
+    return records.map { it.toBatchAddArgs() }
+}
 
 /**
  * Normalize `-d`/`--depends` values into a clean id list (regression guard for t-sy9n).

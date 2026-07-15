@@ -6,6 +6,7 @@ import io.taskkling.contract.ExportDto
 import io.taskkling.contract.TaskDto
 import io.taskkling.core.AddArgs
 import io.taskkling.core.addTask
+import io.taskkling.core.addTasks
 import io.taskkling.core.appendBody
 import io.taskkling.core.buildExport
 import io.taskkling.core.cleanup
@@ -65,6 +66,7 @@ import kotlinx.cli.ArgType
 import kotlinx.cli.Subcommand
 import kotlinx.cli.default
 import kotlinx.cli.multiple
+import kotlinx.cli.optional
 import kotlinx.cli.ExperimentalCli
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.datetime.Clock
@@ -210,9 +212,22 @@ private class InitCmd : TkCommand("init", "Scaffold a taskkling workspace (.task
     }
 }
 
-/** `add "<title>" [flags]` — create a task, print its id (PRD §10.4). */
-private class AddCmd : MutationCommand("add", "Create a task; prints the new id") {
-    val title by argument(ArgType.String, description = "Task title")
+/**
+ * `add "<title>" [flags]` — create a task, print its id (PRD §10.4).
+ *
+ * `add --batch -` (t-zsh6) instead reads a JSON array of records from stdin and creates
+ * them all **atomically**, printing one minted id per line in input order. It is the
+ * single-call path for scaffolding a milestone — N work tasks plus a gate depending on
+ * them, bodies included — which the one-at-a-time form can only do by capturing each id
+ * and re-invoking, a loop that degrades into heredoc-inside-`$()` shell gymnastics.
+ * Records wire edges among themselves by local `ref` handle; see [decodeBatch] for the
+ * schema and [io.taskkling.core.addTasks] for the resolution + atomicity rules.
+ */
+private class AddCmd : MutationCommand("add", "Create a task; prints the new id (--batch - creates many from JSON on stdin)") {
+    // Optional ONLY because --batch supplies titles per record instead; the guard in run()
+    // still requires exactly one of the two, with a message naming both (kotlinx-cli's
+    // own "missing argument" could not know --batch is the alternative).
+    val title by argument(ArgType.String, description = "Task title (omit when using --batch)").optional()
     val thread by option(ArgType.String, "thread", "t", description = "Grouping label")
     val status by option(ArgType.String, "status", "s", description = "Initial status: open | waiting | done | dropped (default open)")
     val req by option(ArgType.String, "req", description = "External requirement text (independent of status)")
@@ -221,9 +236,29 @@ private class AddCmd : MutationCommand("add", "Create a task; prints the new id"
     val defer by option(ArgType.String, "defer", description = "Not-before datetime (suppresses readiness)")
     val priority by option(ArgType.String, "priority", "p", description = "low | normal | high")
     val body by option(ArgType.String, "body", "b", description = "Body text; - reads the body from stdin")
+    val batch by option(
+        ArgType.String, "batch",
+        description = "Create many tasks atomically from a JSON array; - reads it from stdin",
+    )
+
+    /** The per-record options `--batch` supersedes, paired with the flag name for the error. */
+    private fun singleAddFlagsInUse(): List<String> = buildList {
+        if (title != null) add("<title>")
+        if (thread != null) add("--thread")
+        if (status != null) add("--status")
+        if (req != null) add("--req")
+        if (depends.isNotEmpty()) add("--depends")
+        if (due != null) add("--due")
+        if (defer != null) add("--defer")
+        if (priority != null) add("--priority")
+        if (body != null) add("--body")
+    }
 
     override fun run() {
         val ws = Workspace.discover(root)
+        if (batch != null) return runBatch(ws)
+        val title = title
+            ?: throw TkError(ExitCode.USAGE, "add needs a title (or --batch - to create many from JSON on stdin)")
         emit(
             ws.addTask(
                 AddArgs(
@@ -241,6 +276,27 @@ private class AddCmd : MutationCommand("add", "Create a task; prints the new id"
             ),
             idIsEssential = true,
         )
+    }
+
+    /**
+     * The `--batch` path. Every field comes from the payload, so a single-add flag alongside
+     * it is refused rather than ignored: silently dropping a `-b body` would destroy input
+     * the caller believed they supplied.
+     */
+    private fun runBatch(ws: Workspace) {
+        val conflicting = singleAddFlagsInUse()
+        if (conflicting.isNotEmpty()) {
+            throw TkError(
+                ExitCode.USAGE,
+                "--batch takes every field from its JSON records, so it cannot be combined with " +
+                    conflicting.joinToString(", ") + " — move those into the records",
+            )
+        }
+        val result = ws.addTasks(decodeBatch(bodyArg(batch!!)), exportAfter = exportOnSuccess)
+        // The minted ids ARE the result (they cannot be known beforehand and are what any
+        // further wiring needs), so like single `add` they print even under --quiet. Input
+        // order lets a caller zip them straight back against the records they sent.
+        emitExportOr(result.export, essential = true) { result.tasks.joinToString("\n") { it.id } }
     }
 }
 
