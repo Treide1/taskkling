@@ -3,6 +3,7 @@ package io.taskkling.core
 import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
+import okio.SYSTEM
 
 /**
  * `taskkling uninstall` (ADR-004) — the symmetric inverse of install. This

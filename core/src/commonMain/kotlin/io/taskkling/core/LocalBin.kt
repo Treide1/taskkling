@@ -3,6 +3,7 @@ package io.taskkling.core
 import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
+import okio.SYSTEM
 
 /** Outcome of [installLocalBin]: where the binary landed and the wrappers written. */
 public data class LocalBinResult(
