@@ -46,6 +46,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -175,8 +176,14 @@ fun main(args: Array<String>) {
 internal fun windowTitle(workspaceName: String): String =
     if (workspaceName.isEmpty()) WORDMARK else "$WORDMARK · $workspaceName"
 
+/** Identifies the graph's scrolling viewport to PanToNewCardTest (t-dm54). */
+internal const val GRAPH_VIEWPORT_TAG = "graph-viewport"
+
+// `internal` rather than private so PanToNewCardTest can render the real thing: the
+// pan-to-new-card wait below lives in this composable and reads MEASURED rects, so the
+// only honest test of it drives this tree at a known viewport (t-dm54).
 @Composable
-private fun App(store: AppStore) {
+internal fun App(store: AppStore) {
     val scope = rememberCoroutineScope()
     LaunchedEffect(store) {
         store.start()
@@ -356,7 +363,12 @@ private fun App(store: AppStore) {
                                 hScroll = hScroll,
                                 vScroll = vScroll,
                                 cardRects = cardRects,
-                                modifier = Modifier.fillMaxSize(),
+                                // The tag is the pan test's only hook (t-dm54): centring is a
+                                // claim about a card's position WITHIN this viewport, so the
+                                // test needs its rect, and the viewport's extent is decided
+                                // here by `weight(1f)` against the detail panel — not
+                                // reconstructible from the window size.
+                                modifier = Modifier.fillMaxSize().testTag(GRAPH_VIEWPORT_TAG),
                             )
                         }
                     }

@@ -80,6 +80,27 @@ dependencies {
     // AppStoreTest drives the store's coroutines on a StandardTestDispatcher so the
     // busy-flag sequencing is deterministic rather than timing-dependent (t-82d4).
     testImplementation(libs.kotlinx.coroutines.test)
+    // Compose UI tests (t-dm54): the two behaviours that only exist on screen — the
+    // add-card dialog's affordances and pan-to-new-card — were verified by a human reading
+    // a screenshot, so nothing caught a regression. This brings up the test runtime the
+    // module lacked: `:ui` is plain kotlin-jvm with a hand-rolled uberjar (ADR-016), not the
+    // Compose application plugin's test setup, so it is wired by hand rather than inherited.
+    // The host's Skiko native arrives via the existing `runtimeOnly(compose.desktop.currentOs)`.
+    // testImplementation keeps it out of the `uiRuntime*` uberjar configurations below —
+    // those extend `implementation`, so the shipped jars are untouched by the test runtime.
+    testImplementation(compose.desktop.uiTestJUnit4)
+}
+
+tasks.test {
+    // The Compose UI tests must never need a display: CI's Linux runner has none, and the
+    // whole point of the seam is that it runs there. Compose renders offscreen via Skiko, so
+    // this costs nothing today — it is a TRIPWIRE. If a future test reaches for a real AWT
+    // window it fails here with HeadlessException, on the dev host, instead of only on CI.
+    systemProperty("java.awt.headless", "true")
+    // A green `:ui:test` does not prove the UI tests RAN — Gradle prints nothing for passing
+    // tests, so "silently stopped running" and "running fine headless" look identical in the
+    // CI log. Naming each test and its outcome keeps the Linux leg evidence rather than faith.
+    testLogging { events("passed", "skipped", "failed") }
 }
 
 compose.desktop {
