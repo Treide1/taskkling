@@ -101,6 +101,40 @@ compose.desktop {
     }
 }
 
+// --- `:ui:run` env hand-off (t-hn1g) ------------------------------------------
+// The UI resolves its CLI binary from `TASKKLING_BINARY` and takes a headless
+// smoke path on `TASKKLING_SMOKE=1` (CliClient.kt, Main.kt). Both are read from
+// the app JVM's environment, so `:ui:run` is only usable for env-dependent QA if
+// the value you typed on the CLIENT reaches that JVM.
+//
+// This is a GUARANTEE, not a repair. Gradle 8.10.2 syncs the client's environment
+// into the long-lived daemon on every build, so the value already arrives today —
+// verified on this base, including the unset→set transition into an
+// already-running daemon and under `--configuration-cache`. Pinning the two vars
+// the UI actually reads keeps the hand-off independent of that daemon env-sync: an
+// implementation detail this build has no test over, whose failure mode is a silent
+// wrong-binary launch that looks exactly like a broken feature.
+//
+// `providers.environmentVariable` reads the client env at configuration time and
+// registers a configuration-cache input, so a changed value invalidates the entry
+// rather than replaying a stale one.
+//
+// Null/blank => don't set the var at all: an injected empty string would defeat
+// CliDiscovery's `takeIf { it.isNotBlank() }` (CliClient.kt:21) and shadow a
+// daemon-inherited value, silently rerouting resolution to the up-tree binary.
+//
+// The Compose plugin registers `run` (a plain JavaExec) in an afterEvaluate, so it
+// does not exist while this script is evaluated — `tasks.named("run")` throws
+// "Task with name 'run' not found". Match lazily by type+name instead.
+tasks.withType<JavaExec>().configureEach {
+    if (name != "run") return@configureEach
+    listOf("TASKKLING_BINARY", "TASKKLING_SMOKE").forEach { varName ->
+        providers.environmentVariable(varName).orNull
+            ?.takeIf { it.isNotBlank() }
+            ?.let { value -> environment(varName, value) }
+    }
+}
+
 // --- Per-target uberjars + packaging checks (ADR-016 decisions 2 + 7) -----------------------------------------------
 //
 // Compose's own packageUberJarForCurrentOS can only bake in the HOST's Skiko
