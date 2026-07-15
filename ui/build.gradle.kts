@@ -123,7 +123,7 @@ compose.desktop {
     }
 }
 
-// --- `:ui:run` builds the CLI it talks to (t-tlk0 follow-up) -------------------------------------------------------
+// --- `:ui:run` builds the CLI it talks to (t-tlk0 follow-up) + pins its env hand-off (t-hn1g) -----------------------
 //
 // The UI is a pure CLI client (PRD §13): `:ui:run` rebuilds the UI, but every byte it
 // RENDERS comes from a separately-built native CLI binary that this task otherwise
@@ -146,23 +146,38 @@ val hostCliTarget: String? = when {
     else -> null
 }
 
-if (hostCliTarget != null) {
-    val linkTask = ":cli:linkDebugExecutable${hostCliTarget.replaceFirstChar { it.uppercase() }}"
+// Both vars the UI reads (TASKKLING_BINARY in CliClient.kt, TASKKLING_SMOKE in Main.kt) come
+// from the app JVM's environment, so env-dependent QA only works if what you typed on the
+// CLIENT reaches that JVM. Gradle syncs the client env into the daemon today, so pinning them
+// is a GUARANTEE, not a repair — it keeps the hand-off independent of that env-sync, an
+// untested implementation detail whose failure mode is a silent wrong-binary launch that looks
+// exactly like a broken feature. `providers.environmentVariable` (not System.getenv) registers
+// a configuration-cache input, so a changed value invalidates the entry instead of replaying a
+// stale one. Null/blank => leave the var unset: an empty string would defeat CliDiscovery's
+// own `takeIf { it.isNotBlank() }` and shadow a daemon-inherited value.
+val explicitBinary: String? = providers.environmentVariable("TASKKLING_BINARY").orNull?.takeIf { it.isNotBlank() }
+val smokeFlag: String? = providers.environmentVariable("TASKKLING_SMOKE").orNull?.takeIf { it.isNotBlank() }
+
+// `matching`, not `named`: the Compose plugin registers `run` after this script is
+// evaluated, so naming it directly here fails with "task 'run' not found".
+tasks.withType<JavaExec>().matching { it.name == "run" }.configureEach {
+    smokeFlag?.let { environment("TASKKLING_SMOKE", it) }
+
+    if (hostCliTarget == null) {
+        // Host the CLI can't be built for: nothing fresh to point at, so the client's own
+        // value is the only answer available.
+        explicitBinary?.let { environment("TASKKLING_BINARY", it) }
+        return@configureEach
+    }
+
     val exeName = if (HostManager.hostIsMingw) "taskkling.exe" else "taskkling"
     val cliBinary = project(":cli").layout.buildDirectory
         .file("bin/$hostCliTarget/debugExecutable/$exeName")
-
+    dependsOn(":cli:linkDebugExecutable${hostCliTarget.replaceFirstChar { it.uppercase() }}")
     // An already-exported TASKKLING_BINARY still wins, so pointing `:ui:run` at a
     // deliberately OLD binary — the only way to exercise the skew toast by hand — stays
     // possible. Absent that, the fresh build is the answer.
-    val explicitBinary: String? = System.getenv("TASKKLING_BINARY")?.takeIf { it.isNotBlank() }
-
-    // `matching`, not `named`: the Compose plugin registers `run` after this script is
-    // evaluated, so naming it directly here fails with "task 'run' not found".
-    tasks.withType<JavaExec>().matching { it.name == "run" }.configureEach {
-        dependsOn(linkTask)
-        environment("TASKKLING_BINARY", explicitBinary ?: cliBinary.get().asFile.absolutePath)
-    }
+    environment("TASKKLING_BINARY", explicitBinary ?: cliBinary.get().asFile.absolutePath)
 }
 
 // --- Per-target uberjars + packaging checks (ADR-016 decisions 2 + 7) -----------------------------------------------
