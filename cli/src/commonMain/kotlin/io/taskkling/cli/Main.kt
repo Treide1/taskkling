@@ -13,6 +13,7 @@ import io.taskkling.core.cleanup
 import io.taskkling.core.CliOutput
 import io.taskkling.core.computeAll
 import io.taskkling.core.deleteTask
+import io.taskkling.core.DoctorVerbArgs
 import io.taskkling.core.ExitCode
 import io.taskkling.core.fetchLatestTag
 import io.taskkling.core.initWorkspace
@@ -27,6 +28,7 @@ import io.taskkling.core.markDone
 import io.taskkling.core.markDropped
 import io.taskkling.core.materializeUserConfig
 import io.taskkling.core.MutationResult
+import io.taskkling.core.productionDoctorEffects
 import io.taskkling.core.productionUiEffects
 import io.taskkling.core.productionUninstallEffects
 import io.taskkling.core.productionUpdateEffects
@@ -35,6 +37,7 @@ import io.taskkling.core.readBody
 import io.taskkling.core.reopenTask
 import io.taskkling.core.resolveUpdateCheckEnabled
 import io.taskkling.core.restoreTask
+import io.taskkling.core.runDoctorVerb
 import io.taskkling.core.runUiVerb
 import io.taskkling.core.runUninstallVerb
 import io.taskkling.core.runUpdateVerb
@@ -467,11 +470,23 @@ private class CleanupCmd : MutationCommand("cleanup", "Sweep closed tasks to arc
     }
 }
 
-/** `doctor [--fix]` — integrity + logical-resolution scan (PRD §7.5; stub, post-v0.1 §19). */
-private class DoctorCmd : TkCommand("doctor", "Integrity + logical-resolution scan (stub)") {
+/**
+ * `doctor [--fix]` — orientation report + integrity scan (PRD §7.5). The
+ * resolution report is real (t-8der: which binary, resolved by which rule, which
+ * workspace root, which absolute tasks dir, how many tasks, what version); the
+ * integrity scan it is also meant to run is still a post-v0.1 stub (§19), which
+ * the verb says out loud rather than letting a clean run imply a clean store.
+ * Everything real lives in [runDoctorVerb] — the wording is what an agent reads
+ * to orient, so it is asserted in :core's tests, not printed from here.
+ */
+private class DoctorCmd : TkCommand("doctor", "Report the resolved binary, workspace root and store path (integrity scan: stub)") {
     @Suppress("unused")
-    val fix by option(ArgType.Boolean, "fix", description = "Apply deterministic fixes (stub)").default(false)
-    override fun run() = eprintln("taskkling: doctor is a post-v0.1 stub (PRD §19) — not yet implemented")
+    val fix by option(
+        ArgType.Boolean, "fix",
+        description = "Apply deterministic fixes (stub: belongs to the integrity scan, which is not implemented)",
+    ).default(false)
+
+    override fun run() = runDoctorVerb(DoctorVerbArgs(root = root, quiet = quiet), productionDoctorEffects(), StdCliOutput)
 }
 
 /**

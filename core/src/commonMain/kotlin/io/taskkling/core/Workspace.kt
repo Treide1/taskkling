@@ -23,6 +23,15 @@ public data class Config(
     val workspaceName: String = "",
     val lockTimeout: Int = 30,
     val updateCheck: Boolean? = null,
+    /**
+     * The explicit binary the UI's resolution chain falls back to (PRD §14, step
+     * 3 of `CliDiscovery`'s order). Blank — the template's own value — means
+     * "not configured", i.e. the chain moves on to `PATH`. Nothing in `:core`
+     * *acts* on it; `doctor` reads it to report which rule of that chain
+     * resolves a binary from here (t-8der), which is why the key is parsed at
+     * all rather than tolerated as an unknown one.
+     */
+    val binaryPath: String = "",
 ) {
     public companion object {
         public val DEFAULT: Config = Config()
@@ -43,6 +52,7 @@ public data class Config(
                     "workspace_name" -> c.copy(workspaceName = value)
                     "lock_timeout" -> c.copy(lockTimeout = value.toIntOrNull() ?: c.lockTimeout)
                     "update_check" -> c.copy(updateCheck = value.toBooleanStrictOrNull() ?: c.updateCheck)
+                    "binary_path" -> c.copy(binaryPath = value)
                     else -> c
                 }
             }
