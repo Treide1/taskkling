@@ -7,6 +7,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -74,6 +75,92 @@ class CliSubprocessTest {
             r.stderr.contains("unlink needs at least one --depends id"),
             "guard message on stderr: ${r.stderr}",
         )
+    }
+
+    // --- parse failures fail loudly, on contract (t-wezr) -----------------------------------
+    //
+    // A parse failure happens inside kotlinx-cli, before any verb executes, so TkCommand's
+    // TkError -> exit-code mapping never engages. Left alone the parser prints its complaint
+    // plus a ~20-line usage dump to STDOUT and exits 127 — off-contract (ExitCode has no 127;
+    // a shell reads it as "command not found") and unreadable as an error. Main.kt's
+    // `failLoudly` hook reaches into kotlinx-cli's `outputAndTerminate` to fix that; these
+    // tests pin the OBSERVABLE result on the real binary, so if that suppressed access ever
+    // stops working, CI fails here instead of silently reverting to 127.
+
+    @Test
+    fun unknownFlagOnAMutationVerbIsUsageExit2AndNotAHelpDump() {
+        // The DoD's case 1, verbatim: `set <id> --depends <dep>` (--depends is not a set field).
+        val ws = newWorkspace()
+        val a = addTask(ws, "A task")
+        val b = addTask(ws, "Another task")
+        val r = runCli("--root", ws, "set", a, "--depends", b)
+
+        assertEquals(2, r.exit, "unknown flag maps to ExitCode.USAGE(2), never 127; stderr=${r.stderr}")
+        assertTrue(r.stderr.contains("Unknown option --depends"), "specific complaint on stderr: ${r.stderr}")
+        assertFalse(r.stderr.contains("Usage:"), "no usage dump: ${r.stderr}")
+        assertEquals("", r.stdout.trim(), "nothing on stdout — this is an error, not help")
+        // …and it suggests the verb that does work.
+        assertTrue(r.stderr.contains("taskkling link <id> -d <dep>"), "suggests link: ${r.stderr}")
+        // The whole point of the ticket: the mutation must not have half-happened.
+        val after = runCli("--root", ws, "get", a, "-f", "depends")
+        assertEquals("", after.stdout.trim(), "the rejected mutation changed nothing")
+    }
+
+    @Test
+    fun misorderedLinkArgumentsAreUsageExit2AndNotAHelpDump() {
+        // The DoD's case 3, verbatim: `link <id> <dep>` — the dep is a flag, not a positional.
+        val ws = newWorkspace()
+        val a = addTask(ws, "A task")
+        val b = addTask(ws, "Another task")
+        val r = runCli("--root", ws, "link", a, b)
+
+        assertEquals(2, r.exit, "misordered args map to ExitCode.USAGE(2), never 127; stderr=${r.stderr}")
+        assertTrue(r.stderr.contains("Too many arguments"), "specific complaint on stderr: ${r.stderr}")
+        assertFalse(r.stderr.contains("Usage:"), "no usage dump: ${r.stderr}")
+        assertEquals("", r.stdout.trim(), "nothing on stdout")
+        assertTrue(r.stderr.contains("taskkling link <id> -d <dep>"), "suggests the flag form: ${r.stderr}")
+        val after = runCli("--root", ws, "get", a, "-f", "depends")
+        assertEquals("", after.stdout.trim(), "the rejected mutation changed nothing")
+    }
+
+    @Test
+    fun anUnknownVerbSaysSoAndIsNotReportedAsTooManyArguments() {
+        // `show <id>` — the read verb folded into `get`. kotlinx-cli calls this "Too many
+        // arguments!", which is actively misleading; the fix must name the real problem.
+        val ws = newWorkspace()
+        val id = addTask(ws, "A task")
+        val r = runCli("--root", ws, "show", id)
+
+        assertEquals(2, r.exit, "unknown verb maps to ExitCode.USAGE(2), never 127; stderr=${r.stderr}")
+        assertTrue(r.stderr.contains("unknown verb 'show'"), "names the verb: ${r.stderr}")
+        assertFalse(r.stderr.contains("Too many arguments"), "misleading wording replaced: ${r.stderr}")
+        assertTrue(r.stderr.contains("taskkling get <id>"), "suggests get: ${r.stderr}")
+        assertEquals("", r.stdout.trim(), "nothing on stdout")
+    }
+
+    @Test
+    fun unknownFlagOnTheNestedConfigInitIsAlsoUsageExit2() {
+        // `config init` is registered at ConfigCmd construction, so it never passes through
+        // main()'s per-verb hook pass and needs its own (regression guard for that wiring).
+        val r = runCli("config", "init", "--bogus")
+        assertEquals(2, r.exit, "nested subcommand is on contract too; stderr=${r.stderr}")
+        assertTrue(r.stderr.contains("Unknown option --bogus"), "specific complaint on stderr: ${r.stderr}")
+        assertFalse(r.stderr.contains("Usage:"), "no usage dump: ${r.stderr}")
+    }
+
+    @Test
+    fun helpIsNotAnErrorAndKeepsItsUsageDumpOnStdout() {
+        // The hook intercepts help and errors through the SAME kotlinx-cli sink, told apart
+        // only by the exit code it is handed — so help must be proven unharmed.
+        val root = runCli("--help")
+        assertEquals(0, root.exit, "--help is not an error; stderr=${root.stderr}")
+        assertTrue(root.stdout.contains("Usage: taskkling"), "usage dump on stdout: ${root.stdout}")
+        assertTrue(root.stdout.contains("Subcommands:"), "lists the verbs: ${root.stdout}")
+        assertEquals("", root.stderr.trim(), "help says nothing on stderr")
+
+        val verb = runCli("set", "--help")
+        assertEquals(0, verb.exit, "per-verb --help is not an error; stderr=${verb.stderr}")
+        assertTrue(verb.stdout.contains("Usage: taskkling set"), "per-verb usage on stdout: ${verb.stdout}")
     }
 
     // --- emit / idIsEssential: add prints the id even under -q (t-b4bk) ---------------------

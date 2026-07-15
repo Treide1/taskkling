@@ -325,4 +325,98 @@ class CliHelpersTest {
         assertEquals("", map["depends"])
         assertEquals("normal", map["priority"])
     }
+
+    // --- parse-failure rendering (t-wezr) ------------------------------------------------
+    //
+    // The blobs below are kotlinx-cli's REAL output shape: the specific complaint, then
+    // `makeUsage()` — which always opens "Usage: <command> options_list". Captured from the
+    // shipped binary so these tests break if that shape ever moves.
+
+    private val setUsageDump = """
+        Usage: taskkling set options_list
+        Arguments:
+            id -> Task id { String }
+        Options:
+            --title -> Set title { String }
+            --help, -h -> Usage info
+    """.trimIndent()
+
+    @Test
+    fun stripUsageDumpKeepsOnlyTheSpecificComplaint() {
+        assertEquals(
+            "Unknown option --depends",
+            stripUsageDump("Unknown option --depends\n$setUsageDump"),
+        )
+    }
+
+    @Test
+    fun stripUsageDumpReturnsAMessageWithoutADumpWhole() {
+        // Defensive: never truncate an unrecognised shape to nothing.
+        assertEquals("something unexpected", stripUsageDump("something unexpected"))
+    }
+
+    @Test
+    fun offendingArgumentPlucksTheStrayToken() {
+        assertEquals("show", offendingArgument("Too many arguments! Couldn't process argument show!"))
+        assertEquals("t-a1b2", offendingArgument("Too many arguments! Couldn't process argument t-a1b2!"))
+    }
+
+    @Test
+    fun offendingArgumentIsNullForOtherMessages() {
+        assertEquals(null, offendingArgument("Unknown option --depends"))
+        assertEquals(null, offendingArgument("No value for id"))
+    }
+
+    @Test
+    fun setDependsIsPointedAtTheLinkVerb() {
+        // The DoD's named case: --depends is not a `set` field, and the fix must say so
+        // AND name the verb that does work.
+        val lines = parseErrorLines("set", "Unknown option --depends\n$setUsageDump")
+        assertEquals("Unknown option --depends", lines[0])
+        assertTrue(lines[1].contains("taskkling link <id> -d <dep>"), "names the right verb: $lines")
+        assertTrue(lines.none { it.contains("Usage:") }, "no usage dump survives: $lines")
+    }
+
+    @Test
+    fun shortDependsOnAVerbThatLacksItIsAlsoPointedAtLink() {
+        val lines = parseErrorLines("done", "Unknown option -d\n$setUsageDump")
+        assertTrue(lines[1].contains("taskkling link <id> -d <dep>"), "$lines")
+    }
+
+    @Test
+    fun misorderedLinkArgsSaysTheDependencyIsAFlag() {
+        val lines = parseErrorLines("link", "Too many arguments! Couldn't process argument t-a1b2!\n$setUsageDump")
+        assertEquals("Too many arguments! Couldn't process argument t-a1b2!", lines[0])
+        assertTrue(lines[1].contains("taskkling link <id> -d <dep>"), "$lines")
+    }
+
+    @Test
+    fun misorderedUnlinkArgsNamesUnlinkNotLink() {
+        val lines = parseErrorLines("unlink", "Too many arguments! Couldn't process argument t-a1b2!\n$setUsageDump")
+        assertTrue(lines[1].contains("taskkling unlink <id> -d <dep>"), "$lines")
+    }
+
+    @Test
+    fun aStrayTokenOnTheRootParserIsRephrasedAsAnUnknownVerb() {
+        // The root parser takes no positionals, so kotlinx-cli's "Too many arguments!" is an
+        // actively misleading way to say "no such verb" — it must not be passed through.
+        val lines = parseErrorLines(null, "Too many arguments! Couldn't process argument bogus!\n$setUsageDump")
+        assertEquals("unknown verb 'bogus'", lines[0])
+        assertTrue(lines.none { it.contains("Too many arguments") }, "kotlinx-cli's wording is replaced: $lines")
+        assertTrue(lines[1].contains("--help"), "points at the verb list: $lines")
+    }
+
+    @Test
+    fun theShowVerbIsPointedAtGet() {
+        val lines = parseErrorLines(null, "Too many arguments! Couldn't process argument show!\n$setUsageDump")
+        assertEquals("unknown verb 'show'", lines[0])
+        assertEquals("did you mean: taskkling get <id>", lines[1])
+    }
+
+    @Test
+    fun anUnknownOptionWithNoObviousFixGetsNoInventedSuggestion() {
+        // The table is fixed, not fuzzy: silence beats a guess.
+        val lines = parseErrorLines("set", "Unknown option --nonsense\n$setUsageDump")
+        assertEquals(listOf("Unknown option --nonsense"), lines)
+    }
 }

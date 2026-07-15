@@ -98,6 +98,80 @@ internal fun parseLeadingGlobals(args: Array<String>): LeadingGlobals {
     return LeadingGlobals(rest, root, quiet, noColor)
 }
 
+// --- parse-failure rendering (t-wezr) ---------------------------------------------------
+//
+// kotlinx-cli formats a parse failure as "<specific message>\n<usage dump>" and hands it to
+// its `outputAndTerminate` sink. Main.kt's `failLoudly` hook catches that; these pure helpers
+// turn the blob into the stderr lines we actually want. Kept here (not in Main.kt) so the
+// wording — the part agents read — is unit-testable without linking a binary.
+
+/** kotlinx-cli's wording when a positional argument has nowhere to go. */
+private const val TOO_MANY_PREFIX = "Too many arguments! Couldn't process argument "
+
+/**
+ * The verb confusions we have actually watched agents hit (t-wezr's audits), mapped to the
+ * invocation that works. A fixed table, deliberately not a fuzzy matcher: it fires only on a
+ * confusion we have observed and stays silent otherwise rather than inventing a guess.
+ */
+private val VERB_SUGGESTIONS = mapOf(
+    // `show <id>` — the read verb was folded into `get` (which prints the .md verbatim).
+    "show" to "taskkling get <id>",
+)
+
+/**
+ * Strip kotlinx-cli's usage dump, leaving the one line that says what went wrong.
+ * `makeUsage()` always opens with `"Usage: <command> options_list"`, so that marker is the
+ * seam; a message without it (nothing in kotlinx-cli produces one today) is returned whole
+ * rather than silently truncated to nothing.
+ */
+internal fun stripUsageDump(message: String): String = message.substringBefore("\nUsage: ")
+
+/**
+ * The token kotlinx-cli choked on in "Too many arguments! Couldn't process argument X!",
+ * or null for any other message.
+ */
+internal fun offendingArgument(message: String): String? =
+    if (message.startsWith(TOO_MANY_PREFIX) && message.endsWith("!")) {
+        message.removePrefix(TOO_MANY_PREFIX).removeSuffix("!").ifEmpty { null }
+    } else {
+        null
+    }
+
+/**
+ * Render a kotlinx-cli parse failure as the stderr lines to print (each gets a `taskkling: `
+ * prefix at the call site). [verb] is the command being parsed, or null for the top-level
+ * parser. Returns the specific complaint first, then at most one actionable suggestion.
+ */
+internal fun parseErrorLines(verb: String?, rawMessage: String): List<String> {
+    val specific = stripUsageDump(rawMessage)
+    val offending = offendingArgument(specific)
+    // The top-level parser declares no positional arguments, so the ONLY way it can report a
+    // stray one is a verb it does not know — and "Too many arguments!" is an actively
+    // misleading way to say "no such verb". Replace it rather than pass it through.
+    if (verb == null && offending != null) {
+        return listOf(
+            "unknown verb '$offending'",
+            VERB_SUGGESTIONS[offending]?.let { "did you mean: $it" }
+                ?: "run 'taskkling --help' for the list of verbs",
+        )
+    }
+    return listOfNotNull(specific, hintFor(verb, specific, offending))
+}
+
+/** At most one suggestion for a parse failure, or null when nothing obviously fits. */
+private fun hintFor(verb: String?, specific: String, offending: String?): String? = when {
+    // `set <id> --depends a,b` (or -d): depends is not a settable field. It is an edge, and
+    // edges have their own verbs (PRD §10.6). Keyed on the option alone, which is sound: the
+    // verbs that DO take --depends (add/link/unlink) never report it as unknown.
+    specific == "Unknown option --depends" || specific == "Unknown option -d" ->
+        "'depends' is an edge, not a field — add: taskkling link <id> -d <dep>; " +
+            "remove: taskkling unlink <id> -d <dep>"
+    // `link <id> <dep>` — the dependency is a flag, not a second positional.
+    (verb == "link" || verb == "unlink") && offending != null ->
+        "the dependency is a flag, not a second argument — use: taskkling $verb <id> -d <dep>"
+    else -> null
+}
+
 /** Aligned, header-less `ls -la`-style table: id · title · thread · status · attributes. */
 internal fun formatTable(rows: List<Task>): String {
     if (rows.isEmpty()) return ""
