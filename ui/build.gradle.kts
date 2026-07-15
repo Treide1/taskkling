@@ -1,5 +1,6 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
+import org.jetbrains.kotlin.konan.target.HostManager
 import java.util.zip.ZipFile
 
 plugins {
@@ -98,6 +99,48 @@ compose.desktop {
             macOS { iconFile.set(project.file("icons/taskkling.icns")) }
             linux { iconFile.set(project.file("icons/taskkling.png")) }
         }
+    }
+}
+
+// --- `:ui:run` builds the CLI it talks to (t-tlk0 follow-up) -------------------------------------------------------
+//
+// The UI is a pure CLI client (PRD §13): `:ui:run` rebuilds the UI, but every byte it
+// RENDERS comes from a separately-built native CLI binary that this task otherwise
+// leaves alone. So the obvious dev loop — edit, `:ui:run`, look — silently pairs new UI
+// code with whatever stale binary `binary_path`/PATH resolves to, and the window shows
+// the OLD tool's data. It degrades quietly rather than failing: an export predating
+// `workspaceName` renders the bare wordmark (t-tlk0), which reads as "my change is
+// broken" instead of "your binary is from last week". The `--version` skew probe above
+// (t-eeze) DETECTS this and toasts, but a toast is easy to miss and arrives after the
+// window has already lied.
+//
+// So make `:ui:run` mean what it says: build the host CLI as part of it, and hand the UI
+// THAT binary via the env var it already honours, ahead of config/PATH (CliDiscovery).
+// Host-only, like :cli:installLocalBinDev — the CLI has no JVM target, so the binary is
+// per-host and only the host's is buildable here.
+val hostCliTarget: String? = when {
+    HostManager.hostIsMingw -> "mingwX64"
+    HostManager.hostIsLinux -> "linuxX64"
+    HostManager.hostIsMac -> if (System.getProperty("os.arch") == "aarch64") "macosArm64" else "macosX64"
+    else -> null
+}
+
+if (hostCliTarget != null) {
+    val linkTask = ":cli:linkDebugExecutable${hostCliTarget.replaceFirstChar { it.uppercase() }}"
+    val exeName = if (HostManager.hostIsMingw) "taskkling.exe" else "taskkling"
+    val cliBinary = project(":cli").layout.buildDirectory
+        .file("bin/$hostCliTarget/debugExecutable/$exeName")
+
+    // An already-exported TASKKLING_BINARY still wins, so pointing `:ui:run` at a
+    // deliberately OLD binary — the only way to exercise the skew toast by hand — stays
+    // possible. Absent that, the fresh build is the answer.
+    val explicitBinary: String? = System.getenv("TASKKLING_BINARY")?.takeIf { it.isNotBlank() }
+
+    // `matching`, not `named`: the Compose plugin registers `run` after this script is
+    // evaluated, so naming it directly here fails with "task 'run' not found".
+    tasks.withType<JavaExec>().matching { it.name == "run" }.configureEach {
+        dependsOn(linkTask)
+        environment("TASKKLING_BINARY", explicitBinary ?: cliBinary.get().asFile.absolutePath)
     }
 }
 

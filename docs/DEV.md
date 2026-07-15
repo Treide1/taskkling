@@ -89,3 +89,15 @@ to wire deps.
 `gradlew :ui:run` launched as a background task exits 0 with no output and **no window** —
 useless for verification. Instead build the uberjar and launch it detached
 (`Start-Process` on Windows) so the window actually appears and can be driven/captured.
+
+`:ui:run` builds the host CLI too and points the UI at it (`TASKKLING_BINARY`), so the two
+halves can't skew. That wiring exists because the UI renders nothing of its own: it shells
+out to the CLI, so a fresh UI on a stale binary shows the OLD tool's data and looks like a
+broken feature rather than a stale binary. Export a `TASKKLING_BINARY` yourself to override
+it — that's how you point a from-source UI at an old binary to exercise the skew toast.
+
+Nothing rebuilds that binary for you outside `:ui:run`. The uberjar path above, the
+`./taskkling[.cmd]` wrappers, and `taskkling ui` all use whatever binary is already on disk
+(`.taskkling/bin`, `binary_path`, `PATH`) — run `gradlew :cli:installLocalBinDev` to refresh
+the repo's own pin after touching `:core`/`:cli`. If a UI change seems to do nothing, check
+`taskkling --version` against `gradle.properties` before debugging the UI.
