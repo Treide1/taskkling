@@ -2,6 +2,7 @@ package io.taskkling.core
 
 import io.taskkling.contract.ExportDto
 import okio.FileSystem
+import okio.SYSTEM
 
 /**
  * `delete <id>` (PRD §9.5, §10.5) — move the task to `trash/`, stamp `closed`,

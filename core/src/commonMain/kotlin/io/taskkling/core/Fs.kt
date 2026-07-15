@@ -3,6 +3,7 @@ package io.taskkling.core
 import kotlinx.datetime.Clock
 import okio.FileSystem
 import okio.IOException
+import okio.SYSTEM
 
 /**
  * Run [block] holding the global write lock (PRD §7.1, step 1 & 7): an exclusive

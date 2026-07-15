@@ -3,6 +3,7 @@ package io.taskkling.core
 import io.taskkling.contract.ExportDto
 import okio.FileSystem
 import okio.Path
+import okio.SYSTEM
 
 /** Path of the active task [id] (`tasks/<id>--*.md`), or null if absent. */
 public fun Workspace.findActiveFile(id: String): Path? = fileFor(tasksDir, id)
