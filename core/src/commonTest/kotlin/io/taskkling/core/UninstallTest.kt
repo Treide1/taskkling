@@ -1,8 +1,6 @@
 package io.taskkling.core
 
 import okio.FileSystem
-import okio.ForwardingFileSystem
-import okio.IOException
 import okio.Path
 import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
@@ -176,14 +174,6 @@ class UninstallTest {
     fun isANoOpWithNoLeftoversWhenTheCacheHomeDoesNotExist() {
         // Fresh install that never ran `taskkling ui`: nothing to delete, nothing to report.
         assertEquals(emptyList(), deleteCacheHomeBestEffort(cacheHome, FakeFileSystem()))
-    }
-
-    /** Wraps [delegate] so deleting exactly [locked] throws — a running UI's file lock, deterministically. */
-    private class LockedFileFs(delegate: FileSystem, private val locked: Path) : ForwardingFileSystem(delegate) {
-        override fun delete(path: Path, mustExist: Boolean) {
-            if (path == locked) throw IOException("locked: $path")
-            super.delete(path, mustExist)
-        }
     }
 
     @Test
