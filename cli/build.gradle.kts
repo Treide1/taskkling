@@ -5,6 +5,10 @@ import org.jetbrains.kotlin.konan.target.HostManager
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
+    // `add --batch -` (t-zsh6) DECLARES a @Serializable wire record (CliHelpers.kt), which
+    // needs the compiler plugin — the kotlinx-serialization-json dependency below is only the
+    // runtime, and was until now used solely to CONSUME :contract's generated serializers.
+    alias(libs.plugins.kotlinSerialization)
 }
 
 kotlin {
