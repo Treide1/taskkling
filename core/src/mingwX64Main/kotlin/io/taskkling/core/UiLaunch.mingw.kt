@@ -32,12 +32,15 @@ import platform.windows.TRUE
 internal actual fun readEnvVar(name: String): String? = getenv(name)?.toKString()
 
 /**
- * Windows 10 1803+ ships bsdtar as `tar.exe`, which auto-detects zip — the
- * exact archive format ADR-011 assigns to windows. `system` goes through
- * cmd.exe, where plain double quotes are sufficient for paths with spaces.
+ * Windows 10 1803+ ships bsdtar as `System32\tar.exe`, which auto-detects zip
+ * — the exact archive format ADR-011 assigns to windows. Invoked by absolute
+ * path ([windowsSystemTarCommand]): a bare `tar` resolves via PATH, where Git
+ * for Windows' GNU tar shadows bsdtar and can extract neither `C:\...` paths
+ * nor zip. `system` goes through cmd.exe; the command builder carries the
+ * quoting rules.
  */
 public actual fun extractArchiveWithSystemTar(archive: Path, destDir: Path): Boolean =
-    system("tar -xf \"$archive\" -C \"$destDir\"") == 0
+    system(windowsSystemTarCommand(readEnvVar("SystemRoot"), archive.toString(), destDir.toString())) == 0
 
 /**
  * A real `CreateProcessW`, not `system`+`start` — it detaches cleanly (no

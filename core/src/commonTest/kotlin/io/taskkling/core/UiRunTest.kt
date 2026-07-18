@@ -60,6 +60,8 @@ class UiRunTest {
         val imageRoot = if (wrapped) destDir / "jdk-21" else destDir
         fs.createDirectories(imageRoot / "bin")
         fs.write(imageRoot / "bin" / "java") { writeUtf8("#!/bin/sh") }
+        fs.createDirectories(imageRoot / "lib")
+        fs.write(imageRoot / "lib" / "jvm.cfg") { writeUtf8("-server KNOWN") }
         true
     }
 
@@ -92,6 +94,9 @@ class UiRunTest {
         fs.write(jarPath) { write(jarBytes) }
         fs.createDirectories(launcher.parent!!)
         fs.write(launcher) { writeUtf8("#!/bin/sh") }
+        val marker = uiRuntimeMarkerPath(runtimeDir)
+        fs.createDirectories(marker.parent!!)
+        fs.write(marker) { writeUtf8("-server KNOWN") }
     }
 
     // --- --fetch-only (the headless / offline-prep path, ADR-010 decision 5) ---------------------------------
@@ -174,6 +179,9 @@ class UiRunTest {
         fs.write(macJar) { write(jarBytes) }
         fs.createDirectories(macLauncher.parent!!)
         fs.write(macLauncher) { writeUtf8("java") }
+        val macMarker = uiRuntimeMarkerPath(runtimeDir)
+        fs.createDirectories(macMarker.parent!!)
+        fs.write(macMarker) { writeUtf8("-server KNOWN") }
         val spawns = Spawns()
 
         runUiVerb(UiVerbArgs(), effects(fs, spawns = spawns, hostOs = HostOs.MACOS), RecordingOutput())
@@ -312,7 +320,40 @@ class UiRunTest {
 
         val e = assertFailsWith<TkError> { runUiVerb(UiVerbArgs(fetchOnly = true), effects(fs, extract = extract), RecordingOutput()) }
 
-        assertEquals("unexpected runtime archive layout in $runtimeAsset (no bin/ directory)", e.message)
+        assertEquals("unexpected or incomplete runtime image in $runtimeAsset (missing bin/ launcher or lib/jvm.cfg)", e.message)
+    }
+
+    @Test
+    fun a_partial_extraction_that_exits_zero_installs_nothing() {
+        val fs = FakeFileSystem()
+        // A tar that "succeeds" but dies mid-image: the launcher lands, lib/jvm.cfg never does.
+        val extract: (Path, Path) -> Boolean = { _, destDir ->
+            fs.createDirectories(destDir / "bin")
+            fs.write(destDir / "bin" / "java") { writeUtf8("#!/bin/sh") }
+            true
+        }
+
+        val e = assertFailsWith<TkError> { runUiVerb(UiVerbArgs(fetchOnly = true), effects(fs, extract = extract), RecordingOutput()) }
+
+        assertEquals("unexpected or incomplete runtime image in $runtimeAsset (missing bin/ launcher or lib/jvm.cfg)", e.message)
+        assertTrue(!fs.exists(runtimeDir), "an incomplete image never reaches the final runtime path")
+    }
+
+    @Test
+    fun a_poisoned_runtime_missing_the_completeness_marker_is_refetched() {
+        val fs = FakeFileSystem()
+        primedCache(fs)
+        // The state an older CLI's failed extraction left behind: launcher present, marker missing.
+        fs.delete(uiRuntimeMarkerPath(runtimeDir))
+        val net = assetsNet()
+        val spawns = Spawns()
+
+        runUiVerb(UiVerbArgs(), effects(fs, net = net, spawns = spawns), RecordingOutput())
+
+        val base = releaseDownloadBaseUrl(version)
+        assertTrue("$base/$runtimeAsset" in net.calls, "launcher presence alone is not trusted — the runtime is re-fetched")
+        assertTrue(fs.exists(uiRuntimeMarkerPath(runtimeDir)), "the re-fetch replaces the poisoned image with a complete one")
+        assertEquals(1, spawns.argv.size, "the healed cache launches normally")
     }
 
     @Test

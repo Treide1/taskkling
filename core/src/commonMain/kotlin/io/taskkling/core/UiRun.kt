@@ -54,6 +54,15 @@ private class UiPaths(fx: UiEffects, os: HostOs, arch: HostArch) {
     val runtimeDir: Path = uiRuntimeDir(cacheHome)
     val launcher: Path = uiJavaLauncherPath(runtimeDir, os)
     val log: Path = uiLogFilePath(cacheHome)
+
+    /**
+     * Is the runtime PRESENT — launcher plus completeness marker
+     * ([uiRuntimeMarkerPath])? The plan and the fetch share this judgement, so
+     * an incomplete image (a poisoned cache from an interrupted or lying
+     * extraction) is re-fetched instead of stranding every later launch.
+     */
+    fun runtimePresent(fs: FileSystem): Boolean =
+        fs.exists(launcher) && fs.exists(uiRuntimeMarkerPath(runtimeDir))
 }
 
 /**
@@ -68,7 +77,7 @@ public fun runUiVerb(args: UiVerbArgs, fx: UiEffects, out: CliOutput) {
 
     if (args.fetchOnly) {
         // No workspace, no display needed: this is the headless/offline-prep path (ADR-010 decision 5).
-        when (planUiRun(fs.exists(paths.jar), fs.exists(paths.launcher))) {
+        when (planUiRun(fs.exists(paths.jar), paths.runtimePresent(fs))) {
             is UiRunPlan.Launch -> if (!args.quiet) out.out("taskkling: UI v${fx.version} already fetched and verified")
             else -> {
                 fetchUiAssets(args, fx, out, os, arch, paths)
@@ -88,7 +97,7 @@ public fun runUiVerb(args: UiVerbArgs, fx: UiEffects, out: CliOutput) {
 
     var refetched = false
     while (true) {
-        when (planUiRun(fs.exists(paths.jar), fs.exists(paths.launcher))) {
+        when (planUiRun(fs.exists(paths.jar), paths.runtimePresent(fs))) {
             is UiRunPlan.FetchThenLaunch -> fetchUiAssets(args, fx, out, os, arch, paths)
             is UiRunPlan.Launch -> {
                 paths.log.parent?.let { fs.createDirectories(it) }
@@ -164,7 +173,7 @@ private fun fetchUiAssets(args: UiVerbArgs, fx: UiEffects, out: CliOutput, os: H
         fs.atomicMove(tmp, paths.jar) // presence of the final path is the only "exists" ever trusted
     }
 
-    if (!fs.exists(paths.launcher)) {
+    if (!paths.runtimePresent(fs)) {
         val assetName = uiRuntimeAssetName(os, arch)
         val bytes = fetchVerified(assetName)
         val runtimeRoot = paths.runtimeDir.parent ?: error("runtime dir has no parent: ${paths.runtimeDir}")
@@ -182,13 +191,19 @@ private fun fetchUiAssets(args: UiVerbArgs, fx: UiEffects, out: CliOutput, os: H
         fs.delete(archiveTmp, mustExist = false)
         if (!extracted) throw TkError(ExitCode.VALIDATION, "could not extract $assetName — is 'tar' available on this system?")
         // Release archives carry the image contents (bin/, lib/) at top level (t-6q6a's
-        // contract); tolerate one wrapping directory defensively.
+        // contract); tolerate one wrapping directory defensively. Only a COMPLETE image
+        // (launcher + marker) is ever installed — a tar that exited 0 on a partial
+        // extraction must not poison the cache.
+        fun complete(dir: Path) = fs.exists(uiJavaLauncherPath(dir, os)) && fs.exists(uiRuntimeMarkerPath(dir))
         val imageRoot = when {
-            fs.exists(extractTmp / "bin") -> extractTmp
-            else -> fs.list(extractTmp).singleOrNull()?.takeIf { fs.exists(it / "bin") }
-                ?: throw TkError(ExitCode.VALIDATION, "unexpected runtime archive layout in $assetName (no bin/ directory)")
+            complete(extractTmp) -> extractTmp
+            else -> fs.list(extractTmp).singleOrNull()?.takeIf { complete(it) }
+                ?: throw TkError(
+                    ExitCode.VALIDATION,
+                    "unexpected or incomplete runtime image in $assetName (missing bin/ launcher or lib/jvm.cfg)",
+                )
         }
-        fs.deleteRecursively(paths.runtimeDir, mustExist = false) // stale half-state only; the launcher was missing
+        fs.deleteRecursively(paths.runtimeDir, mustExist = false) // stale half-state only; the runtime was judged absent
         fs.atomicMove(imageRoot, paths.runtimeDir)
         fs.deleteRecursively(extractTmp, mustExist = false)
     }

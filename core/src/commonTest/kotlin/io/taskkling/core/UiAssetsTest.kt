@@ -85,6 +85,13 @@ class UiAssetsTest {
     }
 
     @Test
+    fun runtimeCompletenessMarkerIsJvmCfg() {
+        // The one file java refuses to start without — presence of the launcher alone is never trusted.
+        val runtime = uiRuntimeDir(cacheHome)
+        assertEquals(runtime / "lib" / "jvm.cfg", uiRuntimeMarkerPath(runtime))
+    }
+
+    @Test
     fun fetchAndExtractTempsAreDotPrefixedSiblingsOfTheirFinalPaths() {
         // Same-directory temps keep the final rename on one filesystem (mirrors installNewExecutable).
         val jar = uiJarPath(cacheHome, "0.6.0", HostOs.LINUX, HostArch.X64)
