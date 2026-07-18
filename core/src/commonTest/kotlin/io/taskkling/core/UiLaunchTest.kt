@@ -57,6 +57,30 @@ class UiLaunchTest {
         assertEquals("'it'\\''s'", shellSingleQuote("it's"))
     }
 
+    // --- windowsSystemTarCommand (what the windows extract actual feeds cmd.exe via system) -----------------------------
+
+    @Test
+    fun windowsTarIsInvokedByAbsoluteSystem32PathUnderOneOuterQuotePair() {
+        // Absolute path so Git for Windows' GNU tar (PATH-shadowing bsdtar) is never picked;
+        // the outer quote pair is what cmd /C strips from a line starting with a quote.
+        assertEquals(
+            "\"\"C:\\WINDOWS\\System32\\tar.exe\" -xf \"C:\\cache\\rt.zip\" -C \"C:\\cache\\.jdk21.extract.tmp\"\"",
+            windowsSystemTarCommand("C:\\WINDOWS", "C:\\cache\\rt.zip", "C:\\cache\\.jdk21.extract.tmp"),
+        )
+    }
+
+    @Test
+    fun windowsTarFallsBackToCWindowsWhenSystemRootIsUnset() {
+        assertEquals(
+            "\"\"C:\\Windows\\System32\\tar.exe\" -xf \"a.zip\" -C \"dest\"\"",
+            windowsSystemTarCommand(null, "a.zip", "dest"),
+        )
+        assertEquals(
+            "\"\"C:\\Windows\\System32\\tar.exe\" -xf \"a.zip\" -C \"dest\"\"",
+            windowsSystemTarCommand("  ", "a.zip", "dest"),
+        )
+    }
+
     // --- windowsCommandLine (what CreateProcessW receives; parsed back by the JVM launcher) -----------------------------
 
     @Test

@@ -91,6 +91,17 @@ public fun uiJavaLauncherPath(runtimeDir: Path, os: HostOs): Path =
     runtimeDir / "bin" / (if (os == HostOs.WINDOWS) "java.exe" else "java")
 
 /**
+ * The runtime image's completeness marker: `lib/jvm.cfg`, which every JDK
+ * image ships and whose absence is exactly how a half-extracted runtime dies
+ * (`java` refuses to start without it). Launcher presence alone is NOT
+ * trusted — a tar that died mid-image (or lied with exit 0) can leave
+ * `bin/java.exe` behind, and a windows spawn of that still "succeeds" before
+ * dying into the log, invisible to the self-heal — so everywhere a runtime is
+ * judged "present" requires the launcher AND this marker.
+ */
+public fun uiRuntimeMarkerPath(runtimeDir: Path): Path = runtimeDir / "lib" / "jvm.cfg"
+
+/**
  * The UI's stdout/stderr log — the one post-mortem channel for UI crashes
  * (ADR-010 decision 4). A single file, truncated on each launch: the previous
  * session's log has no audience once a newer session exists.
@@ -178,7 +189,8 @@ public sealed interface UiRunPlan {
  * The entry decision: both artifacts present → [UiRunPlan.Launch]; anything
  * missing → [UiRunPlan.FetchThenLaunch]. Presence means the ATOMICALLY-renamed
  * final paths exist ([uiJarPath], [uiRuntimeDir]) — temps never count
- * (ADR-010: a half-extracted state can never become "current").
+ * (ADR-010: a half-extracted state can never become "current") — and for the
+ * runtime, that its completeness marker does too ([uiRuntimeMarkerPath]).
  */
 public fun planUiRun(jarPresent: Boolean, runtimePresent: Boolean): UiRunPlan =
     if (jarPresent && runtimePresent) UiRunPlan.Launch else UiRunPlan.FetchThenLaunch

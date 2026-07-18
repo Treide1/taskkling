@@ -81,6 +81,21 @@ public fun windowsCommandLine(argv: List<String>): String = argv.joinToString(" 
     }
 }
 
+/**
+ * The cmd.exe line the windows extract actual feeds `system`: tar by ABSOLUTE
+ * System32 path, never bare `tar` — Git for Windows puts GNU tar on PATH ahead
+ * of System32's bsdtar, and GNU tar both parses `C:\...` as a remote
+ * `host:path` and cannot read zip, the one archive format ADR-011 assigns to
+ * windows. [systemRoot] comes from `%SystemRoot%` (falling back to
+ * `C:\Windows` when unset). The whole line is wrapped in ONE extra quote pair:
+ * `cmd /C` strips exactly that pair from a line that starts with a quote,
+ * leaving the inner per-path quoting intact.
+ */
+public fun windowsSystemTarCommand(systemRoot: String?, archive: String, destDir: String): String {
+    val root = systemRoot?.takeIf { it.isNotBlank() } ?: "C:\\Windows"
+    return "\"\"$root\\System32\\tar.exe\" -xf \"$archive\" -C \"$destDir\"\""
+}
+
 // --- Platform primitives (expect/actual, mirroring Update.kt / Uninstall.kt's split) --------------------------------
 
 /** Read one environment variable ([headlessRefusalMessage]'s input). Null when unset. */
